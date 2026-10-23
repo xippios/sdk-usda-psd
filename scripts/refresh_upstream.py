@@ -26,10 +26,11 @@ The PSD part of a document is every top-level field verbatim and in upstream ord
 those the kept paths reference, written with ``json.dumps(indent=2, ensure_ascii=False)``.
 
 Everything is fetched before anything is written, one request at a time, each URL retried
-at most once; files a previous snapshot had and this one does not are removed. The same
-upstream on the same UTC day gives the same bytes on disk, except for the row of the
-refused page, whose body carries a per-request reference. No key is needed or read. Run
-from the repository root::
+at most once. Files under ``openapi/`` that the run does not produce are removed;
+``FETCHED.md`` is rewritten; nothing else under ``docs/upstream/`` is touched. The same
+upstream on the same UTC day gives the same bytes on disk, ``FETCHED.md`` included: the
+refused page's body carries a per-request reference, so its row records neither size nor
+sha256. No key is needed or read. Run from the repository root::
 
     uv run scripts/refresh_upstream.py
 """
@@ -108,6 +109,8 @@ class Row:
     note: str
     path: str | None = None
     content: bytes | None = None
+    stable: bool = True
+    """False for a body that differs on every request: no size or sha256 is recorded."""
 
 
 @dataclass(frozen=True)
@@ -119,7 +122,6 @@ class PsdPart:
     dropped: dict[str, int]
     definitions_kept: int
     definitions_total: int
-    reserialises: bool
 
 
 class _RetryableError(Exception):
@@ -271,7 +273,11 @@ def fas_data() -> Row:
     response = fetch(FAS_DATA_URL, expect=403)
     if b"Access Denied" not in response.body:
         raise _page_changed(FAS_DATA_URL, "HTTP 403 without 'Access Denied' in the body")
-    return Row(response, f"{_redirect_note(response)}{REFUSED_NOTE}")
+    note = (
+        f"{_redirect_note(response)}{REFUSED_NOTE}; the body is not stable (it carries a "
+        "per-request reference), so neither its size nor its sha256 is recorded"
+    )
+    return Row(response, note, stable=False)
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -346,13 +352,19 @@ def psd_part(response: Response) -> PsdPart:
         else:
             part[key] = value
     full = json.dumps(document, indent=2, ensure_ascii=False).encode("utf-8")
+    if full != response.body.replace(b"\r\n", b"\n"):
+        raise SystemExit(
+            f"GET {response.url}: re-serialised with json.dumps(indent=2, ensure_ascii=False), "
+            "the document no longer reproduces the fetched text up to line endings, so its "
+            "PSD part would not be an excerpt of the upstream text.\nLook at the document by "
+            "hand and update scripts/refresh_upstream.py. Nothing was written."
+        )
     return PsdPart(
         part=part,
         kept=len(kept),
         dropped=dict(dropped),
         definitions_kept=len(wanted),
         definitions_total=len(definitions),
-        reserialises=full == response.body.replace(b"\r\n", b"\n"),
     )
 
 
@@ -361,12 +373,10 @@ def document_row(path: str, response: Response) -> tuple[Row, PsdPart]:
     psd = psd_part(response)
     content = (json.dumps(psd.part, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     dropped = ", ".join(f"{count} `{prefix}`" for prefix, count in psd.dropped.items())
-    match = "matches" if psd.reserialises else "does NOT match"
     note = (
         f"{_redirect_note(response)}PSD part; Bytes and sha256 are the full document's. "
         f"Kept {psd.kept} `{KEEP_PREFIX}` paths; dropped {dropped or 'none'} (out of scope "
-        f"here); kept {psd.definitions_kept} of {psd.definitions_total} definitions; the "
-        f"full document re-serialised {match} the fetched text up to line endings"
+        f"here); kept {psd.definitions_kept} of {psd.definitions_total} definitions"
     )
     _log(f"  {path}: {len(content)} bytes written from {len(response.body)} fetched")
     return Row(response, note, path, content), psd
@@ -451,7 +461,7 @@ def render_fetched(
             "directly or through other definitions; each document's row counts the paths",
             "kept and dropped, per prefix. The script writes the part with",
             "`json.dumps(indent=2, ensure_ascii=False)` in upstream key order, with LF line",
-            "endings and a final newline, and checks that the full document re-serialised",
+            "endings and a final newline, and stops unless the full document re-serialised",
             "the same way reproduces the fetched text up to line endings, so each file is the",
             "upstream text with the other APIs cut out. Bytes and sha256 in a document's row",
             "are those of the full document as fetched, so a change anywhere in it shows",
@@ -460,8 +470,9 @@ def render_fetched(
         *_paragraph(
             "Pages that are client-rendered shells or that refuse headless clients get no",
             "file, only a row with their HTTP status and the size and sha256 of the body.",
-            "The 403 body carries a per-request reference number, so its sha256 changes on",
-            "every run, and its size may.",
+            "The 403 body carries a per-request reference number and so is not stable; its",
+            "row records neither size nor sha256, so that two runs on the same UTC day give",
+            "the same file.",
         ),
         *_paragraph(
             "Fetched is the UTC calendar date of the run, Last-Modified the HTTP header in",
@@ -480,8 +491,8 @@ def render_fetched(
             response.url,
             day,
             str(response.status),
-            str(len(response.body)),
-            hashlib.sha256(response.body).hexdigest(),
+            str(len(response.body)) if row.stable else "-",
+            hashlib.sha256(response.body).hexdigest() if row.stable else "-",
             response.etag or "-",
             _iso_http_date(response.last_modified),
             row.note,
@@ -492,7 +503,10 @@ def render_fetched(
 
 
 def write_snapshot(out: Path, rows: list[Row], fetched_md: str) -> None:
-    """Write every file, drop files the new snapshot no longer has, write ``FETCHED.md``."""
+    """Write the files and ``FETCHED.md`` with LF line endings; prune stale ``openapi/`` files.
+
+    Only files under ``openapi/`` that this run does not produce are removed.
+    """
     if out.exists() and any(out.iterdir()) and not (out / "FETCHED.md").is_file():
         raise SystemExit(f"{out} is neither empty nor a snapshot (no FETCHED.md); not writing")
     files = {row.path: row.content for row in rows if row.path and row.content is not None}
@@ -505,7 +519,7 @@ def write_snapshot(out: Path, rows: list[Row], fetched_md: str) -> None:
                 _log(f"  removed {subdir}/{path.name}: no longer produced")
     for name, content in files.items():
         (out / name).write_bytes(content)
-    (out / "FETCHED.md").write_text(fetched_md, encoding="utf-8")
+    (out / "FETCHED.md").write_bytes(fetched_md.encode("utf-8"))
 
 
 def main() -> None:
