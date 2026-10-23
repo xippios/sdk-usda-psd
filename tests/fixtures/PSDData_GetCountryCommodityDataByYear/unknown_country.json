@@ -1,0 +1,70 @@
+{
+  "recorded_at": "2026-10-23T07:58:02.309637Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.fas.usda.gov/api/psd/commodity/0410000/country/XX/year/2023"
+  },
+  "response": {
+    "body": "[]",
+    "body_base64": false,
+    "headers": [
+      [
+        "date",
+        "Fri, 23 Oct 2026 07:58:00 GMT"
+      ],
+      [
+        "content-type",
+        "application/json; charset=utf-8"
+      ],
+      [
+        "access-control-allow-headers",
+        "X-Api-Key"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "age",
+        "1"
+      ],
+      [
+        "strict-transport-security",
+        "max-age=31536000; includeSubDomains; preload"
+      ],
+      [
+        "via",
+        "https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])"
+      ],
+      [
+        "x-api-umbrella-request-id",
+        "d1cv24p8sutk3ovvmh10"
+      ],
+      [
+        "x-cache",
+        "MISS"
+      ],
+      [
+        "x-content-type-options",
+        "nosniff"
+      ],
+      [
+        "x-ratelimit-limit",
+        "1000"
+      ],
+      [
+        "x-ratelimit-remaining",
+        "993"
+      ],
+      [
+        "x-vcap-request-id",
+        "1277c781-68ed-460d-4035-0b7b241fac71"
+      ],
+      [
+        "x-frame-options",
+        "DENY"
+      ]
+    ],
+    "status": 200
+  }
+}
