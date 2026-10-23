@@ -1,0 +1,328 @@
+"""The client's error mapping and api.data.gov quota handling.
+
+Recorded answers come from ``tests/fixtures``. The gateway's 429 and its ``NOT_FOUND``
+404 were not recorded (provoking a 429 spends the key's hourly quota); the tests that
+need them build the response from api.data.gov's developer manual and say so.
+"""
+
+import dataclasses
+import json
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import httpx
+import pytest
+import respx
+from xippios.core import (
+    AuthError,
+    NotFoundError,
+    RateLimitError,
+    RetryPolicy,
+    UpstreamError,
+)
+from xippios.core.testing import load_fixture
+
+from xippios.usda.psd import api
+from xippios.usda.psd._client import (
+    API_KEY_ENV,
+    BASE_URL,
+    QUOTA_WINDOW,
+    RATE_LIMIT,
+    QuotaAwareClient,
+    auth,
+    classify,
+    client,
+    config,
+    observe_quota,
+    quota,
+    quota_pause,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+DATA = "PSDData_GetCountryCommodityDataByYear"
+NOW = datetime(2026, 10, 23, 8, 0, tzinfo=UTC)
+
+
+def recorded(endpoint: str, case: str) -> httpx.Response:
+    """A recorded answer as an ``httpx.Response``, for calling ``classify`` directly."""
+    fixture = load_fixture(FIXTURES / endpoint / f"{case}.json")
+    return httpx.Response(
+        fixture.response.status,
+        headers=fixture.response.headers,
+        content=fixture.response.content,
+        request=httpx.Request(fixture.request.method, fixture.request.url),
+    )
+
+
+def synthesised(status: int, body: object, headers: dict[str, str] | None = None) -> httpx.Response:
+    """NOT RECORDED: an answer shaped as api.data.gov's developer manual documents it."""
+    return httpx.Response(
+        status,
+        json=body,
+        headers=headers or {},
+        request=httpx.Request("GET", f"{BASE_URL}/api/psd/commodities"),
+    )
+
+
+OVER_RATE_LIMIT = {
+    "error": {
+        "code": "OVER_RATE_LIMIT",
+        "message": "You have exceeded your rate limit. Try again later or contact us at "
+        "https://api.fas.usda.gov:443/contact/ for assistance",
+    }
+}
+"""api.data.gov's documented 429 body shape; the message text is illustrative, not recorded."""
+
+
+def test_rate_limit_is_one_request_per_second_without_burst() -> None:
+    assert (RATE_LIMIT.per_minute, RATE_LIMIT.capacity) == (60, 1)
+    assert config.rate_limit is RATE_LIMIT
+    assert config.classify is classify
+    assert isinstance(client, QuotaAwareClient)
+    assert auth.header == "X-Api-Key"
+    assert auth.env_var == API_KEY_ENV == "DATA_GOV_API_KEY"  # pragma: allowlist secret
+
+
+def test_invalid_key_is_an_auth_error_naming_the_code_and_the_variable() -> None:
+    response = recorded("PSDData_GetCommodities", "invalid_key")
+    error = classify(response)
+    assert isinstance(error, AuthError)
+    assert error.status == 403
+    assert "API_KEY_INVALID" in error.message
+    assert API_KEY_ENV in error.message
+    assert "An invalid api_key was supplied" in error.message
+    assert error.source == "usda-psd"
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["API_KEY_MISSING", "API_KEY_DISABLED", "API_KEY_UNAUTHORIZED", "API_KEY_UNVERIFIED"],
+)
+def test_every_documented_key_code_is_an_auth_error(code: str) -> None:
+    """NOT RECORDED: the other documented codes, in the recorded body's shape."""
+    error = classify(synthesised(403, {"error": {"code": code, "message": "documented"}}))
+    assert isinstance(error, AuthError)
+    assert code in error.message
+
+
+def test_a_403_without_a_gateway_code_falls_through_to_core() -> None:
+    assert classify(synthesised(403, {"Message": "Access denied"})) is None
+
+
+@pytest.mark.anyio
+async def test_the_wrapper_raises_auth_error_on_the_recorded_invalid_key(
+    replay_fixture: Callable[[str, str], respx.Route],
+    placeholder_api_key: str,
+) -> None:
+    route = replay_fixture("PSDData_GetCommodities", "invalid_key")
+    with pytest.raises(AuthError, match="API_KEY_INVALID") as info:
+        await api.PSDData_GetCommodities()
+    assert placeholder_api_key not in str(info.value)
+    assert route.call_count == 1, "a 403 is never retried"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("case", "path"),
+    [
+        ("unknown_commodity", "/api/psd/commodity/9999999/country/US/year/2023"),
+        ("unknown_country", "/api/psd/commodity/0410000/country/XX/year/2023"),
+    ],
+)
+async def test_unknown_codes_answer_an_empty_list_not_an_error(
+    replay_fixture: Callable[[str, str], respx.Route], case: str, path: str
+) -> None:
+    replay_fixture(DATA, case)
+    assert classify(recorded(DATA, case)) is None
+    assert await client.get_json(path) == []
+
+
+@pytest.mark.anyio
+async def test_a_year_without_data_answers_404_with_an_empty_body(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    response = recorded(DATA, "unknown_year")
+    assert (response.status_code, response.content) == (404, b"")
+    error = classify(response)
+    assert isinstance(error, NotFoundError)
+    assert "no data for /api/psd/commodity/0410000/country/US/year/1900" in error.message
+    route = replay_fixture(DATA, "unknown_year")
+    with pytest.raises(NotFoundError, match="empty body"):
+        await client.get_json("/api/psd/commodity/0410000/country/US/year/1900")
+    assert route.call_count == 1
+
+
+def test_the_gateway_not_found_is_a_not_found_error() -> None:
+    """NOT RECORDED: api.data.gov's documented NOT_FOUND body."""
+    body = {
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "The requested URL was not found on this server.",
+        }
+    }
+    error = classify(synthesised(404, body))
+    assert isinstance(error, NotFoundError)
+    assert "no route for /api/psd/commodities" in error.message
+
+
+def test_other_statuses_fall_through_to_core() -> None:
+    assert classify(synthesised(500, {"Message": "An error has occurred."})) is None
+    assert classify(recorded("PSDData_GetCommodities", "all")) is None
+
+
+def test_429_with_retry_after_carries_it() -> None:
+    """NOT RECORDED: OVER_RATE_LIMIT with a Retry-After header."""
+    response = synthesised(
+        429,
+        OVER_RATE_LIMIT,
+        {"Retry-After": "120", "x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"},
+    )
+    error = classify(response)
+    assert isinstance(error, RateLimitError)
+    assert error.retry_after == 120.0
+    assert "OVER_RATE_LIMIT" in error.message
+    assert "1000 requests per rolling hour per key" in error.message
+    assert "retry after 120 s" in error.message
+    assert "0 of 1000 requests left" in error.message
+    assert API_KEY_ENV in error.message
+
+
+def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
+    """NOT RECORDED: OVER_RATE_LIMIT without Retry-After or quota headers."""
+    error = classify(synthesised(429, OVER_RATE_LIMIT))
+    assert isinstance(error, RateLimitError)
+    assert error.retry_after == QUOTA_WINDOW == 3600.0
+    assert "retry after 3600 s" in error.message
+    snapshot = quota()
+    assert snapshot is not None
+    assert snapshot.remaining == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("retry_after", "attempts"), [("3600", 1), (None, 4)])
+async def test_core_retries_a_429_only_within_its_backoff(
+    respx_mock: respx.MockRouter, retry_after: str | None, attempts: int
+) -> None:
+    """NOT RECORDED. A ``Retry-After`` beyond ``backoff_max`` (30 s) stops core's retries;
+    without one core retries three times at its short backoff, each another call, and the
+    caller then gets ``RateLimitError`` with the one-hour fallback."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    headers = {"Retry-After": retry_after} if retry_after else {}
+    route = respx_mock.get(f"{BASE_URL}/api/psd/commodities").mock(
+        return_value=httpx.Response(429, json=OVER_RATE_LIMIT, headers=headers)
+    )
+    quick = QuotaAwareClient(dataclasses.replace(config, rate_limit=None), sleep=fake_sleep)
+    with pytest.raises(RateLimitError) as info:
+        await quick.get_json("/api/psd/commodities")
+    assert info.value.retry_after == 3600.0
+    assert route.call_count == attempts
+    assert all(seconds <= RetryPolicy().backoff_max for seconds in sleeps)
+
+
+def test_quota_headers_land_in_the_snapshot() -> None:
+    assert quota() is None
+    observe_quota(recorded("PSDData_GetCommodities", "all"), now=NOW)
+    snapshot = quota()
+    assert snapshot is not None
+    assert (snapshot.limit, snapshot.remaining, snapshot.observed_at) == (1000, 999, NOW)
+    assert snapshot.resumes_at is None
+    assert snapshot.describe() == (
+        "999 of 1000 requests left in the rolling hour (as of 2026-10-23T08:00:00Z)"
+    )
+
+
+def test_an_answer_without_quota_headers_leaves_the_snapshot() -> None:
+    observe_quota(recorded("PSDData_GetCommodities", "all"), now=NOW)
+    observe_quota(recorded("PSDData_GetCommodities", "invalid_key"))
+    snapshot = quota()
+    assert snapshot is not None
+    assert (snapshot.remaining, snapshot.observed_at) == (999, NOW)
+
+
+def test_the_snapshot_is_read_only() -> None:
+    observe_quota(recorded("PSDData_GetCommodities", "all"), now=NOW)
+    snapshot = quota()
+    assert snapshot is not None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        snapshot.remaining = 5  # type: ignore[misc]
+
+
+def test_a_spent_quota_pauses_for_the_window_or_retry_after() -> None:
+    observe_quota(
+        synthesised(200, [], {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"}), now=NOW
+    )
+    assert quota_pause(now=NOW) == QUOTA_WINDOW
+    assert quota_pause(now=NOW + timedelta(minutes=59)) == 60.0
+    assert quota_pause(now=NOW + timedelta(hours=2)) == 0.0
+    observe_quota(synthesised(429, OVER_RATE_LIMIT, {"Retry-After": "90"}), now=NOW)
+    snapshot = quota()
+    assert snapshot is not None
+    assert (snapshot.limit, snapshot.remaining, snapshot.retry_after) == (1000, 0, 90.0)
+    assert quota_pause(now=NOW + timedelta(seconds=30)) == 60.0
+
+
+@pytest.mark.anyio
+async def test_the_next_request_waits_when_the_last_answer_spent_the_quota(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """The second request sleeps about an hour before it is sent; the first does not."""
+    events: list[str] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        events.append(f"sleep {seconds:.0f}")
+
+    remaining = iter(["0", "999"])
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        events.append("sent")
+        headers = {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": next(remaining)}
+        return httpx.Response(200, json=[], headers=headers)
+
+    respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(side_effect=respond)
+    paced = QuotaAwareClient(dataclasses.replace(config, rate_limit=None), sleep=fake_sleep)
+    assert await paced.get_json("/api/psd/regions") == []
+    assert events == ["sent"]
+    assert await paced.get_json("/api/psd/regions") == []
+    assert events[0] == "sent"
+    assert events[1].startswith("sleep 3")
+    assert 3590 <= float(events[1].split()[1]) <= 3600
+    assert events[2] == "sent"
+    snapshot = quota()
+    assert snapshot is not None
+    assert snapshot.remaining == 999
+    assert quota_pause() == 0.0
+
+
+@pytest.mark.anyio
+async def test_unraised_answers_update_the_snapshot_too(respx_mock: respx.MockRouter) -> None:
+    """The recorder asks for raw answers (``raise_on_error=False``), which skip ``classify``."""
+    headers = {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "42"}
+    respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(
+        return_value=httpx.Response(500, json={}, headers=headers)
+    )
+    quick = QuotaAwareClient(
+        dataclasses.replace(config, rate_limit=None, retry=RetryPolicy(max_attempts=1))
+    )
+    response = await quick.request("GET", "/api/psd/regions", raise_on_error=False)
+    assert response.status_code == 500
+    snapshot = quota()
+    assert snapshot is not None
+    assert snapshot.remaining == 42
+    with pytest.raises(UpstreamError):
+        await quick.get_json("/api/psd/regions")
+
+
+def test_the_recorded_bodies_are_the_documented_shapes() -> None:
+    """The bad-key answer carries api.data.gov's error object and no quota headers."""
+    response = recorded("PSDData_GetCommodities", "invalid_key")
+    body = json.loads(response.text)
+    assert set(body) == {"error"}
+    assert set(body["error"]) == {"code", "message"}
+    assert "x-ratelimit-remaining" not in response.headers
+    listed = recorded("PSDData_GetCommodities", "all")
+    assert listed.headers["x-ratelimit-limit"] == "1000"
