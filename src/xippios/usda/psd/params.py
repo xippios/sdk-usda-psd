@@ -26,7 +26,9 @@ __all__ = [
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
     "PackagedList",
+    "attribute_names",
     "packaged_values",
+    "validate_attribute_id",
     "validate_commodity_code",
     "validate_country_code",
     "validate_market_year",
@@ -193,3 +195,54 @@ def validate_market_year(market_year: int) -> int:
             source=SOURCE,
         )
     return market_year
+
+
+def attribute_names() -> dict[int, str]:
+    """``{attributeId: attributeName}`` of the packaged ``commodityAttributes`` list.
+
+    In upstream order, names verbatim. Names are not unique upstream:
+    ``"Total Disappearance"`` is 126 and 173, ``"Fresh Dom. Consumption"`` 133 and 135.
+    """
+    _, codes = _codes("commodityAttributes", "attributeId", "attributeName")
+    return {int(code): name for code, name in codes.items()}
+
+
+def validate_attribute_id(attribute_id: int) -> int:
+    """Check an attribute id against the packaged ``commodityAttributes`` list.
+
+    The data operations take no attribute parameter; a task that keeps the records of
+    one attribute filters after the call, so an id the list lacks would select nothing.
+    The check runs before any upstream call.
+
+    Args:
+        attribute_id: An integer, as ``PSDData_GetCommodityAttributes`` lists it, e.g.
+            ``28`` (Production), ``88`` (Exports), ``176`` (Ending Stocks);
+            ``enums.AttributeId`` members compare equal to them.
+
+    Returns:
+        The id, unchanged.
+
+    Raises:
+        InvalidRequestError: When the id is not an integer (``True`` is not ``1``).
+        UnknownCode: When the list lacks the id, naming up to three close ids with their
+            upstream names.
+    """
+    if isinstance(attribute_id, bool) or not isinstance(attribute_id, int):
+        raise InvalidRequestError(
+            f"attribute_id must be an integer id such as 28 (Production), got "
+            f"{attribute_id!r}. list_commodity_attributes lists them.",
+            source=SOURCE,
+        )
+    fetched, codes = _codes("commodityAttributes", "attributeId", "attributeName")
+    if str(attribute_id) in codes:
+        return attribute_id
+    raise UnknownCode(
+        "attribute_id",
+        attribute_id,
+        list_name="commodityAttributes",
+        fetched=fetched,
+        closest=_closest(str(attribute_id), codes),
+        reason="The data operations take no attribute; the task keeps this id's records "
+        "after the call, so an id the packaged list lacks would give an empty result, and "
+        "the package refuses it. list_commodity_attributes lists the ids.",
+    )
