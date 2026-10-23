@@ -1,5 +1,5 @@
 # Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
-_commit: v0.1.4
+_commit: v0.1.5
 _src_path: https://github.com/xippios/sdk-template.git
 api_base_url: https://apps.fas.usda.gov/OpenData
 api_key_env: DATA_GOV_API_KEY

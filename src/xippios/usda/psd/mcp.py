@@ -12,7 +12,8 @@ from xippios.usda.psd._version import __version__
 
 INSTRUCTIONS = (
     "USDA FAS PSD Online via xippios. "
-    "Tools are read-only. Call the list tools first to find valid codes, then query."
+    "Tools are read-only. Where list tools (usda_psd_list_*) exist, "
+    "call them first to find valid codes, then query."
 )
 
 server = build_server(

@@ -1,8 +1,6 @@
-import os
-
 import pytest
 
-from xippios.usda.psd._client import API_KEY_ENV
+from xippios.usda.psd._client import API_KEY_ENV, auth
 
 pytest_plugins = ["xippios.core.testing.plugin"]
 
@@ -12,8 +10,23 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+PLACEHOLDER_KEY = "placeholder-for-fixture-replay"
+
+
 @pytest.fixture(autouse=True)
-def placeholder_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fixture-backed tests never need a real key; live tests use the one in the environment."""
-    if not os.environ.get(API_KEY_ENV):
-        monkeypatch.setenv(API_KEY_ENV, "placeholder-for-fixture-replay")
+def placeholder_api_key(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> str | None:
+    """Every test but a live one sends the placeholder key, whatever the shell holds.
+
+    Setting the variable is not enough: the client's auth resolves the key once per auth
+    object and caches it, so a live test earlier in the same run would leave the real
+    key in place. ``auth.key``, through which every ``xippios.core`` auth class reads the
+    key, is pinned to the placeholder as well; both come back after the test. Returns
+    the placeholder, or ``None`` in a live test, which uses the key in the environment.
+    """
+    if "live" in request.keywords:
+        return None
+    monkeypatch.setenv(API_KEY_ENV, PLACEHOLDER_KEY)
+    monkeypatch.setattr(auth, "key", lambda: PLACEHOLDER_KEY)
+    return PLACEHOLDER_KEY

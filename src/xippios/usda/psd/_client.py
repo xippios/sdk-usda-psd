@@ -23,4 +23,4 @@ config = ClientConfig(
 auth = HeaderKeyAuth("X-Api-Key", API_KEY_ENV, source=SOURCE)
 client = AsyncClient(config, auth=auth)
 
-__all__ = ["API_KEY_ENV", "BASE_URL", "RATE_LIMIT", "SOURCE", "client", "config"]
+__all__ = ["API_KEY_ENV", "BASE_URL", "RATE_LIMIT", "SOURCE", "auth", "client", "config"]

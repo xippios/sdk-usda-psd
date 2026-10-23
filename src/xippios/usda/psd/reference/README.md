@@ -16,7 +16,9 @@ Rules:
   (`/refresh-reference-data`), never typed in by hand; the script also regenerates
   `enums.py`, one `StrEnum` per list, with `xippios.core.reference.render_str_enums`.
 - Every file has a row below naming the endpoint or URL it came from and the date.
-- Reference lookups are tools too (`usda_psd_list_<thing>`), so agents can form valid calls.
+- Each packaged list gets a lookup task, `list_<thing>`, served as the MCP tool
+  `usda_psd_list_<thing>` so agents can form valid calls; `/refresh-reference-data`
+  adds the task where it is missing.
 
 | File | Origin | Fetched |
 | --- | --- | --- |
