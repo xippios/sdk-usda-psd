@@ -114,7 +114,7 @@ def test_unknown_commodity_code_names_the_closest() -> None:
     # difflib scores Rye (0451000) as close as Wheat (0410000); both are named
     assert ("0410000", "Wheat") in error.closest
     assert "0410000 (Wheat)" in error.message
-    assert "did you mean " in error.message
+    assert "Did you mean " in error.message
     assert "fetched 2026-10-23" in error.message
 
 
@@ -138,7 +138,7 @@ def test_unknown_country_code_names_the_closest() -> None:
     with pytest.raises(UnknownCode) as info:
         validate_country_code("us")
     assert info.value.closest[0] == ("US", "United States")
-    assert "did you mean US (United States)" in info.value.message
+    assert "Did you mean US (United States)?" in info.value.message
 
 
 def test_the_recorded_unknown_country_is_refused() -> None:
@@ -199,3 +199,22 @@ def test_an_id_the_lists_lack_still_parses() -> None:
     )
     assert (record.attribute_id, record.unit_id) == (999, 999)
     assert 999 not in {member.value for member in enums.AttributeId}
+
+
+def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> None:
+    with pytest.raises(UnknownCode) as info:
+        validate_commodity_code("0000000x")
+    assert info.value.closest == []
+    assert "(packaged, fetched 2026-10-23). PSD answers unknown codes" in info.value.message
+
+
+@pytest.mark.parametrize(
+    ("value", "hint"),
+    [("all", "Omit country_code for every country"), ("ALL", "Omit country_code"),
+     ("00", "use get_world_data for the world")],
+)  # fmt: skip
+def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -> None:
+    with pytest.raises(UnknownCode, match=hint) as info:
+        validate_country_code(value)
+    assert info.value.closest == []
+    assert "Did you mean" not in info.value.message

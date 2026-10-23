@@ -23,6 +23,7 @@ from xippios.usda.psd._client import SOURCE
 from xippios.usda.psd.errors import UnknownCode
 
 __all__ = [
+    "COUNTRY_HINTS",
     "PACKAGED_LISTS",
     "PackagedList",
     "packaged_values",
@@ -97,12 +98,29 @@ def _closest(value: str, codes: dict[str, str]) -> list[tuple[str, str]]:
     return [(code, codes[code]) for code in matches[:3]]
 
 
-def _validate_code(param: str, value: str, list_name: str, code_field: str, name_field: str) -> str:
+COUNTRY_HINTS: dict[str, str] = {
+    "all": "Omit country_code for every country; PSD's 'all' is a path element, not a code.",
+    "00": "'00' is the world aggregate PSD reports in world records; use get_world_data for "
+    "the world.",
+}
+"""Values agents pass for a country that are not country codes, with what to do instead."""
+
+
+def _validate_code(
+    param: str,
+    value: str,
+    list_name: str,
+    code_field: str,
+    name_field: str,
+    hints: dict[str, str] | None = None,
+) -> str:
     fetched, codes = _codes(list_name, code_field, name_field)
     if value in codes:
         return value
+    hint = (hints or {}).get(value.strip().lower())
+    closest = [] if hint else _closest(value, codes)
     raise UnknownCode(
-        param, value, list_name=list_name, fetched=fetched, closest=_closest(value, codes)
+        param, value, list_name=list_name, fetched=fetched, closest=closest, hint=hint
     )
 
 
@@ -142,9 +160,12 @@ def validate_country_code(country_code: str) -> str:
         The code, unchanged.
 
     Raises:
-        UnknownCode: Naming up to three close codes with their upstream names.
+        UnknownCode: Naming up to three close codes with their upstream names; for
+            ``"all"`` saying to omit the country, for ``"00"`` to use ``get_world_data``.
     """
-    return _validate_code("country_code", country_code, "countries", "countryCode", "countryName")
+    return _validate_code(
+        "country_code", country_code, "countries", "countryCode", "countryName", COUNTRY_HINTS
+    )
 
 
 def validate_market_year(market_year: int) -> int:

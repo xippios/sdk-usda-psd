@@ -20,7 +20,8 @@ class UnknownCode(InvalidRequestError):
         param: The parameter, as the package names it, e.g. ``"commodity_code"``.
         value: The value given.
         list_name: The packaged list checked, as upstream names it, e.g. ``"commodities"``.
-        closest: The closest known codes with their upstream names, best match first.
+        closest: The closest known codes with their upstream names, best match first;
+            empty when ``hint`` explains the value instead.
     """
 
     def __init__(
@@ -31,17 +32,15 @@ class UnknownCode(InvalidRequestError):
         list_name: str,
         fetched: str,
         closest: list[tuple[str, str]],
+        hint: str | None = None,
     ) -> None:
-        hint = (
-            "; did you mean " + ", ".join(f"{code} ({name})" for code, name in closest) + "?"
-            if closest
-            else ""
-        )
+        if hint is None and closest:
+            hint = "Did you mean " + ", ".join(f"{code} ({name})" for code, name in closest) + "?"
         super().__init__(
             f"{value!r} is not a {param} in PSD's {list_name} list (packaged, fetched "
-            f"{fetched}){hint} PSD answers unknown codes with an empty result, so the "
-            "package refuses them. If PSD added the code since, the packaged lists need a "
-            "refresh (/refresh-reference-data).",
+            f"{fetched}).{' ' + hint if hint else ''} PSD answers unknown codes with an empty "
+            "result, so the package refuses them. If PSD added the code since, the packaged "
+            "lists need a refresh (/refresh-reference-data).",
             source=SOURCE,
         )
         self.param = param
