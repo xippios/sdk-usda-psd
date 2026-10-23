@@ -9,7 +9,7 @@ that works here; the family rules it points to apply as well.
 | | |
 | --- | --- |
 | Upstream | USDA FAS PSD Online, https://apps.fas.usda.gov/psdonline/ |
-| API base URL | `https://apps.fas.usda.gov/OpenData` |
+| API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
 | Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header |
 | Rate limit | 60 requests per minute, enforced client-side in `_client.py` |

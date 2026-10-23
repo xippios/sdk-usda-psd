@@ -9,7 +9,7 @@ from xippios.core import AsyncClient, ClientConfig, HeaderKeyAuth, RateLimit
 from xippios.usda.psd._version import __version__
 
 SOURCE = "usda-psd"
-BASE_URL = "https://apps.fas.usda.gov/OpenData"
+BASE_URL = "https://api.fas.usda.gov"
 API_KEY_ENV = "DATA_GOV_API_KEY"  # pragma: allowlist secret (a variable name, not a key)
 RATE_LIMIT = RateLimit(per_minute=60)
 
