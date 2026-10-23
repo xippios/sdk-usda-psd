@@ -1,15 +1,19 @@
-"""Replay tests for the five reference wrappers (layer 1), against recorded answers."""
+"""Replay tests for the endpoint wrappers (layer 1), against recorded answers."""
 
 from collections.abc import Callable
+from decimal import Decimal
 
 import pytest
 import respx
 
 from xippios.usda.psd import api
+from xippios.usda.psd.enums import AttributeId, UnitId
 from xippios.usda.psd.models import (
     Commodity,
     CommodityAttribute,
+    CommodityData,
     Country,
+    DataReleaseInfo,
     Region,
     UnitOfMeasure,
 )
@@ -101,3 +105,70 @@ async def test_models_serialise_snake_case(
         "region_code": "R12",
         "genc_code": "AFG",
     }
+
+
+async def test_get_country_commodity_data(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    route = replay_fixture("PSDData_GetCountryCommodityDataByYear", "wheat_us_2023")
+    records = await api.PSDData_GetCountryCommodityDataByYear("0410000", "US", 2023)
+    assert len(records) == 15
+    assert records[2] == CommodityData(
+        commodity_code="0410000",
+        country_code="US",
+        market_year=2023,
+        calendar_year=2026,
+        month=7,
+        attribute_id=AttributeId.PRODUCTION,
+        unit_id=UnitId._1000_MT,
+        value=Decimal("49095.0"),
+    )
+    assert records[-1].unit_id == UnitId.MT_HA
+    assert records[-1].value == Decimal("3.2719")
+    assert route.calls.last.request.url.path == "/api/psd/commodity/0410000/country/US/year/2023"
+
+
+async def test_get_commodity_data_for_every_country(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """``country/all``, the largest answer: 1,875 records, 125 countries, 275,759 bytes."""
+    route = replay_fixture("PSDData_GetCommodityDataByYear", "corn_all_2023")
+    records = await api.PSDData_GetCommodityDataByYear("0440000", 2023)
+    assert len(records) == 1875
+    assert len({r.country_code for r in records}) == 125
+    assert {r.commodity_code for r in records} == {"0440000"}
+    assert {r.market_year for r in records} == {2023}
+    assert route.calls.last.request.url.path == "/api/psd/commodity/0440000/country/all/year/2023"
+
+
+async def test_get_world_commodity_data(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    route = replay_fixture("PSDData_GetWorldCommodityDataByYear", "soybeans_world_2023")
+    records = await api.PSDData_GetWorldCommodityDataByYear("2222000", 2023)
+    assert len(records) == 13
+    assert {(r.country_code, r.calendar_year, r.month) for r in records} == {("00", 2026, 10)}
+    production = next(r for r in records if r.attribute_id == AttributeId.PRODUCTION)
+    assert production.value == Decimal("396448.0")
+    assert route.calls.last.request.url.path == "/api/psd/commodity/2222000/world/year/2023"
+
+
+async def test_get_data_release_info_is_cached(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    route = replay_fixture("PSDData_GetDataReleaseInfo", "wheat")
+    releases = await api.PSDData_GetDataReleaseInfo("0410000")
+    assert len(releases) == 7754
+    assert releases[0] == DataReleaseInfo(
+        commodity_code="0410000",
+        country_code="BL",
+        market_year=1960,
+        release_year=2006,
+        release_month=7,
+    )
+    assert len({r.country_code for r in releases}) == 145
+    assert "00" not in {r.country_code for r in releases}
+    assert await api.PSDData_GetDataReleaseInfo("0410000") == releases
+    assert route.call_count == 1, "the second call is answered from RELEASE_DATES_CACHE"
+    path = route.calls.last.request.url.path
+    assert path == "/api/psd/commodity/0410000/dataReleaseDates"

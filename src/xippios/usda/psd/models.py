@@ -14,10 +14,22 @@ shapes below therefore come from the recorded answers, each named in its model's
 docstring; every field is an assumption from that fixture, recorded 2026-10-23.
 """
 
+from decimal import Decimal
+
 from pydantic import Field
 from xippios.core import UpstreamModel
 
-__all__ = ["Commodity", "CommodityAttribute", "Country", "Region", "UnitOfMeasure"]
+from xippios.usda.psd.enums import AttributeId, UnitId
+
+__all__ = [
+    "Commodity",
+    "CommodityAttribute",
+    "CommodityData",
+    "Country",
+    "DataReleaseInfo",
+    "Region",
+    "UnitOfMeasure",
+]
 
 
 class Commodity(UpstreamModel):
@@ -98,3 +110,77 @@ class CommodityAttribute(UpstreamModel):
 
     attribute_id: int = Field(validation_alias="attributeId")
     attribute_name: str = Field(validation_alias="attributeName")
+
+
+class CommodityData(UpstreamModel):
+    """One forecast record of PSD's three data operations.
+
+    ``PSDData_GetCountryCommodityDataByYear``, ``PSDData_GetCommodityDataByYear`` (the
+    ``country/all`` form) and ``PSDData_GetWorldCommodityDataByYear`` answer the same
+    record: one per country (``"00"`` for the world), commodity, market year and
+    attribute. Shape from the fixtures ``wheat_us_2023`` (15 records), ``corn_all_2023``
+    and ``wheat_all_2023`` (1,875 and 1,845), ``soybeans_world_2023`` and
+    ``wheat_world_2023`` (13 and 15). Upstream sends the years and the month as digit
+    strings (``"2023"``, ``"07"``), parsed to ``int`` here as Quick Stats' ``year`` is;
+    ``value`` arrives as a JSON number and becomes ``Decimal`` (ADR-0008). Nothing is
+    renamed, converted or re-based: a PSD market year stays a PSD market year, PSD
+    country codes are not ISO codes, and ``unit_id`` names the unit of ``value``.
+
+    ``calendar_year`` and ``month`` are the PSD release that last revised the record:
+    for wheat, market year 2023, each of the 123 countries carries exactly the
+    ``releaseYear``/``releaseMonth`` that ``PSDData_GetDataReleaseInfo`` lists for it
+    (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10).
+    That is also where a task's ``meta.published_at`` comes from: see
+    ``DataReleaseInfo``.
+
+    Attributes:
+        commodity_code: ``commodityCode``, e.g. ``"0410000"`` (Wheat).
+        country_code: ``countryCode``, PSD's code, e.g. ``"US"``; ``"00"`` in world records.
+        market_year: ``marketYear``, PSD's market year, e.g. ``2023``.
+        calendar_year: ``calendarYear``, year of the release that last revised the
+            record, e.g. ``2026``.
+        month: ``month``, month of that release, 1 to 12 (upstream ``"07"`` is ``7``).
+        attribute_id: ``attributeId``, e.g. ``AttributeId.PRODUCTION`` (28); every id
+            recorded is a member of the packaged ``commodityAttributes`` list.
+        unit_id: ``unitId``, e.g. ``UnitId._1000_MT`` (8); every id recorded is a member
+            of the packaged ``unitsOfMeasure`` list.
+        value: ``value``, e.g. ``Decimal("49095.0")``, in the unit ``unit_id`` names.
+    """
+
+    commodity_code: str = Field(validation_alias="commodityCode")
+    country_code: str = Field(validation_alias="countryCode")
+    market_year: int = Field(validation_alias="marketYear")
+    calendar_year: int = Field(validation_alias="calendarYear")
+    month: int = Field(validation_alias="month")
+    attribute_id: AttributeId = Field(validation_alias="attributeId")
+    unit_id: UnitId = Field(validation_alias="unitId")
+    value: Decimal = Field(validation_alias="value")
+
+
+class DataReleaseInfo(UpstreamModel):
+    """One record of ``PSDData_GetDataReleaseInfo`` (``commodity/{code}/dataReleaseDates``).
+
+    Shape from ``tests/fixtures/PSDData_GetDataReleaseInfo/wheat.json``: 7,754 records,
+    one per country and market year (1960 to 2026), 145 countries, no world (``"00"``)
+    record. The release is a year and a month as digit strings, no day, no time, no time
+    zone; both are parsed to ``int`` and nothing is combined into a date here.
+
+    Source of ``meta.published_at``: ``get_data`` and ``get_world_data`` take the
+    record of the requested commodity and market year, for the requested country, or
+    the latest across countries for ``country/all`` and the world, and report the first
+    day of that release month at 00:00 UTC. PSD gives the month only, so the day and
+    time are a convention, not upstream's; ``None`` when no record matches.
+
+    Attributes:
+        commodity_code: ``commodityCode``, e.g. ``"0410000"``.
+        country_code: ``countryCode``, PSD's code, e.g. ``"US"``.
+        market_year: ``marketYear``, e.g. ``2023``.
+        release_year: ``releaseYear``, e.g. ``2026``.
+        release_month: ``releaseMonth``, 1 to 12 (upstream ``"07"`` is ``7``).
+    """
+
+    commodity_code: str = Field(validation_alias="commodityCode")
+    country_code: str = Field(validation_alias="countryCode")
+    market_year: int = Field(validation_alias="marketYear")
+    release_year: int = Field(validation_alias="releaseYear")
+    release_month: int = Field(validation_alias="releaseMonth")
