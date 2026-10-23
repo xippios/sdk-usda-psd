@@ -50,6 +50,23 @@ All notable changes to this project are documented here. The format follows
   `PSDData_GetRegions` lacks, included; an unknown region is an empty list), so agents
   can see past the MCP cap of 200 rows (251 countries). Live tests check each packaged
   list against the live one.
+- Wave 2 slices, as MCP tools `usda_psd_get_*` and HTTP routes, composing the existing
+  wrappers and packaged lists, records unchanged (ADR-0003):
+  `get_balance_sheet(commodity_code, country_code, market_year)` pivots one country-year
+  into one `BalanceSheet` record, lossless, its `attributes` keyed by the packaged
+  attribute name (with the id where two records share a name, `"attribute <id>"` for an
+  id the list lacks), each `BalanceSheetEntry` with its own `unit_id`; an empty answer is
+  `NotFoundError`. `get_time_series(commodity_code, country_code, attribute_id,
+  start_year, end_year)` makes one request per market year, oldest first, and leaves a
+  year without data (404) or without the attribute out, no gap filled.
+  `get_top_countries(commodity_code, market_year, attribute_id, n=10)` ranks the
+  `country/all` records of one attribute by value, ties in upstream order, groupings
+  such as `E4` included; `meta.vintage` is the latest release among every record ranked.
+  `get_latest_release(commodity_code)` keeps the records of the newest release, with
+  that release as `meta.vintage`.
+- `params.validate_attribute_id` and `params.attribute_names`: attribute ids are checked
+  against the packaged `commodityAttributes` list before any call; `UnknownCode` names
+  the closest ids and now takes an integer value and its own reason.
 - Client (ADR-0010): `classify` maps api.data.gov's `API_KEY_*` answers to `AuthError`
   naming the code and `DATA_GOV_API_KEY`, a 429 to `RateLimitError` (`Retry-After`, else
   one hour), the gateway's `NOT_FOUND` and PSD's empty-body 404 to `NotFoundError`. The
@@ -64,7 +81,7 @@ All notable changes to this project are documented here. The format follows
   `validate_country_code` (raising `errors.UnknownCode` with the closest packaged codes,
   or a hint for `"all"` and `"00"`) and `validate_market_year`.
 - Recorded fixtures: the five lists; wheat US, wheat and corn for every country, wheat
-  and soybeans world, all 2023; the wheat release dates; an unknown commodity, country
+  and soybeans world, all 2023; wheat US 2021 and 2022 for the time series; the wheat release dates; an unknown commodity, country
   and market year; valid codes without data (wheat, Bermuda, 2023: 200 `[]`); market
   year 1900 for every country and the world (404, empty body); an invalid key; and the
   gateway's 429 (`OVER_RATE_LIMIT`, `Retry-After: 3151`, `x-ratelimit-remaining: 0`),

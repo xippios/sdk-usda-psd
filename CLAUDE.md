@@ -83,6 +83,38 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   first of the month would predate the real mid-month release, a look-ahead bias in an
   as-of store.
 
+## Slices (wave 2)
+
+Task-shaped functions in `tasks.py` over the same operations, no wrapper of their own.
+They select, order and pivot upstream's records and never change one: no derived
+totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
+
+- `get_balance_sheet(commodity_code, country_code, market_year)`: one request; the
+  records of one country-year pivoted into one `BalanceSheet`, `attributes` keyed by the
+  packaged attribute name in upstream order. A name two records of the answer share gets
+  the id (`"Total Disappearance (126)"`), an id the packaged list lacks is
+  `"attribute <id>"`; records that one entry each cannot hold (a repeated id, mixed keys,
+  colliding names) are a `ValidationError`, never merged. Each `BalanceSheetEntry` is a
+  projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
+  `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
+  `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
+- `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)`:
+  one request per market year, oldest first, at the client's pace; a year that answers
+  404, or has no record for the attribute, is absent (no `NotFoundError`, no gap
+  filling); an empty series is a valid result. Any `NotFoundError` counts as an absent
+  year, the gateway's `NOT_FOUND` included.
+- `get_top_countries(commodity_code, market_year, attribute_id, n=10)`: one
+  `country/all` request; the attribute's records sorted by `value`, largest first,
+  stable, first `n` kept. Groupings (`E4`, `T3` Africa, NEC, `X8`, `Z7`, `ZZ`) rank like
+  countries. `meta.vintage` is the latest release among every record ranked, not only
+  the `n` returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`).
+- `get_latest_release(commodity_code)`: one request; the release-list records of the
+  newest (`release_year`, `release_month`), `meta.vintage` that release (wheat:
+  `"2026-10"`, 146 records); `[]` and `None` for a commodity without releases.
+
+Attribute ids are checked against the packaged list before any call
+(`params.validate_attribute_id`, `UnknownCode` with the closest ids).
+
 ## Reference data
 
 `scripts/refresh_reference.py` packages the five lists (`commodities`, `countries`,
@@ -137,8 +169,8 @@ src/xippios/usda/psd/
   tasks.py         task functions; __all__ is what the adapters register
   mcp.py           xippios-usda-psd-mcp entry point
   http.py          FastAPI router
-  errors.py        UnknownCode: a code the packaged lists lack (InvalidRequestError)
-  params.py        packaged lists (PACKAGED_LISTS, packaged_values()) and code checks
+  errors.py        UnknownCode: a code or attribute id the packaged lists lack (InvalidRequestError)
+  params.py        packaged lists (PACKAGED_LISTS, packaged_values(), attribute_names()) and checks
   enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
   reference/       packaged code lists (CSV/JSON) plus README with provenance
 scripts/
@@ -150,12 +182,13 @@ tests/
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
   test_tasks.py    structural checks on every task plus per-task replay tests
   test_lists.py    the list_* tasks: the recorded lists, no call, filters, MCP cap
+  test_slices.py   the wave 2 slices: pivot, series, ranking, newest release, checks first
   test_api.py      replay tests for the endpoint wrappers
   test_client.py   classify on recorded error bodies, quota snapshot and pause
   test_params.py   packaged lists, enums and the code checks
   test_adapters.py the adapters expose exactly tasks.__all__
   test_layout.py   namespace levels stay empty; py.typed ships
-  test_live.py     @pytest.mark.live smoke tests, one per task
+  test_live.py     @pytest.mark.live smoke tests, one per task (14 keyed calls in all)
 docs/upstream/     documentation snapshot and FETCHED.md
 .claude/commands/  add-endpoint, record-fixture, refresh-upstream, refresh-reference-data, release-prep
 ```
