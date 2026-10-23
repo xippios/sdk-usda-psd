@@ -34,3 +34,26 @@ All notable changes to this project are documented here. The format follows
   and `validate_market_year`.
 - Recorded fixtures for the five lists, an unknown commodity, country and market year,
   and an invalid key; `CLAUDE.md` records what each answered.
+- Tasks `get_data(commodity_code, market_year, country_code=None)` (one country, or every
+  country through the `country/all` path), `get_world_data(commodity_code, market_year)`
+  and `get_release_dates(commodity_code)`, as MCP tools `usda_psd_get_data`,
+  `usda_psd_get_world_data`, `usda_psd_get_release_dates` and HTTP routes. Codes and the
+  market year are checked before any call. The data tasks fill `meta.published_at` from
+  PSD's release dates (first of the release month, UTC); a market year without data is
+  `NotFoundError` naming commodity, country and year.
+- Endpoint wrappers `PSDData_GetCountryCommodityDataByYear`,
+  `PSDData_GetCommodityDataByYear`, `PSDData_GetWorldCommodityDataByYear` and
+  `PSDData_GetDataReleaseInfo`, models `CommodityData` (`value` as `Decimal`, ids as the
+  packaged enums) and `DataReleaseInfo`; release dates are cached for an hour.
+- A spent api.data.gov quota is waited out only within the client's
+  `RetryPolicy.backoff_max`; a longer wait raises `RateLimitError` with `retry_after`
+  without sending.
+- `scripts/check-siblings.sh` and the CI job `siblings`: this wheel and
+  `xippios-usda-nass` install side by side, import, pass `uv pip check`, and add no
+  `__init__.py` to `xippios/` or `xippios/usda/` (ADR-0006).
+
+### Fixed
+
+- Cached release dates failed to decode when upstream had sent them gzip-compressed:
+  core's cache keeps `content-encoding` over the decoded body. The package's cache
+  backend drops the wire-encoding headers until core does.

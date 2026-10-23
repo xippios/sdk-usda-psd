@@ -12,7 +12,7 @@ that works here; the family rules it points to apply as well.
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
 | Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header |
-| Rate limit | 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. The api.data.gov gateway enforces 1,000 requests per rolling hour per key, observed in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package using the same `DATA_GOV_API_KEY`. A 429 raises `RateLimitError` with `retry_after` from `Retry-After`, else 3600 s; once `x-ratelimit-remaining` reaches 0 the next request waits that long instead of firing into a 429 (`QuotaAwareClient`); `quota()` reports what is left |
+| Rate limit | 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. The api.data.gov gateway enforces 1,000 requests per rolling hour per key, observed in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package using the same `DATA_GOV_API_KEY`. A 429 raises `RateLimitError` with `retry_after` from `Retry-After`, else 3600 s. Once `x-ratelimit-remaining` reaches 0 the next request never fires into a 429 (`QuotaAwareClient`): it waits the quota out when the wait is within the client's `RetryPolicy.backoff_max` (30 s by default, the same bound core uses for a `Retry-After`), otherwise it raises `RateLimitError` with `retry_after` without sending; `quota()` reports what is left |
 | Write tools | no, this package is read-only |
 
 The snapshot in `docs/upstream/` is the reference for names, parameters and semantics.
@@ -43,6 +43,28 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   recorded, so whether it carries `Retry-After` is not known; until it is, the client
   assumes not and falls back to one hour (api.data.gov: "The block will automatically be
   lifted by waiting an hour").
+- Data records (`PSDData_GetCountryCommodityDataByYear`, `PSDData_GetCommodityDataByYear`,
+  `PSDData_GetWorldCommodityDataByYear`; `models.CommodityData`): `commodityCode`,
+  `countryCode` (`"00"` in world records), `marketYear`, `calendarYear` and `month` as
+  digit strings (`"2023"`, `"2026"`, `"07"`, parsed to `int`), `attributeId` and `unitId`
+  as integers (every recorded id is in the packaged lists, so they are typed with the
+  enums), `value` as a JSON number (`Decimal`). One record per country and attribute;
+  wheat US 2023 has 15.
+- `country/all` is the largest answer and has no paging: corn 2023 is 1,875 records from
+  125 countries, 275,759 bytes of JSON (`corn_all_2023`); wheat 2023 is 1,845 from 123.
+- Release dates (`PSDData_GetDataReleaseInfo`; `models.DataReleaseInfo`): one record per
+  country and market year, `commodityCode`, `countryCode`, `marketYear`, `releaseYear`,
+  `releaseMonth`, all digit strings; a month, no day, no time, no zone. Wheat: 7,754
+  records, 145 countries, market years 1960 to 2026, no world record, about 840 KB.
+  `release_client` keeps the answer one hour (`RELEASE_DATES_CACHE`).
+- A data record's `calendarYear`/`month` is the release that last revised it: for wheat
+  2023 every one of the 123 countries matches its release record exactly, and the world
+  records carry the latest of them (2026-10).
+- `meta.published_at` of `get_data` and `get_world_data` comes from those release dates:
+  the release month of the market year for the requested country, or the latest across
+  countries for `country/all` and the world, as the first of that month 00:00 UTC (PSD
+  gives the month only, so day and time are a convention). `None` when the list has no
+  matching record or the answer is empty. `get_release_dates` leaves it `None`.
 
 ## Reference data
 
@@ -51,6 +73,11 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
 in `reference/README.md`, and regenerates `enums.py`. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
 names a code the package lacks.
+
+`enums.AttributeId` and `enums.UnitId` are `IntEnum`s, a deliberate departure from
+conventions §3 ("upstream enums become `StrEnum`"): PSD's ids are integers in the lists
+and in every data record, and fidelity to upstream wins. Where upstream gives two ids the
+same name, both members carry the id (`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
 
 ## Read first, in this order
 
@@ -78,7 +105,7 @@ src/xippios/usda/psd/
   __init__.py      public surface: __version__ and re-exported task functions
   py.typed         PEP 561 marker; consumers' mypy --strict needs it
   _version.py      __version__ from distribution metadata
-  _client.py       the one configured AsyncClient (base URL, key, rate limit)
+  _client.py       the configured client (base URL, key, rate limit, classify, quota)
   models.py        pydantic models mirroring upstream payloads (UpstreamModel)
   api/             endpoint wrappers, one module per upstream operation
   tasks.py         task functions; __all__ is what the adapters register
@@ -90,6 +117,7 @@ src/xippios/usda/psd/
   reference/       packaged code lists (CSV/JSON) plus README with provenance
 scripts/
   refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py
+  check-siblings.sh      this wheel and xippios-usda-nass share xippios.usda (CI job siblings)
 tests/
   conftest.py      enables xippios.core.testing.plugin; placeholder key for replay
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
