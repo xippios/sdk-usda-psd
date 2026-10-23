@@ -14,7 +14,7 @@ from xippios.core.testing import mcp_call
 from xippios.usda.psd import __version__, tasks
 from xippios.usda.psd._client import API_KEY_ENV, BASE_URL, auth
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import UnknownCode
+from xippios.usda.psd.errors import NoDataForYear, UnknownCode
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import DataReleaseInfo
 
@@ -217,8 +217,9 @@ def test_a_market_year_without_data_is_not_found(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture(DATA, "unknown_year")
-    with pytest.raises(NotFoundError) as info:
+    with pytest.raises(NoDataForYear) as info:
         tasks.get_data(WHEAT, 1900, "US")
+    assert info.value.path == "/api/psd/commodity/0410000/country/US/year/1900"
     message = str(info.value)
     assert "commodity 0410000, country US, market year 1900" in message
     assert "upstream answered HTTP 404" in message
@@ -330,7 +331,7 @@ def test_a_market_year_without_data_is_not_found_for_every_country(
 ) -> None:
     """Recorded: ``country/all`` for 1900 answers 404 with an empty body, like one country."""
     route = replay_fixture(ALL, "year_1900")
-    with pytest.raises(NotFoundError) as info:
+    with pytest.raises(NoDataForYear) as info:
         tasks.get_data(WHEAT, 1900)
     assert "commodity 0410000, every country, market year 1900" in str(info.value)
     assert "upstream answered HTTP 404" in str(info.value)
@@ -342,8 +343,43 @@ def test_a_market_year_without_data_is_not_found_for_the_world(
 ) -> None:
     """Recorded: the world form for 1900 answers 404 with an empty body as well."""
     route = replay_fixture(WORLD, "year_1900")
-    with pytest.raises(NotFoundError) as info:
+    with pytest.raises(NoDataForYear) as info:
         tasks.get_world_data(WHEAT, 1900)
     assert "commodity 0410000, the world, market year 1900" in str(info.value)
     assert "upstream answered HTTP 404" in str(info.value)
     assert route.call_count == 1
+
+
+GATEWAY_NOT_FOUND = {
+    "error": {
+        "code": "NOT_FOUND",
+        "message": "The requested URL was not found on this server.",
+    }
+}
+"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, as ``test_client.py``
+builds it."""
+
+
+@pytest.mark.parametrize(
+    ("path", "call"),
+    [
+        ("country/US/year/2023", lambda: tasks.get_data(WHEAT, 2023, "US")),
+        ("country/all/year/2023", lambda: tasks.get_data(WHEAT, 2023)),
+        ("world/year/2023", lambda: tasks.get_world_data(WHEAT, 2023)),
+    ],
+    ids=["one_country", "every_country", "world"],
+)
+def test_the_gateways_not_found_propagates_unchanged(
+    respx_mock: respx.MockRouter, path: str, call: Callable[[], object]
+) -> None:
+    """Only PSD's empty 404 means "no data for this market year"; the gateway's 404 says
+    the route is wrong and reaches the caller as classify raised it."""
+    path = f"/api/psd/commodity/{WHEAT}/{path}"
+    respx_mock.get(f"{BASE_URL}{path}").mock(
+        return_value=httpx.Response(404, json=GATEWAY_NOT_FOUND)
+    )
+    with pytest.raises(NotFoundError) as info:
+        call()
+    assert not isinstance(info.value, NoDataForYear)
+    assert str(info.value).startswith(f"api.data.gov has no route for {path}")
+    assert "PSD has no data for commodity" not in str(info.value)

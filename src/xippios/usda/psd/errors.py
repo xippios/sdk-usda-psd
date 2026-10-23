@@ -18,15 +18,17 @@ class NoDataForYear(NotFoundError):
     answer on a data path only. The gateway's 404 (``{"error": {"code": "NOT_FOUND",
     ...}}``, no such route) stays a plain ``NotFoundError``: it says the request is wrong,
     not that the year is empty. ``get_time_series`` skips a year that raises this and
-    lets every other error through.
+    lets every other error through; the other data tasks raise it again with a message
+    naming commodity, country and market year.
 
     Attributes:
         path: The request path, e.g. ``"/api/psd/commodity/0410000/country/US/year/1900"``.
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, message: str | None = None) -> None:
         super().__init__(
-            f"PSD Online has no data for {path} (HTTP 404 with an empty body)", source=SOURCE
+            message or f"PSD Online has no data for {path} (HTTP 404 with an empty body)",
+            source=SOURCE,
         )
         self.path = path
 

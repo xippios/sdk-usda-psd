@@ -175,6 +175,19 @@ def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
     assert f"no data for {error.path} (HTTP 404 with an empty body)" in error.message
 
 
+def test_the_content_type_is_compared_without_case() -> None:
+    """NOT RECORDED as such: the recorded empty 404 with its content type upper-cased.
+    Media types are case-insensitive (RFC 9110), so it is still PSD's empty year."""
+    fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
+    response = httpx.Response(
+        404,
+        headers=[("Content-Type", "TEXT/PLAIN; charset=utf-8")],
+        content=b"",
+        request=httpx.Request("GET", fixture.request.url),
+    )
+    assert isinstance(classify(response), NoDataForYear)
+
+
 def test_an_empty_404_is_no_data_for_year_only_on_a_data_path_as_text() -> None:
     """NOT RECORDED: the recorded empty 404 moved off a data path, or without its
     ``text/plain``. Neither is PSD's answer for an empty year, so neither is skipped by a

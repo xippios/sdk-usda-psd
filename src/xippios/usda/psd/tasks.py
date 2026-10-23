@@ -94,6 +94,10 @@ SERIES_START = 1960
 """First market year ``get_time_series`` asks for: the snapshot's summary of the data
 operations says "PSD Database has data for most commodities since year 1960"."""
 
+SERIES_MAX_YEARS = 100
+"""Most market years one ``get_time_series`` call spans, a self-imposed sanity bound:
+1960 to the current forecast years is about 67 requests, 1960 to 9999 would be 8,040."""
+
 
 def _vintage(records: list[CommodityData]) -> str | None:
     """The latest ``calendarYear``-``month`` across ``records``, zero-padded; ``None`` if empty."""
@@ -104,13 +108,18 @@ def _vintage(records: list[CommodityData]) -> str | None:
 
 
 def _absent(
-    exc: NotFoundError, commodity_code: str, country: str, market_year: int
-) -> NotFoundError:
-    return NotFoundError(
+    exc: NoDataForYear, commodity_code: str, country: str, market_year: int
+) -> NoDataForYear:
+    """PSD's empty 404 again, naming what was asked for.
+
+    Only ``NoDataForYear`` means "no data for this market year"; any other
+    ``NotFoundError`` (the gateway's ``NOT_FOUND``) is not caught and propagates as is.
+    """
+    return NoDataForYear(
+        exc.path,
         f"PSD has no data for commodity {commodity_code}, {country}, market year "
         f"{market_year}: upstream answered HTTP 404 ({exc.message}). PSD has data for most "
         "commodities since 1960.",
-        source=SOURCE,
     )
 
 
@@ -161,7 +170,7 @@ async def get_data_async(
             records = await api.PSDData_GetCountryCommodityDataByYear(
                 commodity_code, country_code, market_year
             )
-    except NotFoundError as exc:
+    except NoDataForYear as exc:
         country = "every country" if country_code is None else f"country {country_code}"
         raise _absent(exc, commodity_code, country, market_year) from exc
     meta = ResultMeta(source=SOURCE, endpoint=endpoint, vintage=_vintage(records), request=request)
@@ -196,7 +205,7 @@ async def get_world_data_async(
     }
     try:
         records = await api.PSDData_GetWorldCommodityDataByYear(commodity_code, market_year)
-    except NotFoundError as exc:
+    except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "the world", market_year) from exc
     meta = ResultMeta(
         source=SOURCE,
@@ -251,7 +260,7 @@ async def get_release_dates_async(
 
 
 def _attribute_key(attribute_id: int, names: dict[int, str], shared: set[str]) -> str:
-    """The ``BalanceSheet.attributes`` key of an id, the same in every answer.
+    """The ``BalanceSheet.attributes`` key of an id, the same in every answer of a version.
 
     The id's name in the packaged ``commodityAttributes`` list (``names``); for a name
     the list gives several ids (``shared``: ``"Total Disappearance"`` is 126 and 173,
@@ -323,12 +332,15 @@ async def get_balance_sheet_async(
     Nothing is derived, converted or renamed. Names are not unique upstream: an id
     whose name the packaged list gives to several ids (``"Total Disappearance"`` is 126
     and 173, ``"Fresh Dom. Consumption"`` 133 and 135) is always keyed with its id,
-    ``"Total Disappearance (126)"``, so an id has the same key in every answer; an id
-    the packaged list lacks is keyed ``"attribute <id>"``. ``meta.vintage`` is the PSD
-    release that last revised the figures (``"2026-07"``); ``meta.published_at`` stays
-    empty, since PSD gives no day. Codes and the year are checked before the call.
-    Valid codes without data (PSD answers an empty list) and a market year without data
-    both raise ``NotFoundError`` naming commodity, country and year.
+    ``"Total Disappearance (126)"``, so an id has the same key in every answer of a
+    package version; an id the packaged list lacks is keyed ``"attribute <id>"``. Keys
+    come from the packaged list: a reference refresh that renames an attribute, or adds
+    an id under an existing name, changes keys and is a breaking change (conventions
+    §12), recorded in the CHANGELOG. ``meta.vintage`` is the PSD release that last
+    revised the figures (``"2026-07"``); ``meta.published_at`` stays empty, since PSD
+    gives no day. Codes and the year are checked before the call. Valid codes without
+    data (PSD answers an empty list) raise ``NotFoundError``, a market year without data
+    ``errors.NoDataForYear``, both naming commodity, country and year.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -350,7 +362,7 @@ async def get_balance_sheet_async(
         records = await api.PSDData_GetCountryCommodityDataByYear(
             commodity_code, country_code, market_year
         )
-    except NotFoundError as exc:
+    except NoDataForYear as exc:
         raise _absent(exc, commodity_code, f"country {country_code}", market_year) from exc
     if not records:
         raise NotFoundError(
@@ -381,16 +393,18 @@ async def get_time_series_async(
     first, at the client's pace of one request per second, and each counts against
     api.data.gov's quota of 1,000 requests per hour per key: 2021 to 2023 is three
     requests and about three seconds, 1960 to 2026 sixty-seven, so ask for the years you
-    need. Of each answer the record with ``attribute_id`` is kept exactly as upstream
-    sent it, ordered by market year: ``value`` is in its ``unit_id``, and
-    ``calendar_year`` and ``month`` name the release that last revised that year, which
-    may differ from year to year. A market year PSD has no data for (its empty HTTP 404,
-    also for a future year, which still costs its request), or whose answer has no
-    record for the attribute, is absent from the list: no gap is filled, nothing
-    interpolated, no error raised; a range without any record is an empty list. Any
-    other error, the gateway's own 404 included, is raised. ``meta.vintage`` is the
-    latest release across the records (``"2026-07"``); ``meta.published_at`` stays
-    empty. Codes, the attribute and both years are checked before the first request.
+    need; a range of more than 100 market years is refused. Of each answer the record
+    with ``attribute_id`` is kept exactly as upstream sent it, ordered by market year:
+    ``value`` is in its ``unit_id``, and ``calendar_year`` and ``month`` name the
+    release that last revised that year, which may differ from year to year. A market
+    year PSD has no data for (its empty HTTP 404, recorded for 1900), or whose answer
+    has no record for the attribute, is absent from the list: no gap is filled, nothing
+    interpolated, no error raised; a range without any record is an empty list. A year
+    beyond PSD's forecasts is expected to answer the same 404 (not recorded) and still
+    costs its request. Any other error, the gateway's own 404 included, is raised.
+    ``meta.vintage`` is the latest release across the records (``"2026-07"``);
+    ``meta.published_at`` stays empty. Codes, the attribute, both years and the range
+    are checked before the first request.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -402,7 +416,7 @@ async def get_time_series_async(
         start_year: First PSD market year, 1960 or later (PSD: "PSD Database has data
             for most commodities since year 1960"), e.g. ``2021``.
         end_year: Last PSD market year, included, e.g. ``2023``; not before
-            ``start_year``.
+            ``start_year`` and at most 99 years after it. No other bound.
     """
     validate_commodity_code(commodity_code)
     validate_country_code(country_code)
@@ -420,6 +434,13 @@ async def get_time_series_async(
         raise InvalidRequestError(
             f"start_year {start_year} is after end_year {end_year}: pass the earlier market "
             "year first, e.g. start_year=2021, end_year=2023.",
+            source=SOURCE,
+        )
+    if end_year - start_year + 1 > SERIES_MAX_YEARS:
+        raise InvalidRequestError(
+            f"{start_year} to {end_year} is {end_year - start_year + 1} market years, one "
+            f"request each; a series spans at most {SERIES_MAX_YEARS}. PSD's data starts in "
+            "1960 and reaches the current forecast year, so narrow the range.",
             source=SOURCE,
         )
     request: dict[str, str | int] = {
@@ -493,7 +514,7 @@ async def get_top_countries_async(
     }
     try:
         records = await api.PSDData_GetCommodityDataByYear(commodity_code, market_year)
-    except NotFoundError as exc:
+    except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "every country", market_year) from exc
     ranked = sorted(
         (record for record in records if record.attribute_id == attribute_id),
@@ -534,7 +555,11 @@ async def get_latest_release_async(commodity_code: str) -> Result[list[DataRelea
     stored vintage older than it means the listed countries and market years have
     changed since. A commodity without any release gives an empty list and
     ``meta.vintage`` ``None``; ``meta.published_at`` stays empty, since PSD gives no
-    day. ``get_release_dates`` returns the whole list.
+    day. The MCP server returns at most 200 rows, and a release that adds a market year
+    and revises earlier ones can exceed it: the recorded wheat list has 146 records of
+    2026-10 and 130 more still carrying 2026-09, so the September answer held between
+    130 and 276 rows. ``get_release_dates(commodity_code, market_year=...,
+    country_code=...)`` returns any part of the list in full.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),

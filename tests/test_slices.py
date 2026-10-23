@@ -235,7 +235,7 @@ def test_balance_sheet_for_a_market_year_without_data_is_not_found(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture(DATA, "unknown_year")
-    with pytest.raises(NotFoundError) as info:
+    with pytest.raises(NoDataForYear) as info:
         tasks.get_balance_sheet(WHEAT, "US", 1900)
     assert "commodity 0410000, country US, market year 1900" in str(info.value)
     assert "upstream answered HTTP 404" in str(info.value)
@@ -379,6 +379,24 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
     assert later.call_count == 0, "nothing after the error is requested"
 
 
+def test_a_series_may_span_exactly_the_bound(
+    replay_fixture: Callable[[str, str], respx.Route],
+    respx_mock: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound counts market years, ends included: with it lowered to 3, 2021 to 2023 is
+    asked for and 2021 to 2024 refused before any request. The real bound is 100."""
+    assert tasks.SERIES_MAX_YEARS == 100
+    monkeypatch.setattr(tasks, "SERIES_MAX_YEARS", 3)
+    with pytest.raises(InvalidRequestError, match="2021 to 2024 is 4 market years"):
+        tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 2021, 2024)
+    assert not respx_mock.calls
+    for year in (2021, 2022, 2023):
+        replay_fixture(DATA, f"wheat_us_{year}")
+    result = tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 2021, 2023)
+    assert [r.market_year for r in result.data] == [2021, 2022, 2023]
+
+
 def test_a_series_of_an_attribute_the_answers_lack_is_empty(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
@@ -493,10 +511,42 @@ def test_top_countries_for_a_market_year_without_data_is_not_found(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture(ALL, "year_1900")
-    with pytest.raises(NotFoundError) as info:
+    with pytest.raises(NoDataForYear) as info:
         tasks.get_top_countries(WHEAT, 1900, AttributeId.PRODUCTION)
     assert "commodity 0410000, every country, market year 1900" in str(info.value)
     assert route.call_count == 1
+
+
+GATEWAY_NOT_FOUND = {
+    "error": {
+        "code": "NOT_FOUND",
+        "message": "The requested URL was not found on this server.",
+    }
+}
+"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, as ``test_client.py``
+builds it."""
+
+
+@pytest.mark.parametrize(
+    ("path", "call"),
+    [
+        (_path(2023), lambda: tasks.get_balance_sheet(WHEAT, "US", 2023)),
+        (_path(2023, "all"), lambda: tasks.get_top_countries(WHEAT, 2023, 28)),
+    ],
+    ids=["get_balance_sheet", "get_top_countries"],
+)
+def test_the_gateways_not_found_propagates_unchanged(
+    respx_mock: respx.MockRouter, path: str, call: Callable[[], object]
+) -> None:
+    """Only PSD's empty 404 means "no data for this market year"; the gateway's 404 says
+    the route is wrong and reaches the caller as classify raised it."""
+    respx_mock.get(f"https://api.fas.usda.gov{path}").mock(
+        return_value=httpx.Response(404, json=GATEWAY_NOT_FOUND)
+    )
+    with pytest.raises(NotFoundError) as info:
+        call()
+    assert not isinstance(info.value, NoDataForYear)
+    assert str(info.value).startswith(f"api.data.gov has no route for {path}")
 
 
 @pytest.mark.anyio
@@ -601,6 +651,10 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     assert "PSD Database has data for most commodities since year 1960" in str(early.value)
     with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later"):
         tasks.get_time_series(WHEAT, "US", 28, 1900, 1900)
+    with pytest.raises(InvalidRequestError, match="1960 to 2060 is 101 market years"):
+        tasks.get_time_series(WHEAT, "US", 28, 1960, 2060)
+    with pytest.raises(InvalidRequestError, match="spans at most 100"):
+        tasks.get_time_series(WHEAT, "US", 28, 1960, 9999)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_time_series(WHEAT, "US", 28, 2021, 20230)
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):

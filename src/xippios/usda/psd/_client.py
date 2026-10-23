@@ -258,7 +258,7 @@ def classify(response: httpx.Response) -> XippiosError | None:
                 source=SOURCE,
             )
         if not response.content.strip():
-            content_type = response.headers.get("content-type", "")
+            content_type = response.headers.get("content-type", "").lower()
             if content_type.startswith("text/plain") and DATA_PATH.fullmatch(path):
                 # errors imports SOURCE from this module, so it is imported here, not above
                 from xippios.usda.psd.errors import NoDataForYear

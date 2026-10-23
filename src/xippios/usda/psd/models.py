@@ -231,8 +231,10 @@ class BalanceSheet(UpstreamModel):
             packaged ``commodityAttributes`` list spells it (``"Production"``,
             ``"Ending Stocks"``). A name the list gives to several ids always carries the
             id, ``"Total Disappearance (126)"`` (today 126, 173, 133 and 135), so an id
-            has the same key in every answer; an id the packaged list lacks is keyed
-            ``"attribute <id>"``.
+            has the same key in every answer of a package version; an id the packaged
+            list lacks is keyed ``"attribute <id>"``. A reference refresh that renames an
+            attribute or adds an id under an existing name changes keys: a breaking
+            change (conventions §12), recorded in the CHANGELOG.
     """
 
     commodity_code: str
