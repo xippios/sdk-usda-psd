@@ -485,6 +485,19 @@ async def get_top_countries_async(
     return Result(data=ranked[:n], meta=meta)
 
 
+def _latest(releases: list[DataReleaseInfo]) -> tuple[list[DataReleaseInfo], str | None]:
+    """The records of the newest release and that release as ``"YYYY-MM"``; pure, no call.
+
+    Records keep upstream's order; an empty list gives ``([], None)``.
+    """
+    newest = max(((r.release_year, r.release_month) for r in releases), default=None)
+    if newest is None:
+        return [], None
+    year, month = newest
+    latest = [r for r in releases if (r.release_year, r.release_month) == newest]
+    return latest, f"{year:04d}-{month:02d}"
+
+
 async def get_latest_release_async(commodity_code: str) -> Result[list[DataReleaseInfo]]:
     """Which countries and market years PSD's newest release of a commodity revised.
 
@@ -505,12 +518,11 @@ async def get_latest_release_async(commodity_code: str) -> Result[list[DataRelea
     """
     validate_commodity_code(commodity_code)
     releases = await api.PSDData_GetDataReleaseInfo(commodity_code)
-    newest = max(((r.release_year, r.release_month) for r in releases), default=None)
-    latest = [r for r in releases if (r.release_year, r.release_month) == newest]
+    latest, vintage = _latest(releases)
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
-        vintage=None if newest is None else f"{newest[0]:04d}-{newest[1]:02d}",
+        vintage=vintage,
         request={"commodity_code": commodity_code},
     )
     return Result(data=latest, meta=meta)
