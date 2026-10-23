@@ -1,8 +1,10 @@
 """The client's error mapping and api.data.gov quota handling.
 
-Recorded answers come from ``tests/fixtures``. The gateway's 429 and its ``NOT_FOUND``
-404 were not recorded (provoking a 429 spends the key's hourly quota); the tests that
-need them build the response from api.data.gov's developer manual and say so.
+Recorded answers come from ``tests/fixtures``, the gateway's 429 included
+(``PSDData_GetCommodities/over_rate_limit.json``, recorded after spending the key's
+hourly quota on 2026-10-23). Cases the recordings do not cover (the gateway's
+``NOT_FOUND`` 404, the other ``API_KEY_*`` codes, a 429 without ``Retry-After`` or with
+a short one) are built in the recorded body's shape and say so.
 """
 
 import dataclasses
@@ -60,7 +62,7 @@ def recorded(endpoint: str, case: str) -> httpx.Response:
 
 
 def synthesised(status: int, body: object, headers: dict[str, str] | None = None) -> httpx.Response:
-    """NOT RECORDED: an answer shaped as api.data.gov's developer manual documents it."""
+    """NOT RECORDED as such: an answer in the shape api.data.gov documents and sends."""
     return httpx.Response(
         status,
         json=body,
@@ -69,14 +71,10 @@ def synthesised(status: int, body: object, headers: dict[str, str] | None = None
     )
 
 
-OVER_RATE_LIMIT = {
-    "error": {
-        "code": "OVER_RATE_LIMIT",
-        "message": "You have exceeded your rate limit. Try again later or contact us at "
-        "https://api.fas.usda.gov:443/contact/ for assistance",
-    }
-}
-"""api.data.gov's documented 429 body shape; the message text is illustrative, not recorded."""
+OVER_RATE_LIMIT = json.loads(
+    load_fixture(FIXTURES / "PSDData_GetCommodities" / "over_rate_limit.json").response.body
+)
+"""The recorded 429 body, for the variants built around it."""
 
 
 def test_rate_limit_is_one_request_per_second_without_burst() -> None:
@@ -175,25 +173,46 @@ def test_other_statuses_fall_through_to_core() -> None:
     assert classify(recorded("PSDData_GetCommodities", "all")) is None
 
 
-def test_429_with_retry_after_carries_it() -> None:
-    """NOT RECORDED: OVER_RATE_LIMIT with a Retry-After header."""
-    response = synthesised(
-        429,
-        OVER_RATE_LIMIT,
-        {"Retry-After": "120", "x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"},
-    )
+def test_the_recorded_429_is_a_rate_limit_error_with_its_retry_after() -> None:
+    response = recorded("PSDData_GetCommodities", "over_rate_limit")
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "3151"
+    assert response.headers["x-ratelimit-limit"] == "1000"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    assert response.json()["error"]["code"] == "OVER_RATE_LIMIT"
     error = classify(response)
     assert isinstance(error, RateLimitError)
-    assert error.retry_after == 120.0
-    assert "OVER_RATE_LIMIT" in error.message
+    assert error.retry_after == 3151.0
+    assert "OVER_RATE_LIMIT: You have exceeded your rate limit" in error.message
     assert "1000 requests per rolling hour per key" in error.message
-    assert "retry after 120 s" in error.message
+    assert "retry after 3151 s" in error.message
     assert "0 of 1000 requests left" in error.message
     assert API_KEY_ENV in error.message
+    snapshot = quota()
+    assert snapshot is not None
+    assert (snapshot.limit, snapshot.remaining, snapshot.retry_after) == (1000, 0, 3151.0)
+
+
+@pytest.mark.anyio
+async def test_the_wrapper_raises_once_on_the_recorded_429_and_refuses_the_next(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Retry-After 3151 s is beyond ``backoff_max``: core does not retry, the caller gets
+    the error, and the next request is refused before it is sent."""
+    route = replay_fixture("PSDData_GetCommodities", "over_rate_limit")
+    with pytest.raises(RateLimitError) as info:
+        await api.PSDData_GetCommodities()
+    assert info.value.retry_after == 3151.0
+    assert route.call_count == 1
+    with pytest.raises(RateLimitError, match="Nothing was sent") as refused:
+        await api.PSDData_GetRegions()
+    assert refused.value.retry_after is not None
+    assert 3140 <= refused.value.retry_after <= 3151
+    assert route.call_count == 1
 
 
 def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
-    """NOT RECORDED: OVER_RATE_LIMIT without Retry-After or quota headers."""
+    """NOT RECORDED: the recorded body without Retry-After or quota headers."""
     error = classify(synthesised(429, OVER_RATE_LIMIT))
     assert isinstance(error, RateLimitError)
     assert error.retry_after == QUOTA_WINDOW == 3600.0
@@ -204,13 +223,14 @@ def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("retry_after", "attempts"), [("3600", 1), (None, 4)])
+@pytest.mark.parametrize(("retry_after", "attempts"), [("3151", 1), (None, 4)])
 async def test_core_retries_a_429_only_within_its_backoff(
     respx_mock: respx.MockRouter, retry_after: str | None, attempts: int
 ) -> None:
-    """NOT RECORDED. A ``Retry-After`` beyond ``backoff_max`` (30 s) stops core's retries;
-    without one core retries three times at its short backoff, each another call, and the
-    caller then gets ``RateLimitError`` with the one-hour fallback."""
+    """A ``Retry-After`` beyond ``backoff_max`` (30 s), as recorded, stops core's retries;
+    without one (NOT RECORDED) core retries three times at its short backoff, each
+    another call, and the caller then gets ``RateLimitError`` with the one-hour
+    fallback."""
     sleeps: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:
@@ -223,7 +243,7 @@ async def test_core_retries_a_429_only_within_its_backoff(
     quick = QuotaAwareClient(dataclasses.replace(config, rate_limit=None), sleep=fake_sleep)
     with pytest.raises(RateLimitError) as info:
         await quick.get_json("/api/psd/commodities")
-    assert info.value.retry_after == 3600.0
+    assert info.value.retry_after == float(retry_after or 3600)
     assert route.call_count == attempts
     assert all(seconds <= RetryPolicy().backoff_max for seconds in sleeps)
 
@@ -304,7 +324,7 @@ async def test_a_spent_quota_beyond_backoff_max_is_refused_without_sending(
 async def test_a_spent_quota_within_backoff_max_is_waited_out(
     respx_mock: respx.MockRouter,
 ) -> None:
-    """NOT RECORDED: a 429 naming 20 s; the next request sleeps that long, then is sent."""
+    """NOT RECORDED: the recorded body naming 20 s; the next request sleeps, then is sent."""
     events: list[str] = []
 
     async def fake_sleep(seconds: float) -> None:

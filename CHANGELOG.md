@@ -48,6 +48,9 @@ All notable changes to this project are documented here. The format follows
 - A spent api.data.gov quota is waited out only within the client's
   `RetryPolicy.backoff_max`; a longer wait raises `RateLimitError` with `retry_after`
   without sending.
+- Recorded the gateway's 429 (`OVER_RATE_LIMIT`, `Retry-After: 3151`,
+  `x-ratelimit-remaining: 0`) after spending the hourly quota; `classify` was already
+  right for it, and the tests now use the recording.
 - `scripts/check-siblings.sh` and the CI job `siblings`: this wheel and
   `xippios-usda-nass` install side by side, import, pass `uv pip check`, and add no
   `__init__.py` to `xippios/` or `xippios/usda/` (ADR-0006).

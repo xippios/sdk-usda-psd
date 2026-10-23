@@ -39,10 +39,15 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
   `API_KEY_*` codes map the same way. The gateway's `NOT_FOUND` 404 is `NotFoundError`.
 - Quota: every keyed answer carries `x-ratelimit-limit: 1000` and
-  `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. No 429 has been
-  recorded, so whether it carries `Retry-After` is not known; until it is, the client
-  assumes not and falls back to one hour (api.data.gov: "The block will automatically be
-  lifted by waiting an hour").
+  `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. Spent on purpose on
+  2026-10-23 (987 calls at the client's pace; its own gate then refused to send) and
+  recorded from a fresh process (`PSDData_GetCommodities/over_rate_limit.json`): HTTP 429,
+  `{"error": {"code": "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit.
+  Try again later or contact us for assistance: https://api.fas.usda.gov:443"}}`,
+  `Retry-After: 3151`, `x-ratelimit-limit: 1000`, `x-ratelimit-remaining: 0`. The client
+  uses that `Retry-After`; the one-hour fallback (api.data.gov: "The block will
+  automatically be lifted by waiting an hour") applies to the 200 that left `remaining`
+  at 0, which carries no `Retry-After`, and to a 429 without one.
 - Data records (`PSDData_GetCountryCommodityDataByYear`, `PSDData_GetCommodityDataByYear`,
   `PSDData_GetWorldCommodityDataByYear`; `models.CommodityData`): `commodityCode`,
   `countryCode` (`"00"` in world records), `marketYear`, `calendarYear` and `month` as

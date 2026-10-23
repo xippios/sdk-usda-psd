@@ -18,8 +18,9 @@ every recorded answer (2026-10-23) and shared by every package that uses the sam
 is worth it; the client interprets the gateway's answers and pauses instead:
 
 - every response's quota headers land in a module-level snapshot, ``quota()``;
-- a 429 becomes ``RateLimitError`` with ``retry_after`` from ``Retry-After``, or
-  ``QUOTA_WINDOW`` when the gateway sends none (not known yet; no 429 was recorded);
+- a 429 becomes ``RateLimitError`` with ``retry_after`` from ``Retry-After``, which the
+  recorded 429 carries (``over_rate_limit.json``: 3151 s), or ``QUOTA_WINDOW`` when a
+  429 comes without one;
 - when the last response left ``remaining`` at 0, the next request does not fire into a
   429 (``QuotaAwareClient``): it waits the quota out when the wait is within the client's
   ``RetryPolicy.backoff_max`` (30 s by default, the same bound core uses for a
@@ -69,10 +70,11 @@ QUOTA_WINDOW = 3600.0
 
 api.data.gov's developer manual (https://api.data.gov/docs/developer-manual/, read
 2026-10-23): "The hourly counters for your API key reset on a rolling basis" and "The
-block will automatically be lifted by waiting an hour." It documents no ``Retry-After``
-and no reset header, and the recorded answers carry only ``x-ratelimit-limit`` and
-``x-ratelimit-remaining``. One hour is therefore the only wait known to suffice; on a
-rolling window the quota may return sooner.
+block will automatically be lifted by waiting an hour." The recorded 429 names its own
+wait in ``Retry-After`` (3151 s, ``over_rate_limit.json``), which wins; this fallback
+applies to the 200 that left ``x-ratelimit-remaining`` at 0, which carries no
+``Retry-After``, and to a 429 without one. One hour is the only wait known to suffice; on
+a rolling window the quota may return sooner.
 """
 
 logger = logging.getLogger("xippios.usda.psd")
@@ -188,7 +190,10 @@ def classify(response: httpx.Response) -> XippiosError | None:
       and the variable, never the key. Recorded: ``API_KEY_INVALID``
       (``PSDData_GetCommodities/invalid_key.json``).
     - 429 (``OVER_RATE_LIMIT``) is ``RateLimitError`` with ``retry_after`` from
-      ``Retry-After``, else ``QUOTA_WINDOW``. Not recorded yet.
+      ``Retry-After``, else ``QUOTA_WINDOW``. Recorded after spending the quota on
+      2026-10-23 (``PSDData_GetCommodities/over_rate_limit.json``): ``Retry-After:
+      3151``, ``x-ratelimit-remaining: 0``, body ``{"error": {"code":
+      "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit. ..."}}``.
     - 404 with ``error.code`` ``NOT_FOUND`` is the gateway's: no such path.
     - 404 with an empty body is PSD's own answer for a query without data, recorded for
       market year 1900 (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``).
