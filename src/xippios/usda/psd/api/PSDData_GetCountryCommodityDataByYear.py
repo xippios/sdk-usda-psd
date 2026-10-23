@@ -38,6 +38,8 @@ async def PSDData_GetCountryCommodityDataByYear(
 
     Raises:
         NotFoundError: Upstream answered HTTP 404 (no data for the market year).
+        AuthError: api.data.gov refused the key in ``DATA_GOV_API_KEY``.
+        RateLimitError: api.data.gov's hourly quota for the key is spent.
     """
     path = (
         f"/api/psd/commodity/{quote(commodity_code, safe='')}"

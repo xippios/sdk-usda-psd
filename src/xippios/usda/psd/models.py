@@ -128,8 +128,8 @@ class CommodityData(UpstreamModel):
     for wheat, market year 2023, each of the 123 countries carries exactly the
     ``releaseYear``/``releaseMonth`` that ``PSDData_GetDataReleaseInfo`` lists for it
     (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10).
-    That is also where a task's ``meta.vintage`` and ``meta.published_at`` come from:
-    see ``DataReleaseInfo``.
+    A data task's ``meta.vintage`` is the latest of them across its records, formatted
+    ``"YYYY-MM"`` with the month zero-padded (``"2026-07"``).
 
     Attributes:
         commodity_code: ``commodityCode``, e.g. ``"0410000"`` (Wheat).
@@ -165,14 +165,11 @@ class DataReleaseInfo(UpstreamModel):
     record. The release is a year and a month as digit strings, no day, no time, no time
     zone; both are parsed to ``int`` and nothing is combined into a date here.
 
-    Source of ``meta.vintage`` and ``meta.published_at``: ``get_data`` and
-    ``get_world_data`` take the record of the requested commodity and market year, for
-    the requested country, or the latest across countries for ``country/all`` and the
-    world. ``vintage`` is that release as upstream gives it,
-    ``"<releaseYear>-<releaseMonth>"`` with the zero padding kept, e.g. ``"2026-07"``.
-    ``published_at`` is the first day of that month at 00:00 UTC: PSD gives the month
-    only, so the day and time are a convention, not upstream's. Both ``None`` when no
-    record matches.
+    The data records carry the same release in ``calendarYear``/``month``: for every
+    recorded case the data's latest release equals this list's record for the same
+    commodity, market year and country (or the latest across countries), so the data
+    tasks take ``meta.vintage`` from the data and need no second call.
+    ``get_release_dates`` serves this list for polling.
 
     Attributes:
         commodity_code: ``commodityCode``, e.g. ``"0410000"``.

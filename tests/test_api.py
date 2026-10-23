@@ -153,7 +153,7 @@ async def test_get_world_commodity_data(
     assert route.calls.last.request.url.path == "/api/psd/commodity/2222000/world/year/2023"
 
 
-async def test_get_data_release_info_is_cached(
+async def test_get_data_release_info(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture("PSDData_GetDataReleaseInfo", "wheat")
@@ -168,7 +168,6 @@ async def test_get_data_release_info_is_cached(
     )
     assert len({r.country_code for r in releases}) == 145
     assert "00" not in {r.country_code for r in releases}
-    assert await api.PSDData_GetDataReleaseInfo("0410000") == releases
-    assert route.call_count == 1, "the second call is answered from RELEASE_DATES_CACHE"
+    assert route.call_count == 1
     path = route.calls.last.request.url.path
     assert path == "/api/psd/commodity/0410000/dataReleaseDates"
