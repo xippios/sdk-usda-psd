@@ -12,7 +12,7 @@ that works here; the family rules it points to apply as well.
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
 | Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header. ADR-0009: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
-| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. A 429 is `RateLimitError` with `retry_after` from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s; core retries it only within `RetryPolicy.backoff_max`. The quota snapshot (`quota()`) records every answer's headers, never a cache hit's. Once `remaining` is 0 the next request never fires into a 429 (`QuotaAwareClient`): it waits the quota out inside the call, logged, when the wait is within `RetryPolicy.backoff_max` (30 s by default, the same bound core uses for a `Retry-After`), and otherwise raises `RateLimitError` with `retry_after` before sending anything, saying that nothing was sent. The wait counts from the last answer: the 429's `Retry-After`, or one hour after a 200 that left `remaining` at 0 (it carries no `Retry-After`) |
+| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. A 429 is `RateLimitError` with `retry_after` from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s; core retries it only within `RetryPolicy.backoff_max`. The quota snapshot (`quota()`) records every answer's headers, never a cache hit's. Once `remaining` is 0 the next request never fires into a 429 (`QuotaAwareClient`): it waits the quota out inside the call, logged, when the wait is within `RetryPolicy.backoff_max` (30 s by default, the same bound core uses for a `Retry-After`), and otherwise raises `RateLimitError` with `retry_after` before sending anything, saying that nothing was sent and when the quota should be back. A request a configured cache can answer is never delayed or refused (no client caches today; the pattern is what ESR, GATS and the core helper copy). The wait counts from the last answer: the 429's `Retry-After`, or one hour after a 200 that left `remaining` at 0 (it carries no `Retry-After`) |
 | Write tools | no, this package is read-only |
 
 The snapshot in `docs/upstream/` is the reference for names, parameters and semantics.
@@ -62,18 +62,19 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   country and market year, `commodityCode`, `countryCode`, `marketYear`, `releaseYear`,
   `releaseMonth`, all digit strings; a month, no day, no time, no zone. Wheat: 7,754
   records, 145 countries, market years 1960 to 2026, no world record, about 840 KB.
-  `release_client` keeps the answer one hour (`RELEASE_DATES_CACHE`).
+  `get_release_dates` serves it, filtered by market year and country after the call.
 - A data record's `calendarYear`/`month` is the release that last revised it: for wheat
   2023 every one of the 123 countries matches its release record exactly, and the world
   records carry the latest of them (2026-10).
-- `meta.vintage` and `meta.published_at` of `get_data` and `get_world_data` come from
-  one of those release records: the market year's release for the requested country, or
-  the latest across countries for `country/all` and the world. `vintage` is the release
-  as upstream gives it, `"<releaseYear>-<releaseMonth>"` zero-padded (`"2026-07"` for
-  wheat US 2023, `"2026-10"` for wheat all and world 2023); `published_at` is the first
-  of that month 00:00 UTC (PSD gives the month only, so day and time are a convention).
-  Both `None` when the list has no matching record or the answer is empty;
-  `get_release_dates` leaves both `None`.
+- `meta.vintage` of `get_data` and `get_world_data` is the latest `calendarYear`-`month`
+  across the result's records, `"YYYY-MM"` with the month zero-padded: `"2026-07"` for
+  wheat US 2023, `"2026-10"` for wheat all countries and world 2023. In every recorded
+  case it equals the release list's record for the same commodity, market year and
+  country, or the latest across countries (`test_vintage_equals_the_release_list`), so
+  the data tasks make no second call. `None` for an empty answer.
+- `meta.published_at` is `None` for every task: PSD gives a month, no day, and the
+  first of the month would predate the real mid-month release, a look-ahead bias in an
+  as-of store.
 
 ## Reference data
 
@@ -87,8 +88,8 @@ names a code the package lacks.
 conventions §3 ("upstream enums become `StrEnum`"): PSD's ids are integers in the lists
 and in every data record, and fidelity to upstream wins. Where upstream gives two ids the
 same name, both members carry the id (`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
-The enums serve parameters, validation and lookups; the models keep the ids as plain
-`int` (the NASS pattern), and members compare equal to them.
+The enums are for lookups and for the wave 2 slice parameters; the models keep the ids
+as plain `int` (the NASS pattern), and members compare equal to them.
 
 ## Read first, in this order
 
@@ -127,6 +128,7 @@ src/xippios/usda/psd/
   enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
   reference/       packaged code lists (CSV/JSON) plus README with provenance
 scripts/
+  refresh_upstream.py    regenerates the docs/upstream/ snapshot, stdlib only, no key
   refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py
   check-siblings.sh      this wheel and xippios-usda-nass share xippios.usda (CI job siblings)
 tests/
