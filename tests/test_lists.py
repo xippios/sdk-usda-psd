@@ -199,10 +199,42 @@ def test_list_countries_search_matches_code_or_name_ignoring_case(
         "NQ",  # Trust Territory of the Pacific
         "US",  # by its code and its name
     ], "SU Sudan is not one: code and name are matched one at a time, never joined"
+    assert [c.country_code for c in tasks.list_countries(search="E4").data] == ["E4"]
     both = tasks.list_countries(region_code="R01", search="united")
     assert [c.country_code for c in both.data] == ["US"]
     assert both.meta.request == {"region_code": "R01", "search": "united"}
     assert tasks.list_countries(search="atlantis").data == []
+    assert not respx_mock.calls
+
+
+def test_list_countries_search_matches_the_genc_code(respx_mock: respx.MockRouter) -> None:
+    """``"usa"`` occurs in no PSD code or name, only in the United States' GENC code."""
+    usa = tasks.list_countries(search="usa")
+    assert [(c.country_code, c.country_name, c.genc_code) for c in usa.data] == [
+        ("US", "United States", "USA")
+    ]
+    assert usa.meta.request == {"region_code": None, "search": "usa"}
+    assert tasks.list_countries(search="USA").data == usa.data
+    assert [c.country_code for c in tasks.list_countries(search="gbr").data] == ["UK"]
+    assert [c.country_code for c in tasks.list_countries(search="deu").data] == ["GM"]
+    assert [c.country_code for c in tasks.list_countries(search="che").data] == [
+        "SE",  # Seychelles, by its name
+        "SZ",  # Switzerland, by its GENC code CHE
+    ]
+    assert not respx_mock.calls
+
+
+def test_list_countries_search_skips_a_null_genc_code(respx_mock: respx.MockRouter) -> None:
+    """Upstream sends ``gencCode: null`` for 38 countries; a search passes over the null
+    without raising and still finds them by code or name."""
+    every = tasks.list_countries().data
+    assert sum(c.genc_code is None for c in every) == 38
+    africa_nec = tasks.list_countries(search="africa, nec").data
+    assert [(c.country_code, c.genc_code) for c in africa_nec] == [("T3", None)]
+    assert [c.country_code for c in tasks.list_countries(search="t3").data] == ["T3"]
+    assert tasks.list_countries(search="none").data == [], "a null is not the text 'None'"
+    nulls = [c for c in tasks.list_countries(search="").data if c.genc_code is None]
+    assert len(nulls) == 38, "an empty search keeps every country, nulls included"
     assert not respx_mock.calls
 
 

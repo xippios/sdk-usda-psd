@@ -47,7 +47,8 @@ from xippios.usda.psd import list_commodities, list_countries
 result = list_countries(region_code="R01")  # PSD's region North America (list_regions)
 [c.country_code for c in result.data]  # ["CA", "GL", "MX", "SB", "US"], upstream order
 result.meta.endpoint, result.meta.vintage  # "PSDData_GetCountries", "2026-10-23" (fetched)
-list_countries(search="united").data  # TC, UK, US: code or name, ignoring case
+list_countries(search="united").data  # TC, UK, US: code, name or GENC code, ignoring case
+list_countries(search="usa").data  # US United States, by its GENC code "USA"
 list_commodities(search="soybean").data  # meal, oil and oilseed, each also "(Local)"
 ```
 

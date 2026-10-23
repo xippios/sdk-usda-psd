@@ -236,12 +236,16 @@ def _packaged_meta(packaged: PackagedList, request: dict[str, str | None]) -> Re
     )
 
 
-def _matches(search: str | None, *fields: str | int) -> bool:
-    """Case-insensitive substring match of ``search`` in any of ``fields``; ``None`` matches."""
+def _matches(search: str | None, *fields: str | int | None) -> bool:
+    """Case-insensitive substring match of ``search`` in any of ``fields``.
+
+    A ``search`` of ``None`` matches every record; a field that is ``None`` (a country
+    without a GENC code) matches nothing.
+    """
     if search is None:
         return True
     needle = search.casefold()
-    return any(needle in str(field).casefold() for field in fields)
+    return any(needle in str(field).casefold() for field in fields if field is not None)
 
 
 async def list_commodities_async(search: str | None = None) -> Result[list[Commodity]]:
@@ -287,16 +291,17 @@ async def list_countries_async(
             four countries (Africa, NEC; Fernando Po; French Equatorial Africa; Other)
             although ``list_regions`` lacks it. A code no country carries yields an
             empty list. Omit (``None``) for every region.
-        search: Keep the countries where this text occurs, ignoring case, in the code or
-            the name, e.g. ``"united"`` (TC United Arab Emirates, UK United Kingdom, US
-            United States), ``"E4"``, ``"brazil"``. Omit (``None``) for every country.
+        search: Keep the countries where this text occurs, ignoring case, in the code,
+            the name or the GENC code, e.g. ``"united"`` (TC United Arab Emirates, UK
+            United Kingdom, US United States), ``"USA"`` (US United States, by its GENC
+            code), ``"E4"``, ``"brazil"``. Omit (``None``) for every country.
     """
     countries, packaged = _packaged("countries", list[Country])
     selected = [
         c
         for c in countries
         if (region_code is None or c.region_code == region_code)
-        and _matches(search, c.country_code, c.country_name)
+        and _matches(search, c.country_code, c.country_name, c.genc_code)
     ]
     request = {"region_code": region_code, "search": search}
     return Result(data=selected, meta=_packaged_meta(packaged, request))
