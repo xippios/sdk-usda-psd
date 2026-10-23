@@ -84,10 +84,12 @@ latest = get_latest_release("0410000")  # the countries and market years of the 
 latest.meta.vintage  # "2026-10", comparable with get_data's meta.vintage
 ```
 
-`get_balance_sheet` keys each entry by the attribute's upstream name; where two records
-share one (`"Total Disappearance"` is 126 and 173) both keys carry the id, and each entry
-keeps its own `unit_id`. `get_time_series` spends one request per market year, leaves a
-year without data out, and counts against the hourly quota like every other request.
+`get_balance_sheet` keys each entry by the attribute's upstream name; an id whose name
+upstream gives to several ids (`"Total Disappearance"` is 126 and 173) always carries the
+id, `"Total Disappearance (126)"`, and each entry keeps its own `unit_id`.
+`get_time_series` starts at 1960 at the earliest, spends one request per market year,
+leaves a year without data out, and counts against the hourly quota like every other
+request.
 `get_top_countries` excludes nothing: PSD's groupings (`E4` European Union, `T3` Africa,
 NEC, ...) rank alongside countries; filter with `list_countries` if you must.
 

@@ -54,22 +54,28 @@ All notable changes to this project are documented here. The format follows
   wrappers and packaged lists, records unchanged (ADR-0003):
   `get_balance_sheet(commodity_code, country_code, market_year)` pivots one country-year
   into one `BalanceSheet` record, lossless, its `attributes` keyed by the packaged
-  attribute name (with the id where two records share a name, `"attribute <id>"` for an
-  id the list lacks), each `BalanceSheetEntry` with its own `unit_id`; an empty answer is
-  `NotFoundError`. `get_time_series(commodity_code, country_code, attribute_id,
-  start_year, end_year)` makes one request per market year, oldest first, and leaves a
-  year without data (404) or without the attribute out, no gap filled.
+  attribute name (with the id for an id whose name the list gives to several ids, so a key
+  is the same in every answer; `"attribute <id>"` for an id the list lacks), each
+  `BalanceSheetEntry` with its own `unit_id`; an empty answer is `NotFoundError`.
+  `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)`
+  makes one request per market year from 1960 on, oldest first, and leaves a year without
+  data (`NoDataForYear`) or without the attribute out, no gap filled; any other error is
+  raised.
   `get_top_countries(commodity_code, market_year, attribute_id, n=10)` ranks the
   `country/all` records of one attribute by value, ties in upstream order, groupings
   such as `E4` included; `meta.vintage` is the latest release among every record ranked.
   `get_latest_release(commodity_code)` keeps the records of the newest release, with
   that release as `meta.vintage`.
+- `errors.NoDataForYear`, a `NotFoundError`: `classify` raises it for PSD's empty
+  `text/plain` 404 on a data path, the answer for a market year without data; the
+  gateway's `NOT_FOUND` stays a plain `NotFoundError`.
 - `params.validate_attribute_id` and `params.attribute_names`: attribute ids are checked
   against the packaged `commodityAttributes` list before any call; `UnknownCode` names
   the closest ids and now takes an integer value and its own reason.
 - Client (ADR-0010): `classify` maps api.data.gov's `API_KEY_*` answers to `AuthError`
   naming the code and `DATA_GOV_API_KEY`, a 429 to `RateLimitError` (`Retry-After`, else
-  one hour), the gateway's `NOT_FOUND` and PSD's empty-body 404 to `NotFoundError`. The
+  one hour), the gateway's `NOT_FOUND` to `NotFoundError` and PSD's empty-body 404 to
+  `NoDataForYear`, a `NotFoundError`. The
   client keeps 60 requests per minute, one at a time, asks for JSON, and records the
   gateway's `x-ratelimit-*` headers in `quota()`, never from a cache hit. Once the
   hourly quota is spent it waits before the next request when the wait is within

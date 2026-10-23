@@ -38,11 +38,15 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
 - Market year without data: HTTP 404 with an empty `text/plain` body on every data form,
   one country (`commodity/0410000/country/US/year/1900`, `unknown_year`), every country
   (`.../country/all/year/1900`) and the world (`.../world/year/1900`, both `year_1900`),
-  mapped to `NotFoundError`; the tasks re-raise it naming commodity, country and year.
+  mapped to `errors.NoDataForYear`, a `NotFoundError` (only that answer on a data path:
+  an empty 404 elsewhere or the gateway's `NOT_FOUND` stays a plain `NotFoundError`).
+  `get_time_series` skips such a year; the other tasks re-raise it as `NotFoundError`
+  naming commodity, country and year.
 - Invalid key: HTTP 403 `{"error": {"code": "API_KEY_INVALID", "message": "An invalid
   api_key was supplied. Get one at https://api.fas.usda.gov:443"}}`, no quota headers;
   mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
-  `API_KEY_*` codes map the same way. The gateway's `NOT_FOUND` 404 is `NotFoundError`.
+  `API_KEY_*` codes map the same way. The gateway's `NOT_FOUND` 404 is a plain
+  `NotFoundError` (no such route; not recorded, `test_client` builds the documented shape).
 - Quota: every keyed answer carries `x-ratelimit-limit: 1000` and
   `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. Spent on purpose on
   2026-10-23 (987 calls at the client's pace; its own gate then refused to send) and
@@ -91,23 +95,28 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
 
 - `get_balance_sheet(commodity_code, country_code, market_year)`: one request; the
   records of one country-year pivoted into one `BalanceSheet`, `attributes` keyed by the
-  packaged attribute name in upstream order. A name two records of the answer share gets
-  the id (`"Total Disappearance (126)"`), an id the packaged list lacks is
-  `"attribute <id>"`; records that one entry each cannot hold (a repeated id, mixed keys,
-  colliding names) are a `ValidationError`, never merged. Each `BalanceSheetEntry` is a
+  packaged attribute name in upstream order. An id whose name the packaged list gives to
+  several ids (126 and 173 `"Total Disappearance"`, 133 and 135 `"Fresh Dom.
+  Consumption"`) is always keyed with its id (`"Total Disappearance (126)"`), so an id has
+  the same key in every answer; an id the packaged list lacks is `"attribute <id>"`;
+  records that one entry each cannot hold (a repeated id, mixed keys, two records with the
+  same key) are a `ValidationError`, never merged. Each `BalanceSheetEntry` is a
   projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
   `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
   `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
 - `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)`:
-  one request per market year, oldest first, at the client's pace; a year that answers
-  404, or has no record for the attribute, is absent (no `NotFoundError`, no gap
-  filling); an empty series is a valid result. Any `NotFoundError` counts as an absent
-  year, the gateway's `NOT_FOUND` included.
+  one request per market year, oldest first, at the client's pace; `start_year` from
+  1960 (the snapshot: "PSD Database has data for most commodities since year 1960"),
+  no upper bound (a future year costs a request and answers 404). A year that raises
+  `NoDataForYear`, or has no record for the attribute, is absent (no gap filling); an
+  empty series is a valid result. Every other error, the gateway's `NOT_FOUND`
+  included, is raised.
 - `get_top_countries(commodity_code, market_year, attribute_id, n=10)`: one
   `country/all` request; the attribute's records sorted by `value`, largest first,
-  stable, first `n` kept. Groupings (`E4`, `T3` Africa, NEC, `X8`, `Z7`, `ZZ`) rank like
-  countries. `meta.vintage` is the latest release among every record ranked, not only
-  the `n` returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`).
+  stable, first `n` kept; no unit check, each record carries its own `unit_id`.
+  Groupings (`E4`, `T3` Africa, NEC, `X8`, `Z7`, `ZZ`) rank like countries.
+  `meta.vintage` is the latest release among every record ranked, not only the `n`
+  returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`).
 - `get_latest_release(commodity_code)`: one request; the release-list records of the
   newest (`release_year`, `release_month`), `meta.vintage` that release (wheat:
   `"2026-10"`, 146 records); `[]` and `None` for a commodity without releases.
@@ -169,7 +178,7 @@ src/xippios/usda/psd/
   tasks.py         task functions; __all__ is what the adapters register
   mcp.py           xippios-usda-psd-mcp entry point
   http.py          FastAPI router
-  errors.py        UnknownCode: a code or attribute id the packaged lists lack (InvalidRequestError)
+  errors.py        UnknownCode (a code or attribute id the packaged lists lack), NoDataForYear
   params.py        packaged lists (PACKAGED_LISTS, packaged_values(), attribute_names()) and checks
   enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
   reference/       packaged code lists (CSV/JSON) plus README with provenance
@@ -214,9 +223,10 @@ Run `/add-endpoint <upstream operation>`. In short:
    re-export it from `__init__.py`.
 5. Docstring for agents: one sentence, then `Args:` with examples of valid values for
    every parameter. The MCP tool description and the OpenAPI summary come from it.
-6. `/record-fixture` for at least one case, a replay test in `test_tasks.py` that also
-   calls the tool end to end with `xippios.core.testing.mcp_call`, a live smoke test in
-   `test_live.py`.
+6. `/record-fixture` for at least one case, a replay test in the matching test module
+   (`test_tasks.py` for the data tasks, `test_lists.py` for the `list_*` tasks,
+   `test_slices.py` for the slices) that also calls the tool end to end with
+   `xippios.core.testing.mcp_call`, a live smoke test in `test_live.py`.
 7. `CHANGELOG.md` under Unreleased, README status table, then the full check suite.
 
 Reference lookups (commodities, countries, attributes) are tasks too, named
