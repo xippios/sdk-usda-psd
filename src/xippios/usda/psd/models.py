@@ -19,8 +19,6 @@ from decimal import Decimal
 from pydantic import Field
 from xippios.core import UpstreamModel
 
-from xippios.usda.psd.enums import AttributeId, UnitId
-
 __all__ = [
     "Commodity",
     "CommodityAttribute",
@@ -130,8 +128,8 @@ class CommodityData(UpstreamModel):
     for wheat, market year 2023, each of the 123 countries carries exactly the
     ``releaseYear``/``releaseMonth`` that ``PSDData_GetDataReleaseInfo`` lists for it
     (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10).
-    That is also where a task's ``meta.published_at`` comes from: see
-    ``DataReleaseInfo``.
+    That is also where a task's ``meta.vintage`` and ``meta.published_at`` come from:
+    see ``DataReleaseInfo``.
 
     Attributes:
         commodity_code: ``commodityCode``, e.g. ``"0410000"`` (Wheat).
@@ -140,10 +138,12 @@ class CommodityData(UpstreamModel):
         calendar_year: ``calendarYear``, year of the release that last revised the
             record, e.g. ``2026``.
         month: ``month``, month of that release, 1 to 12 (upstream ``"07"`` is ``7``).
-        attribute_id: ``attributeId``, e.g. ``AttributeId.PRODUCTION`` (28); every id
-            recorded is a member of the packaged ``commodityAttributes`` list.
-        unit_id: ``unitId``, e.g. ``UnitId._1000_MT`` (8); every id recorded is a member
-            of the packaged ``unitsOfMeasure`` list.
+        attribute_id: ``attributeId``, an integer, e.g. ``28`` (Production). Plain
+            ``int`` on purpose: an id PSD adds before the packaged lists are refreshed
+            must not fail the whole answer. ``enums.AttributeId`` names the packaged ids
+            and compares equal to them (``AttributeId.PRODUCTION == 28``).
+        unit_id: ``unitId``, an integer, e.g. ``8`` (1000 MT); plain ``int`` for the same
+            reason, named by ``enums.UnitId``.
         value: ``value``, e.g. ``Decimal("49095.0")``, in the unit ``unit_id`` names.
     """
 
@@ -152,8 +152,8 @@ class CommodityData(UpstreamModel):
     market_year: int = Field(validation_alias="marketYear")
     calendar_year: int = Field(validation_alias="calendarYear")
     month: int = Field(validation_alias="month")
-    attribute_id: AttributeId = Field(validation_alias="attributeId")
-    unit_id: UnitId = Field(validation_alias="unitId")
+    attribute_id: int = Field(validation_alias="attributeId")
+    unit_id: int = Field(validation_alias="unitId")
     value: Decimal = Field(validation_alias="value")
 
 
@@ -165,11 +165,14 @@ class DataReleaseInfo(UpstreamModel):
     record. The release is a year and a month as digit strings, no day, no time, no time
     zone; both are parsed to ``int`` and nothing is combined into a date here.
 
-    Source of ``meta.published_at``: ``get_data`` and ``get_world_data`` take the
-    record of the requested commodity and market year, for the requested country, or
-    the latest across countries for ``country/all`` and the world, and report the first
-    day of that release month at 00:00 UTC. PSD gives the month only, so the day and
-    time are a convention, not upstream's; ``None`` when no record matches.
+    Source of ``meta.vintage`` and ``meta.published_at``: ``get_data`` and
+    ``get_world_data`` take the record of the requested commodity and market year, for
+    the requested country, or the latest across countries for ``country/all`` and the
+    world. ``vintage`` is that release as upstream gives it,
+    ``"<releaseYear>-<releaseMonth>"`` with the zero padding kept, e.g. ``"2026-07"``.
+    ``published_at`` is the first day of that month at 00:00 UTC: PSD gives the month
+    only, so the day and time are a convention, not upstream's. Both ``None`` when no
+    record matches.
 
     Attributes:
         commodity_code: ``commodityCode``, e.g. ``"0410000"``.

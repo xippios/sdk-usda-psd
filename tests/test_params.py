@@ -13,6 +13,7 @@ from xippios.usda.psd.errors import UnknownCode
 from xippios.usda.psd.models import (
     Commodity,
     CommodityAttribute,
+    CommodityData,
     Country,
     Region,
     UnitOfMeasure,
@@ -160,3 +161,41 @@ def test_four_digit_market_years_pass(year: int) -> None:
 def test_other_market_years_are_refused(year: int) -> None:
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         validate_market_year(year)
+
+
+DATA_FIXTURES = [
+    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2023"),
+    ("PSDData_GetCommodityDataByYear", "corn_all_2023"),
+    ("PSDData_GetCommodityDataByYear", "wheat_all_2023"),
+    ("PSDData_GetWorldCommodityDataByYear", "soybeans_world_2023"),
+    ("PSDData_GetWorldCommodityDataByYear", "wheat_world_2023"),
+]
+
+
+def test_every_recorded_id_is_in_the_packaged_lists() -> None:
+    """Reference-data freshness, not a model constraint: ``CommodityData`` keeps the ids as
+    plain ``int`` so a new upstream id never fails an answer. When this fails, a recorded
+    answer names an id the packaged lists lack: run ``/refresh-reference-data``."""
+    attribute_ids = {member.value for member in enums.AttributeId}
+    unit_ids = {member.value for member in enums.UnitId}
+    for endpoint, case in DATA_FIXTURES:
+        records = json.loads(load_fixture(FIXTURES / endpoint / f"{case}.json").response.body)
+        assert {r["attributeId"] for r in records} <= attribute_ids, case
+        assert {r["unitId"] for r in records} <= unit_ids, case
+
+
+def test_an_id_the_lists_lack_still_parses() -> None:
+    record = CommodityData.model_validate(
+        {
+            "commodityCode": "0410000",
+            "countryCode": "US",
+            "marketYear": "2023",
+            "calendarYear": "2026",
+            "month": "07",
+            "attributeId": 999,
+            "unitId": 999,
+            "value": 1.5,
+        }
+    )
+    assert (record.attribute_id, record.unit_id) == (999, 999)
+    assert 999 not in {member.value for member in enums.AttributeId}
