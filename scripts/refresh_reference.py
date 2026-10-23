@@ -1,49 +1,144 @@
 """Refresh the packaged reference data from upstream (``/refresh-reference-data``).
 
-For every list in ``LISTS`` this writes ``reference/<name>.json`` with the values and
-the fetch date, then regenerates ``enums.py`` with one ``StrEnum`` per list through
-``xippios.core.reference.render_str_enums``. Fetch through the layer-1 wrappers in
-``api/``, never through a task that might answer from the package. Run from the
-repository root with the API key in the environment::
+For every list in ``LISTS`` this fetches the records through the layer-1 wrapper in
+``api/`` (never through a task that might answer from the package) and writes
+``reference/<name>.json``: the upstream records verbatim, under upstream's field names,
+with the operation and the fetch date. It then regenerates ``enums.py`` with one
+``IntEnum`` per id list in ``ENUMS``: ``AttributeId`` from ``commodityAttributes`` and
+``UnitId`` from ``unitsOfMeasure``. Commodity and country codes stay packaged tables, not
+enums. Run from the repository root with the API key in the environment::
 
     uv run python scripts/refresh_reference.py
+
+Five requests against api.data.gov's hourly quota. Then format ``enums.py`` as
+``/refresh-reference-data`` says and update the dates in ``reference/README.md``.
+
+Why not ``xippios.core.reference.render_str_enums``: PSD's ids are integers
+(``attributeId: 28``) and the data records carry them as integers, so a ``StrEnum`` of
+``"28"`` would never compare equal to a record's value; and upstream's names are not
+unique (``"Total Disappearance"`` is both 126 and 173), so they cannot be the values
+either. ``render_id_enums`` below renders ``IntEnum`` classes instead, with member names
+from upstream's names through core's ``enum_member_name``.
 """
 
 import json
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from xippios.core import sync
-from xippios.core.reference import render_str_enums
+from xippios.core import UpstreamModel, sync
+from xippios.core.reference import enum_member_name
+
+from xippios.usda.psd import api
+from xippios.usda.psd.params import PACKAGED_LISTS
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = ROOT / "src/xippios/usda/psd"
 REFERENCE = PACKAGE_DIR / "reference"
 ENUMS = PACKAGE_DIR / "enums.py"
 
-LISTS: dict[str, Callable[[], Awaitable[list[str]]]] = {
-    # name of the list, as upstream calls it, to an async fetcher through api/, e.g.
-    # "country_code": lambda: api.list_countries(),
+LISTS: dict[str, tuple[str, Callable[[], Awaitable[Sequence[UpstreamModel]]]]] = {
+    "commodities": ("PSDData_GetCommodities", api.PSDData_GetCommodities),
+    "countries": ("PSDData_GetCountries", api.PSDData_GetCountries),
+    "regions": ("PSDData_GetRegions", api.PSDData_GetRegions),
+    "unitsOfMeasure": ("PSDData_GetUnitsOfMeasure", api.PSDData_GetUnitsOfMeasure),
+    "commodityAttributes": ("PSDData_GetCommodityAttributes", api.PSDData_GetCommodityAttributes),
 }
-"""The packaged value lists; keep ``params.PACKAGED_LISTS`` in step with the keys."""
+"""List name, as the upstream path names it, to its operation and wrapper.
+
+Keep the keys in step with ``params.PACKAGED_LISTS``.
+"""
+
+ENUMS_FROM: dict[str, tuple[str, str, str]] = {
+    "commodityAttributes": ("AttributeId", "attributeId", "attributeName"),
+    "unitsOfMeasure": ("UnitId", "unitId", "unitDescription"),
+}
+"""List name to (enum class, upstream id field, upstream name field)."""
+
+
+def upstream_record(record: UpstreamModel) -> dict[str, Any]:
+    """The record under upstream's field names, as the wrapper's model parsed it."""
+    fields = type(record).model_fields
+    return {
+        str(info.validation_alias or name): getattr(record, name) for name, info in fields.items()
+    }
+
+
+def member_names(pairs: Sequence[tuple[int, str]]) -> list[str]:
+    """``enum_member_name`` of each name; where several ids share one, each gets ``_<id>``.
+
+    Raises:
+        ValueError: When two members would still share a name.
+    """
+    names = [enum_member_name(label) for _, label in pairs]
+    counts = Counter(names)
+    members = [
+        name if counts[name] == 1 else f"{name}_{ident}"
+        for name, (ident, _) in zip(names, pairs, strict=True)
+    ]
+    if len(set(members)) != len(members):
+        raise ValueError(f"member names collide: {sorted(members)}")
+    return members
+
+
+def render_id_enums(
+    enums: Mapping[str, tuple[str, str, Sequence[tuple[int, str]]]], *, fetched: str
+) -> str:
+    """Python source for one ``IntEnum`` per id list, member names from upstream's names.
+
+    Args:
+        enums: Class name to (id field, name field, ``(id, name)`` pairs in upstream order).
+        fetched: Date to mention in each docstring.
+    """
+    lines = [
+        '"""IntEnums for PSD\'s packaged id lists (conventions §3).',
+        "",
+        "Generated by scripts/refresh_reference.py; do not edit by hand. Values are upstream's",
+        "ids; member names come from upstream's names through",
+        "``xippios.core.reference.enum_member_name``, with ``_<id>`` appended where several ids",
+        "share a name.",
+        '"""',
+        "",
+        "from enum import IntEnum",
+        "",
+        "__all__ = [" + ", ".join(f'"{cls}"' for cls in sorted(enums)) + "]",
+    ]
+    for cls, (id_field, name_field, pairs) in enums.items():
+        lines += [
+            "",
+            "",
+            f"class {cls}(IntEnum):",
+            f'    """Values of ``{id_field}`` (fetched {fetched}); names from ``{name_field}``."""',
+            "",
+        ]
+        lines += [
+            f"    {member} = {ident}"
+            for member, (ident, _) in zip(member_names(pairs), pairs, strict=True)
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def main() -> None:
     """Fetch every list, write its file and regenerate ``enums.py``."""
+    if set(LISTS) != set(PACKAGED_LISTS):
+        raise SystemExit("LISTS and params.PACKAGED_LISTS name different lists")
     today = datetime.now(UTC).date().isoformat()
-    lists: dict[str, list[str]] = {}
+    enums: dict[str, tuple[str, str, Sequence[tuple[int, str]]]] = {}
     REFERENCE.mkdir(exist_ok=True)
-    for name, fetch in LISTS.items():
-        values = sync(fetch)()
-        lists[name] = values
+    for name, (endpoint, fetch) in LISTS.items():
+        records = [upstream_record(record) for record in sync(fetch)()]
         path = REFERENCE / f"{name}.json"
-        payload = {"param": name, "fetched": today, "values": values}
-        path.write_text(json.dumps(payload, indent=2) + "\n")
-        print(f"{path.name}: {len(values)} values")  # noqa: T201
-    source = render_str_enums(lists, fetched=today, generator="scripts/refresh_reference.py")
-    ENUMS.write_text(source)
-    print(f"{ENUMS.name}: {len(lists)} enums")  # noqa: T201
+        payload = {"param": name, "endpoint": endpoint, "fetched": today, "records": records}
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"{path.name}: {len(records)} records")  # noqa: T201
+        if name in ENUMS_FROM:
+            cls, id_field, name_field = ENUMS_FROM[name]
+            pairs = [(int(record[id_field]), str(record[name_field])) for record in records]
+            enums[cls] = (id_field, name_field, pairs)
+    ENUMS.write_text(render_id_enums(enums, fetched=today), encoding="utf-8")
+    print(f"{ENUMS.name}: {len(enums)} enums")  # noqa: T201
 
 
 if __name__ == "__main__":
