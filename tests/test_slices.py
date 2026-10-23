@@ -155,8 +155,8 @@ def test_get_balance_sheet_pivots_one_country_year_losslessly(
 
 def test_balance_sheet_keys_repeated_names_and_unknown_ids_by_id() -> None:
     """Pure pivot on in-memory records: "Total Disappearance" is 126 and 173, "Fresh Dom.
-    Consumption" 133 and 135; a name shared within one answer carries the id, an id the
-    packaged list lacks is "attribute <id>"."""
+    Consumption" 133 and 135 in the packaged list; those ids always carry the id, an id
+    the packaged list lacks is "attribute <id>"."""
     ids = [28, 126, 173, 133, 135, 9999, 176]
     sheet = tasks._balance_sheet([_data(2023, attribute_id) for attribute_id in ids])
     assert list(sheet.attributes) == [
@@ -169,24 +169,34 @@ def test_balance_sheet_keys_repeated_names_and_unknown_ids_by_id() -> None:
         "Ending Stocks",
     ]
     assert [entry.attribute_id for entry in sheet.attributes.values()] == ids
-    alone = tasks._balance_sheet([_data(2023, 126), _data(2023, 28)])
-    assert list(alone.attributes) == ["Total Disappearance", "Production"], (
-        "a name shared in the packaged list but not in the answer keeps no suffix"
-    )
+    alone = tasks._balance_sheet([_data(2023, 126), _data(2023, 28), _data(2023, 135)])
+    assert list(alone.attributes) == [
+        "Total Disappearance (126)",
+        "Production",
+        "Fresh Dom. Consumption (135)",
+    ], "the suffix follows the packaged list, not the answer: one key per id everywhere"
 
 
 def test_every_packaged_attribute_gets_its_own_key() -> None:
-    """All 85 packaged ids in one answer: 85 distinct keys, the four shared names suffixed."""
+    """All 85 packaged ids in one answer: 85 distinct keys, exactly the four ids of the two
+    repeated names suffixed, and each id keyed as it is when it comes alone."""
     names = attribute_names()
     sheet = tasks._balance_sheet([_data(2023, attribute_id) for attribute_id in names])
     assert len(sheet.attributes) == len(names) == 85
-    suffixed = [key for key in sheet.attributes if key not in names.values()]
-    assert suffixed == [
-        "Total Disappearance (126)",
-        "Fresh Dom. Consumption (133)",
-        "Fresh Dom. Consumption (135)",
-        "Total Disappearance (173)",
-    ]
+    suffixed = {
+        entry.attribute_id: key
+        for key, entry in sheet.attributes.items()
+        if key not in names.values()
+    }
+    assert suffixed == {
+        126: "Total Disappearance (126)",
+        133: "Fresh Dom. Consumption (133)",
+        135: "Fresh Dom. Consumption (135)",
+        173: "Total Disappearance (173)",
+    }
+    for key, entry in sheet.attributes.items():
+        alone = tasks._balance_sheet([_data(2023, entry.attribute_id)])
+        assert list(alone.attributes) == [key], entry.attribute_id
 
 
 def test_balance_sheet_refuses_what_one_entry_per_record_cannot_hold(
@@ -198,10 +208,14 @@ def test_balance_sheet_refuses_what_one_entry_per_record_cannot_hold(
         tasks._balance_sheet([_data(2023, 28), _data(2023, 88, country_code="BR")])
     with pytest.raises(ValidationError, match="also holds"):
         tasks._balance_sheet([_data(2023, 28), _data(2022, 88)])
-    # A future list where a plain name equals another's suffixed key: refused, not merged.
+    # A true collision, two records with the same final key: a future list where a plain
+    # name equals another id's suffixed key ("A (2)" is 1, "A" is 2 and 3). Refused, not
+    # merged.
     monkeypatch.setattr(tasks, "attribute_names", lambda: {1: "A (2)", 2: "A", 3: "A"})
     with pytest.raises(ValidationError, match="3 records gave 2 distinct keys"):
         tasks._balance_sheet([_data(2023, 1), _data(2023, 2), _data(2023, 3)])
+    with pytest.raises(ValidationError, match="2 records gave 1 distinct keys"):
+        tasks._balance_sheet([_data(2023, 1), _data(2023, 2)])
 
 
 def test_balance_sheet_without_records_is_not_found(
@@ -326,11 +340,12 @@ def test_time_series_leaves_a_year_without_data_out(
 
 
 def test_a_series_without_any_record_is_empty_not_an_error(
-    replay_fixture: Callable[[str, str], respx.Route],
+    respx_mock: respx.MockRouter,
 ) -> None:
-    """Recorded 404 for 1900: the only year is absent, the series is a valid empty list."""
-    route = replay_fixture(DATA, "unknown_year")
-    result = tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 1900, 1900)
+    """The recorded empty 404 for 1900 at the 1960 path: the first year a series may ask
+    for is accepted, it is absent, and the series is a valid empty list."""
+    route = _mount_recorded_404(respx_mock, 1960)
+    result = tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 1960, 1960)
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
     assert route.call_count == 1
@@ -581,6 +596,11 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
         tasks.get_time_series(WHEAT, "US", 28, 2023, 2021)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_time_series(WHEAT, "US", 28, 21, 2023)
+    with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later") as early:
+        tasks.get_time_series(WHEAT, "US", 28, 1959, 2023)
+    assert "PSD Database has data for most commodities since year 1960" in str(early.value)
+    with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later"):
+        tasks.get_time_series(WHEAT, "US", 28, 1900, 1900)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_time_series(WHEAT, "US", 28, 2021, 20230)
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):

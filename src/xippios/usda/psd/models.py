@@ -229,10 +229,10 @@ class BalanceSheet(UpstreamModel):
         market_year: ``marketYear`` of the records, e.g. ``2023``.
         attributes: One entry per record, keyed by the attribute's upstream name as the
             packaged ``commodityAttributes`` list spells it (``"Production"``,
-            ``"Ending Stocks"``). Where two records of the answer have the same name the
-            key carries the id, ``"Total Disappearance (126)"``; an id the packaged list
-            lacks is keyed ``"attribute <id>"``. Each entry's ``attribute_id`` is the
-            stable identifier.
+            ``"Ending Stocks"``). A name the list gives to several ids always carries the
+            id, ``"Total Disappearance (126)"`` (today 126, 173, 133 and 135), so an id
+            has the same key in every answer; an id the packaged list lacks is keyed
+            ``"attribute <id>"``.
     """
 
     commodity_code: str
