@@ -38,6 +38,18 @@ All notable changes to this project are documented here. The format follows
   empty: PSD gives a month, no day. A market year without data is `NotFoundError`
   naming commodity, country and year. `get_release_dates` filters upstream's full list
   by market year and country, for polling over MCP.
+- Tasks `list_commodities(search=None)`, `list_countries(region_code=None, search=None)`,
+  `list_regions()`, `list_units_of_measure()` and `list_commodity_attributes(search=None)`,
+  as MCP tools `usda_psd_list_*` and HTTP routes. They answer from the packaged lists
+  without an upstream call, records in upstream order and unchanged; `meta.endpoint` is
+  the operation the list was fetched from, `meta.vintage` the day it was fetched
+  (`"2026-10-23"`), `meta.retrieved_at` when the task answered, `meta.request` the
+  filters. `search` keeps records whose code or name (for countries also the GENC code)
+  contains the text, ignoring case;
+  `region_code` keeps the countries of one region, exactly (`"R15"`, which
+  `PSDData_GetRegions` lacks, included; an unknown region is an empty list), so agents
+  can see past the MCP cap of 200 rows (251 countries). Live tests check each packaged
+  list against the live one.
 - Client (ADR-0010): `classify` maps api.data.gov's `API_KEY_*` answers to `AuthError`
   naming the code and `DATA_GOV_API_KEY`, a 429 to `RateLimitError` (`Retry-After`, else
   one hour), the gateway's `NOT_FOUND` and PSD's empty-body 404 to `NotFoundError`. The
