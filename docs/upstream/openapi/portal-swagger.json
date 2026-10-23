@@ -1,0 +1,310 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "v1",
+    "title": "FAS Open Data Services",
+    "description": "<h1>ESR, GATS and PSD Data APIs</h1>"
+  },
+  "host": "api.fas.usda.gov",
+  "security": [
+    {
+      "apiKeyHeader": []
+    }
+  ],
+  "schemes": [
+    "https"
+  ],
+  "paths": {
+    "/api/psd/commodity/{commodityCode}/dataReleaseDates": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with the date of the last release of PSD Commodity Forecast Data.\r\nPlease note that there could be revision on the forecast numbers for multiple years on a given commodity, and so this API endpoint returns\r\nset of records containing data release dates at a commodity level\r\nUse this information to query for only the PSD Forecast data that has changed since last invocation of this API End point",
+        "operationId": "PSDData_GetDataReleaseInfo",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "parameters": [
+          {
+            "name": "commodityCode",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/commodity/{commodityCode}/country/all/year/{marketYear}": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with Forecast number for a given Commodity Code (Ex, 0440000 for Corn) and a given Market Year (Ex, 2017) for \r\nall applicable countries. PSD Database has data for most commodities since year 1960.\r\nPlease see Commodities end point to get a list of all PSD Commodities with corresponding Commodity Code.",
+        "operationId": "PSDData_GetCommodityDataByYear",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "parameters": [
+          {
+            "name": "commodityCode",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "marketYear",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/commodity/{commodityCode}/country/{countryCode}/year/{marketYear}": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": " Returns a set of records with Forecast number for a given Commodity Code (Ex, 0440000 for Corn) and a given Market Year (Ex, 2017) for \r\na given Country (Ex, BR for Brazil). PSD Database has data for most commodities since year 1960.\r\nPlease see Commodities end point to get a list of all PSD Commodities with corresponding Commodity Code, and Countries end point for a list of all countries\r\nwith corresponding Country Code",
+        "operationId": "PSDData_GetCountryCommodityDataByYear",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "parameters": [
+          {
+            "name": "commodityCode",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "countryCode",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "marketYear",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/commodity/{commodityCode}/world/year/{marketYear}": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": " Returns a set of records with Forecast number for a given Commodity Code (Ex, 0440000 for Corn) and a given Market Year (Ex, 2017) for \r\nthe world.Data from all applicable countries are aggregated together for reporting it at the World Level.\r\nPSD Database has data for most commodities since year 1960.\r\nPlease see Commodities end point to get a list of all PSD Commodities with corresponding Commodity Code.",
+        "operationId": "PSDData_GetWorldCommodityDataByYear",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "parameters": [
+          {
+            "name": "commodityCode",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "marketYear",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/regions": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with data for the Regions as classified in PSD System. \r\nThis data could be used to correlate the Region Name based on region code in the Data returned by Countries End Point",
+        "operationId": "PSDData_GetRegions",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/countries": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with data for Countries and the corresponding Region Code the Country belongs to.\r\nThis data could be used to correlate the Country Name based on country code in the data returned by other end points returning Commodity Forecasts.",
+        "operationId": "PSDData_GetCountries",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/commodities": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with data for Commodities with the corresponding Commodity Code. \r\nThis data could be used to correlate the Commodity Name based on the Commodity Code in the data returned by other end points returning Commodity Forecasts.",
+        "operationId": "PSDData_GetCommodities",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/unitsOfMeasure": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": "Returns a set of records with data for Units Of Measure with the corresponding Units Of Measure Id. \r\nThis data could be used to correlate the Unit of Measure Name based on the Id in the data returned by other end points returning Commodity Forecasts.",
+        "operationId": "PSDData_GetUnitsOfMeasure",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "/api/psd/commodityAttributes": {
+      "get": {
+        "tags": [
+          "PSD Data API - Production, Supply and Distribution Forecast Data of World Agricultural Commodities"
+        ],
+        "summary": " Returns a set of records with data for Commodity Attribute Names with the corresponding Attribute Id. \r\nThis data could be used to correlate theAttribute Name based on the Id in the data returned by other end points returning Commodity Forecasts.\r\nPSD database tracks Commodity Forecast numbers across multiple attributes broadly classified under \"Production\", \"Supply\" and \"Sistribution\" categories.",
+        "operationId": "PSDData_GetCommodityAttributes",
+        "consumes": [],
+        "produces": [
+          "application/json",
+          "text/json",
+          "application/xml",
+          "text/xml"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {},
+  "securityDefinitions": {
+    "apiKeyHeader": {
+      "type": "apiKey",
+      "description": "API Key Authentication",
+      "name": "X-Api-Key",
+      "in": "header"
+    }
+  }
+}
