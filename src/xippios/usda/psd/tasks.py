@@ -52,6 +52,7 @@ from xippios.core import (
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import SOURCE
+from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.models import (
     BalanceSheet,
     BalanceSheetEntry,
@@ -367,15 +368,17 @@ async def get_time_series_async(
     One request to ``PSDData_GetCountryCommodityDataByYear`` per market year, oldest
     first, at the client's pace of one request per second, and each counts against
     api.data.gov's quota of 1,000 requests per hour per key: 2021 to 2023 is three
-    requests and about three seconds, so ask for the years you need. Of each answer the
-    record with ``attribute_id`` is kept exactly as upstream sent it, ordered by market
-    year: ``value`` is in its ``unit_id``, and ``calendar_year`` and ``month`` name the
-    release that last revised that year, which may differ from year to year. A market
-    year PSD has no data for (HTTP 404), or whose answer has no record for the
-    attribute, is absent from the list: no gap is filled, nothing interpolated, no error
-    raised; a range without any record is an empty list. ``meta.vintage`` is the latest
-    release across the records (``"2026-07"``); ``meta.published_at`` stays empty.
-    Codes, the attribute and both years are checked before the first request.
+    requests and about three seconds, 1960 to 2026 sixty-seven, so ask for the years you
+    need. Of each answer the record with ``attribute_id`` is kept exactly as upstream
+    sent it, ordered by market year: ``value`` is in its ``unit_id``, and
+    ``calendar_year`` and ``month`` name the release that last revised that year, which
+    may differ from year to year. A market year PSD has no data for (its empty HTTP 404,
+    also for a future year, which still costs its request), or whose answer has no
+    record for the attribute, is absent from the list: no gap is filled, nothing
+    interpolated, no error raised; a range without any record is an empty list. Any
+    other error, the gateway's own 404 included, is raised. ``meta.vintage`` is the
+    latest release across the records (``"2026-07"``); ``meta.published_at`` stays
+    empty. Codes, the attribute and both years are checked before the first request.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -412,8 +415,8 @@ async def get_time_series_async(
             records = await api.PSDData_GetCountryCommodityDataByYear(
                 commodity_code, country_code, market_year
             )
-        except NotFoundError:
-            continue  # PSD has no data for this market year: the year is absent
+        except NoDataForYear:
+            continue  # PSD's empty 404: no data for this market year, the year is absent
         series.extend(record for record in records if record.attribute_id == attribute_id)
     meta = ResultMeta(
         source=SOURCE,

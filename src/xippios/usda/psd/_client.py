@@ -34,6 +34,7 @@ interprets the gateway's answers and pauses instead:
 
 import asyncio
 import logging
+import re
 import threading
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -170,6 +171,10 @@ def quota_pause(*, now: datetime | None = None) -> float:
     return max(0.0, (resumes_at - (now or datetime.now(UTC))).total_seconds())
 
 
+DATA_PATH = re.compile(r"/api/psd/commodity/[^/]+/(?:country/[^/]+|world)/year/[^/]+")
+"""The three data forms: one country, ``country/all`` and ``world``, by market year."""
+
+
 def _gateway_error(response: httpx.Response) -> tuple[str | None, str]:
     """api.data.gov's ``{"error": {"code": ..., "message": ...}}``, or ``(None, "")``."""
     try:
@@ -200,11 +205,13 @@ def classify(response: httpx.Response) -> XippiosError | None:
       3151``, ``x-ratelimit-remaining: 0``, body ``{"error": {"code":
       "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit. ..."}}``.
     - 404 with ``error.code`` ``NOT_FOUND`` is the gateway's: no such path.
-    - 404 with an empty body is PSD's own answer for a market year without data,
-      recorded for 1900 on every data form: one country
+    - 404 with an empty ``text/plain`` body on a data path is PSD's own answer for a
+      market year without data, recorded for 1900 on every data form: one country
       (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
       (``PSDData_GetCommodityDataByYear/year_1900.json``) and the world
-      (``PSDData_GetWorldCommodityDataByYear/year_1900.json``). Both are ``NotFoundError``.
+      (``PSDData_GetWorldCommodityDataByYear/year_1900.json``). It is
+      ``errors.NoDataForYear``, a ``NotFoundError``; the gateway's ``NOT_FOUND``, and an
+      empty 404 anywhere else, are a plain ``NotFoundError``.
 
     An unknown commodity or country code answers HTTP 200 with ``[]`` (``unknown_commodity``,
     ``unknown_country``), and so do valid codes without data (wheat for Bermuda in 2023,
@@ -251,6 +258,12 @@ def classify(response: httpx.Response) -> XippiosError | None:
                 source=SOURCE,
             )
         if not response.content.strip():
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith("text/plain") and DATA_PATH.fullmatch(path):
+                # errors imports SOURCE from this module, so it is imported here, not above
+                from xippios.usda.psd.errors import NoDataForYear
+
+                return NoDataForYear(path)
             return NotFoundError(
                 f"PSD Online has no data for {path} (HTTP 404 with an empty body)",
                 source=SOURCE,

@@ -1,10 +1,34 @@
 """PSD Online failure modes with a distinct meaning (conventions §5)."""
 
-from xippios.core import InvalidRequestError
+from xippios.core import InvalidRequestError, NotFoundError
 
 from xippios.usda.psd._client import SOURCE
 
-__all__ = ["UnknownCode"]
+__all__ = ["NoDataForYear", "UnknownCode"]
+
+
+class NoDataForYear(NotFoundError):
+    """PSD's own answer for a market year without data (HTTP 404, empty ``text/plain``).
+
+    Recorded for 1900 on all three data forms: one country
+    (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
+    (``PSDData_GetCommodityDataByYear/year_1900.json``) and the world
+    (``PSDData_GetWorldCommodityDataByYear/year_1900.json``): status 404, an empty body,
+    ``content-type: text/plain; charset=utf-8``. ``_client.classify`` raises it for that
+    answer on a data path only. The gateway's 404 (``{"error": {"code": "NOT_FOUND",
+    ...}}``, no such route) stays a plain ``NotFoundError``: it says the request is wrong,
+    not that the year is empty. ``get_time_series`` skips a year that raises this and
+    lets every other error through.
+
+    Attributes:
+        path: The request path, e.g. ``"/api/psd/commodity/0410000/country/US/year/1900"``.
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"PSD Online has no data for {path} (HTTP 404 with an empty body)", source=SOURCE
+        )
+        self.path = path
 
 
 class UnknownCode(InvalidRequestError):

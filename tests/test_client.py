@@ -42,6 +42,7 @@ from xippios.usda.psd._client import (
     quota,
     quota_pause,
 )
+from xippios.usda.psd.errors import NoDataForYear
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DATA = "PSDData_GetCountryCommodityDataByYear"
@@ -168,8 +169,27 @@ def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
     assert (response.status_code, response.content) == (404, b"")
     assert response.headers["content-type"].startswith("text/plain")
     error = classify(response)
-    assert isinstance(error, NotFoundError)
-    assert "HTTP 404 with an empty body" in error.message
+    assert isinstance(error, NoDataForYear)
+    assert isinstance(error, NotFoundError), "in the taxonomy, conventions §5"
+    assert error.path == response.request.url.path
+    assert f"no data for {error.path} (HTTP 404 with an empty body)" in error.message
+
+
+def test_an_empty_404_is_no_data_for_year_only_on_a_data_path_as_text() -> None:
+    """NOT RECORDED: the recorded empty 404 moved off a data path, or without its
+    ``text/plain``. Neither is PSD's answer for an empty year, so neither is skipped by a
+    series: both stay a plain ``NotFoundError``."""
+    fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
+    for url, headers in [
+        (f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates", fixture.response.headers),
+        (fixture.request.url, [("content-type", "application/json")]),
+    ]:
+        response = httpx.Response(
+            404, headers=headers, content=b"", request=httpx.Request("GET", url)
+        )
+        error = classify(response)
+        assert isinstance(error, NotFoundError)
+        assert not isinstance(error, NoDataForYear), url
 
 
 def test_valid_codes_without_data_answer_200_with_an_empty_list() -> None:
@@ -188,6 +208,7 @@ def test_the_gateway_not_found_is_a_not_found_error() -> None:
     }
     error = classify(synthesised(404, body))
     assert isinstance(error, NotFoundError)
+    assert not isinstance(error, NoDataForYear), "a wrong request, not an empty year"
     assert "no route for /api/psd/commodities" in error.message
 
 

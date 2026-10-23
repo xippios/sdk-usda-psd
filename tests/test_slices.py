@@ -22,7 +22,7 @@ from xippios.core.testing import assert_projection, fixture_path, load_fixture, 
 
 from xippios.usda.psd import tasks
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import UnknownCode
+from xippios.usda.psd.errors import NoDataForYear, UnknownCode
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import BalanceSheetEntry, CommodityData, DataReleaseInfo
 from xippios.usda.psd.params import attribute_names
@@ -76,6 +76,21 @@ def _data(market_year: int, attribute_id: int, *, country_code: str = "US") -> C
 
 def _path(market_year: int, country_code: str = "US", commodity_code: str = WHEAT) -> str:
     return f"/api/psd/commodity/{commodity_code}/country/{country_code}/year/{market_year}"
+
+
+def _mount_recorded_404(respx_mock: respx.MockRouter, market_year: int) -> respx.Route:
+    """Serve PSD's recorded empty 404 for wheat US 1900 (``unknown_year``: status 404,
+    empty ``text/plain`` body) at the path of ``market_year``: a recorded answer moved,
+    not a hand-written one, standing in for a year without data inside a range."""
+    absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
+    assert (absent.response.status, absent.response.content) == (404, b"")
+    return respx_mock.get(f"https://api.fas.usda.gov{_path(market_year)}").mock(
+        return_value=httpx.Response(
+            absent.response.status,
+            headers=absent.response.headers,
+            content=absent.response.content,
+        )
+    )
 
 
 def test_every_slice_is_exported_as_a_tool() -> None:
@@ -299,15 +314,7 @@ def test_time_series_leaves_a_year_without_data_out(
     body, ``text/plain``), served at the 2022 path. The year is absent, nothing filled."""
     replay_fixture(DATA, "wheat_us_2021")
     replay_fixture(DATA, "wheat_us_2023")
-    absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
-    assert absent.response.status == 404
-    missing = respx_mock.get(f"https://api.fas.usda.gov{_path(2022)}").mock(
-        return_value=httpx.Response(
-            absent.response.status,
-            headers=absent.response.headers,
-            content=absent.response.content,
-        )
-    )
+    missing = _mount_recorded_404(respx_mock, 2022)
     result = tasks.get_time_series(WHEAT, "US", AttributeId.EXPORTS, 2021, 2023)
     assert missing.call_count == 1
     assert len(respx_mock.calls) == 3
@@ -327,6 +334,34 @@ def test_a_series_without_any_record_is_empty_not_an_error(
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
     assert route.call_count == 1
+
+
+def test_the_gateways_not_found_inside_a_series_is_raised(
+    replay_fixture: Callable[[str, str], respx.Route],
+    respx_mock: respx.MockRouter,
+) -> None:
+    """NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, the shape
+    ``test_client.py`` synthesises, at the 2022 path. It says the request is wrong, not
+    that the year is empty, so the series stops there instead of skipping the year."""
+    replay_fixture(DATA, "wheat_us_2021")
+    later = replay_fixture(DATA, "wheat_us_2023")
+    gateway = respx_mock.get(f"https://api.fas.usda.gov{_path(2022)}").mock(
+        return_value=httpx.Response(
+            404,
+            json={
+                "error": {
+                    "code": "NOT_FOUND",
+                    "message": "The requested URL was not found on this server.",
+                }
+            },
+        )
+    )
+    with pytest.raises(NotFoundError) as info:
+        tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 2021, 2023)
+    assert not isinstance(info.value, NoDataForYear)
+    assert f"api.data.gov has no route for {_path(2022)}" in str(info.value)
+    assert gateway.call_count == 1
+    assert later.call_count == 0, "nothing after the error is requested"
 
 
 def test_a_series_of_an_attribute_the_answers_lack_is_empty(
