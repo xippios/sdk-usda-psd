@@ -9,15 +9,17 @@
 
 The FAS Open Data Services portal (https://apps.fas.usda.gov/opendatawebV2/) is an
 Angular app whose page holds no documentation text; its Swagger window loads the
-Swagger 2.0 document ``assets/swagger/swagger.json``. That URL was read once by hand
-from the portal's JavaScript bundle (``main.<hash>.js``); this script never downloads a
-bundle, because the portal's bundle embeds the portal's own api.data.gov signup-widget
-key. The API also serves its own Swashbuckle document, whose URL the script reads from
-the classic Swagger UI page. Both documents describe ESR, GATS and PSD; this package
-wraps PSD only. It writes:
+Swagger 2.0 document ``assets/swagger/swagger.json``. On 2026-10-23 the session that set
+up this snapshot fetched the portal page and its bundle ``main.<hash>.js`` into a
+session-local scratch directory and found that URL in the bundle's Swagger UI
+configuration; those copies have since been deleted. This script never downloads the
+bundle, because it embeds the portal's own api.data.gov signup-widget key; FETCHED.md
+records only the bundle's file name. The API also serves its own Swashbuckle document,
+whose URL the script reads from the classic Swagger UI page. Both documents describe
+ESR, GATS and PSD; this package wraps PSD only. It writes:
 
-- ``openapi/portal-swagger.json``: the PSD part of the portal's document;
-- ``openapi/backend-swagger-docs-v1.json``: the PSD part of the API's own document;
+- ``openapi/portal-document.json``: the PSD part of the portal's document;
+- ``openapi/backend-docs-v1.json``: the PSD part of the API's own document;
 - ``FETCHED.md``: regenerated entirely, one row per file and per page recorded without
   a file (client-rendered shells and a page the CDN refuses to headless clients).
 
@@ -58,17 +60,18 @@ COMMAND = "uv run scripts/refresh_upstream.py"
 
 PORTAL_URL = "https://apps.fas.usda.gov/opendatawebV2/"
 PORTAL_SWAGGER_URL = "https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json"
-"""Read by hand from the portal's ``main.<hash>.js`` bundle, which is never downloaded."""
-PORTAL_SWAGGER_READ_ON = "2026-10-23"
-"""The day ``PORTAL_SWAGGER_URL`` was last read from the bundle by hand."""
+"""Named by the Swagger UI configuration in the portal's ``main.<hash>.js`` bundle."""
+PORTAL_SWAGGER_FOUND_ON = "2026-10-23"
+"""The day ``PORTAL_SWAGGER_URL`` was found in a scratch copy of the bundle, since deleted."""
 CLASSIC_UI_URL = "https://apps.fas.usda.gov/opendata/swagger/ui/index"
 PSDONLINE_URL = "https://apps.fas.usda.gov/psdonline/"
 FAS_DATA_URL = "https://www.fas.usda.gov/data"
 API_HOST = "apps.fas.usda.gov"
 """The host the backend document URL read from the classic UI page must have."""
 
-PORTAL_FILE = "openapi/portal-swagger.json"
-BACKEND_FILE = "openapi/backend-swagger-docs-v1.json"
+PORTAL_FILE = "openapi/portal-document.json"
+BACKEND_FILE = "openapi/backend-docs-v1.json"
+"""No ``swagger`` in snapshot paths: detect-secrets' ``is_swagger_file`` would skip them."""
 SUBDIRS = ("openapi",)
 KEEP_PREFIX = "/api/psd/"
 SHELL_NOTE = "client-rendered shell, no documentation text"
@@ -440,11 +443,13 @@ def render_fetched(
             f"The FAS Open Data Services portal, {PORTAL_URL}, documents three APIs of",
             "USDA's Foreign Agricultural Service: ESR, GATS and PSD. It is an Angular app",
             "whose page is a shell without documentation text. Its Swagger window loads the",
-            f"Swagger 2.0 document {PORTAL_SWAGGER_URL}. That URL was read by hand on",
-            f"{PORTAL_SWAGGER_READ_ON} from the portal's JavaScript bundle, which this file",
-            "names by file name only: as of this run the portal page loads",
-            f"`{bundle}`. The script never downloads a bundle, since the portal's bundle",
-            "embeds the portal's own api.data.gov signup-widget key.",
+            f"Swagger 2.0 document {PORTAL_SWAGGER_URL}. On {PORTAL_SWAGGER_FOUND_ON} the",
+            "session that set up this snapshot fetched the portal page and its JavaScript",
+            "bundle into a session-local scratch directory and found that URL in the",
+            "bundle's Swagger UI configuration; those copies have since been deleted. The",
+            "script never downloads the bundle, since it embeds the portal's own",
+            "api.data.gov signup-widget key, and this file records only its file name: as of",
+            f"this run the portal page loads `{bundle}`.",
         ),
         *_paragraph(
             f"The API also serves its own Swashbuckle document, {backend_url}, which the",

@@ -11,11 +11,13 @@ The FAS Open Data Services portal, https://apps.fas.usda.gov/opendatawebV2/, doc
 three APIs of USDA's Foreign Agricultural Service: ESR, GATS and PSD. It is an Angular
 app whose page is a shell without documentation text. Its Swagger window loads the
 Swagger 2.0 document
-https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json. That URL was read
-by hand on 2026-10-23 from the portal's JavaScript bundle, which this file names by file
-name only: as of this run the portal page loads `main.6da18f8b4fa8a2baed40.js`. The
-script never downloads a bundle, since the portal's bundle embeds the portal's own
-api.data.gov signup-widget key.
+https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json. On 2026-10-23 the
+session that set up this snapshot fetched the portal page and its JavaScript bundle into
+a session-local scratch directory and found that URL in the bundle's Swagger UI
+configuration; those copies have since been deleted. The script never downloads the
+bundle, since it embeds the portal's own api.data.gov signup-widget key, and this file
+records only its file name: as of this run the portal page loads
+`main.6da18f8b4fa8a2baed40.js`.
 
 The API also serves its own Swashbuckle document,
 https://apps.fas.usda.gov/OpenData/swagger/docs/v1, which the classic Swagger UI at
@@ -32,14 +34,15 @@ upstream order, `paths` reduced to the keys starting with `/api/psd/` and `defin
 reduced to those the kept paths reference, directly or through other definitions; each
 document's row counts the paths kept and dropped, per prefix. The script writes the part
 with `json.dumps(indent=2, ensure_ascii=False)` in upstream key order, with LF line
-endings and a final newline, and checks that the full document re-serialised the same
+endings and a final newline, and stops unless the full document re-serialised the same
 way reproduces the fetched text up to line endings, so each file is the upstream text
 with the other APIs cut out. Bytes and sha256 in a document's row are those of the full
 document as fetched, so a change anywhere in it shows here.
 
 Pages that are client-rendered shells or that refuse headless clients get no file, only
 a row with their HTTP status and the size and sha256 of the body. The 403 body carries a
-per-request reference number, so its sha256 changes on every run, and its size may.
+per-request reference number and so is not stable; its row records neither size nor
+sha256, so that two runs on the same UTC day give the same file.
 
 Fetched is the UTC calendar date of the run, Last-Modified the HTTP header in UTC, ETag
 as sent. Requests go one at a time, identified as `xippios-usda-psd refresh_upstream
@@ -49,11 +52,11 @@ as sent. Requests go one at a time, identified as `xippios-usda-psd refresh_upst
 
 | File | URL | Fetched (UTC) | HTTP | Bytes | sha256 | ETag | Last-Modified | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| openapi/portal-swagger.json | https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json | 2026-10-23 | 200 | 40937 | 1ea0231b523fe7590226030309cc1e8a9ee59436e78074f4d59eae5fb3dd1f1c | "7932c8f74b3da1:0" | 2024-05-31T16:03:22Z | PSD part; Bytes and sha256 are the full document's. Kept 9 `/api/psd/` paths; dropped 7 `/api/esr/`, 19 `/api/gats/` (out of scope here); kept 0 of 0 definitions; the full document re-serialised matches the fetched text up to line endings |
-| openapi/backend-swagger-docs-v1.json | https://apps.fas.usda.gov/OpenData/swagger/docs/v1 | 2026-10-23 | 200 | 40895 | 14066421ec27305cf3bb1e95515fe6e732b4ad4cb62911f2af8f48e5a566aeff | - | - | PSD part; Bytes and sha256 are the full document's. Kept 9 `/api/psd/` paths; dropped 7 `/api/esr/`, 19 `/api/gats/` (out of scope here); kept 0 of 0 definitions; the full document re-serialised matches the fetched text up to line endings |
+| openapi/portal-document.json | https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json | 2026-10-23 | 200 | 40937 | 1ea0231b523fe7590226030309cc1e8a9ee59436e78074f4d59eae5fb3dd1f1c | "7932c8f74b3da1:0" | 2024-05-31T16:03:22Z | PSD part; Bytes and sha256 are the full document's. Kept 9 `/api/psd/` paths; dropped 7 `/api/esr/`, 19 `/api/gats/` (out of scope here); kept 0 of 0 definitions |
+| openapi/backend-docs-v1.json | https://apps.fas.usda.gov/OpenData/swagger/docs/v1 | 2026-10-23 | 200 | 40895 | 14066421ec27305cf3bb1e95515fe6e732b4ad4cb62911f2af8f48e5a566aeff | - | - | PSD part; Bytes and sha256 are the full document's. Kept 9 `/api/psd/` paths; dropped 7 `/api/esr/`, 19 `/api/gats/` (out of scope here); kept 0 of 0 definitions |
 | (no file) | https://apps.fas.usda.gov/opendatawebV2/ | 2026-10-23 | 200 | 1510 | 767e0489cc5617ba9d82f0df0f5144f38669a4a3edb04d4948a4eed89e30e9de | "28481243c47dd1:0" | 2026-06-29T12:39:01Z | client-rendered shell, no documentation text; loads the bundle `main.6da18f8b4fa8a2baed40.js` |
 | (no file) | https://apps.fas.usda.gov/opendata/swagger/ui/index | 2026-10-23 | 200 | 6615 | 6daff76a9fa7cbb571597b9a1a00480dc178b938ff360b218a76d432de1119a2 | - | - | client-rendered shell, no documentation text; Swagger UI that loads `https://apps.fas.usda.gov/OpenData/swagger/docs/v1` |
 | (no file) | https://apps.fas.usda.gov/psdonline/ | 2026-10-23 | 200 | 2303 | c510ec44ec26a1f1741114b46e07ccbc1a8bf86cdf0c4b049b452fa3eeea5015 | "2a828b39a354dc1:0" | 2025-11-13T13:41:33Z | redirected (302) to https://apps.fas.usda.gov/psdonline/app/index.html; client-rendered shell, no documentation text |
-| (no file) | https://www.fas.usda.gov/data | 2026-10-23 | 403 | 376 | 30f041ef8a10806c4bb5fb4da86cbcecca586ee987b0dd508a59c1b4dad6d33c | - | - | 403 Access Denied at the CDN edge |
+| (no file) | https://www.fas.usda.gov/data | 2026-10-23 | 403 | - | - | - | - | 403 Access Denied at the CDN edge; the body is not stable (it carries a per-request reference), so neither its size nor its sha256 is recorded |
 
 Regenerate: `uv run scripts/refresh_upstream.py`
