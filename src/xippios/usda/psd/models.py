@@ -20,6 +20,8 @@ from pydantic import Field
 from xippios.core import UpstreamModel
 
 __all__ = [
+    "BalanceSheet",
+    "BalanceSheetEntry",
     "Commodity",
     "CommodityAttribute",
     "CommodityData",
@@ -186,3 +188,54 @@ class DataReleaseInfo(UpstreamModel):
     market_year: int = Field(validation_alias="marketYear")
     release_year: int = Field(validation_alias="releaseYear")
     release_month: int = Field(validation_alias="releaseMonth")
+
+
+class BalanceSheetEntry(UpstreamModel):
+    """One attribute of a balance sheet: a ``CommodityData`` record without its keys.
+
+    A projection (ADR-0003, ``UpstreamModel.project``): the record's own fields under
+    their names, values exactly as upstream sent them, nothing converted. The commodity,
+    country and market year the record also carried sit once on ``BalanceSheet``.
+
+    Attributes:
+        attribute_id: ``attributeId``, e.g. ``28`` (Production); ``enums.AttributeId``
+            names it.
+        unit_id: ``unitId``, the unit of ``value``, e.g. ``8`` (1000 MT), ``4``
+            (1000 HA), ``26`` (MT/HA); it differs per attribute, ``enums.UnitId`` names it.
+        value: ``value``, e.g. ``Decimal("49095.0")``, in the unit ``unit_id`` names.
+        calendar_year: ``calendarYear``, year of the release that last revised the
+            record, e.g. ``2026``.
+        month: ``month``, month of that release, 1 to 12.
+    """
+
+    attribute_id: int
+    unit_id: int
+    value: Decimal
+    calendar_year: int
+    month: int
+
+
+class BalanceSheet(UpstreamModel):
+    """The records of one commodity, country and market year, pivoted into one record.
+
+    Built by ``get_balance_sheet`` from one answer of
+    ``PSDData_GetCountryCommodityDataByYear``, losslessly: every record of the answer is
+    one entry of ``attributes``, in upstream order, and the three fields every record
+    shares are kept once here. No totals are derived, no unit converted, nothing renamed.
+
+    Attributes:
+        commodity_code: ``commodityCode`` of the records, e.g. ``"0410000"`` (Wheat).
+        country_code: ``countryCode`` of the records, PSD's code, e.g. ``"US"``.
+        market_year: ``marketYear`` of the records, e.g. ``2023``.
+        attributes: One entry per record, keyed by the attribute's upstream name as the
+            packaged ``commodityAttributes`` list spells it (``"Production"``,
+            ``"Ending Stocks"``). Where two records of the answer have the same name the
+            key carries the id, ``"Total Disappearance (126)"``; an id the packaged list
+            lacks is keyed ``"attribute <id>"``. Each entry's ``attribute_id`` is the
+            stable identifier.
+    """
+
+    commodity_code: str
+    country_code: str
+    market_year: int
+    attributes: dict[str, BalanceSheetEntry]
