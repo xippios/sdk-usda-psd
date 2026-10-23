@@ -24,4 +24,7 @@ with `xippios.core.reference`. It comes from the upstream, never from memory.
    `/add-endpoint` so agents can look the codes up; it should return the packaged data,
    not call upstream.
 7. Run the checks and open the PR with the diff summarised: how many rows changed, any
-   codes that disappeared (those may break existing fixtures or callers). Do not merge.
+   codes that disappeared (those may break existing fixtures or callers). An attribute
+   renamed, or an id added under an existing name, in `commodityAttributes` changes
+   `get_balance_sheet`'s public keys: record it in `CHANGELOG.md` as a breaking change
+   (conventions §12). Do not merge.

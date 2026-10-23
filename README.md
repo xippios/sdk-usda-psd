@@ -87,7 +87,8 @@ latest.meta.vintage  # "2026-10", comparable with get_data's meta.vintage
 `get_balance_sheet` keys each entry by the attribute's upstream name; an id whose name
 upstream gives to several ids (`"Total Disappearance"` is 126 and 173) always carries the
 id, `"Total Disappearance (126)"`, and each entry keeps its own `unit_id`.
-`get_time_series` starts at 1960 at the earliest, spends one request per market year,
+`get_time_series` starts at 1960 at the earliest, spans at most 100 market years per
+call, spends one request per market year,
 leaves a year without data out, and counts against the hourly quota like every other
 request.
 `get_top_countries` excludes nothing: PSD's groupings (`E4` European Union, `T3` Africa,
@@ -132,7 +133,7 @@ Wave 2, the slices: task-shaped functions over the operations above, no new endp
 | `PSDData_GetCountryCommodityDataByYear`, one request | `get_balance_sheet(commodity_code, country_code, market_year)` | `usda_psd_get_balance_sheet` | `get_balance_sheet("0410000", "US", 2023)`: wheat US 2023 as one record, 15 attributes | done |
 | `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)` | `usda_psd_get_time_series` | `get_time_series("0440000", "US", 28, 2021, 2023)`: US corn production, three years | done |
 | `PSDData_GetCommodityDataByYear`, one request | `get_top_countries(commodity_code, market_year, attribute_id, n=10)` | `usda_psd_get_top_countries` | `get_top_countries("2222000", 2023, 28, n=5)`: the five largest soybean producers | done |
-| `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised | done |
+| `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised; MCP returns at most 200 rows, a release adding a market year can exceed that (wheat 2026-10: 146), `get_release_dates(commodity_code, market_year=..., country_code=...)` returns any part in full | done |
 
 Every request counts against api.data.gov's quota of 1,000 requests per hour per key,
 shared by every package using the same `DATA_GOV_API_KEY`; the `list_*` tasks spend none.

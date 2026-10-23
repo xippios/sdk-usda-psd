@@ -40,8 +40,9 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   (`.../country/all/year/1900`) and the world (`.../world/year/1900`, both `year_1900`),
   mapped to `errors.NoDataForYear`, a `NotFoundError` (only that answer on a data path:
   an empty 404 elsewhere or the gateway's `NOT_FOUND` stays a plain `NotFoundError`).
-  `get_time_series` skips such a year; the other tasks re-raise it as `NotFoundError`
-  naming commodity, country and year.
+  `get_time_series` skips such a year; the other data tasks re-raise it as
+  `NoDataForYear` naming commodity, country and year. Any other `NotFoundError` (the
+  gateway's `NOT_FOUND`) propagates unchanged from every task.
 - Invalid key: HTTP 403 `{"error": {"code": "API_KEY_INVALID", "message": "An invalid
   api_key was supplied. Get one at https://api.fas.usda.gov:443"}}`, no quota headers;
   mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
@@ -98,19 +99,24 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   packaged attribute name in upstream order. An id whose name the packaged list gives to
   several ids (126 and 173 `"Total Disappearance"`, 133 and 135 `"Fresh Dom.
   Consumption"`) is always keyed with its id (`"Total Disappearance (126)"`), so an id has
-  the same key in every answer; an id the packaged list lacks is `"attribute <id>"`;
-  records that one entry each cannot hold (a repeated id, mixed keys, two records with the
-  same key) are a `ValidationError`, never merged. Each `BalanceSheetEntry` is a
+  the same key in every answer of a package version; an id the packaged list lacks is
+  `"attribute <id>"`; records that one entry each cannot hold (a repeated id, mixed
+  keys, two records with the same key) are a `ValidationError`, never merged. A
+  reference refresh that renames an attribute or adds an id under an existing name
+  changes public keys: a breaking change (conventions §12), which
+  `/refresh-reference-data` records in the CHANGELOG. Each `BalanceSheetEntry` is a
   projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
   `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
   `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
 - `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)`:
   one request per market year, oldest first, at the client's pace; `start_year` from
-  1960 (the snapshot: "PSD Database has data for most commodities since year 1960"),
-  no upper bound (a future year costs a request and answers 404). A year that raises
-  `NoDataForYear`, or has no record for the attribute, is absent (no gap filling); an
-  empty series is a valid result. Every other error, the gateway's `NOT_FOUND`
-  included, is raised.
+  1960 (the snapshot: "PSD Database has data for most commodities since year 1960");
+  at most 100 market years per call (`SERIES_MAX_YEARS`, a self-imposed sanity bound:
+  1960 to the current forecast years is about 67 requests, 1960 to 9999 would be
+  8,040), no upper bound on `end_year` itself. A future year is expected to answer 404
+  like 1900 (not recorded) and costs its request. A year that raises `NoDataForYear`,
+  or has no record for the attribute, is absent (no gap filling); an empty series is a
+  valid result. Every other error, the gateway's `NOT_FOUND` included, is raised.
 - `get_top_countries(commodity_code, market_year, attribute_id, n=10)`: one
   `country/all` request; the attribute's records sorted by `value`, largest first,
   stable, first `n` kept; no unit check, each record carries its own `unit_id`.
@@ -119,7 +125,12 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`).
 - `get_latest_release(commodity_code)`: one request; the release-list records of the
   newest (`release_year`, `release_month`), `meta.vintage` that release (wheat:
-  `"2026-10"`, 146 records); `[]` and `None` for a commodity without releases.
+  `"2026-10"`, 146 records); `[]` and `None` for a commodity without releases. The MCP
+  server returns at most 200 rows, and a release that adds a market year and revises
+  earlier ones can exceed it (the recorded wheat list has 130 more records still on
+  2026-09, so September's answer held between 130 and 276);
+  `get_release_dates(commodity_code, market_year=..., country_code=...)` returns any
+  part of the list in full.
 
 Attribute ids are checked against the packaged list before any call
 (`params.validate_attribute_id`, `UnknownCode` with the closest ids).
