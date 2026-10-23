@@ -13,8 +13,8 @@ All notable changes to this project are documented here. The format follows
   wired to it, test harness, CI and publishing.
 - Upstream documentation snapshot in `docs/upstream/` (2026-10-23): the PSD part of
   the FAS Open Data Services Swagger 2.0 document as the portal loads it
-  (`openapi/portal-swagger.json`) and as the API serves it itself
-  (`openapi/backend-swagger-docs-v1.json`), nine `/api/psd/` operations each, the
+  (`openapi/portal-document.json`) and as the API serves it itself
+  (`openapi/backend-docs-v1.json`), nine `/api/psd/` operations each, the
   ESR and GATS paths left out. `FETCHED.md` records the full documents' sizes and
   sha256 and the pages that hold no documentation text.
 - `scripts/refresh_upstream.py`: regenerates the snapshot reproducibly, stdlib only and
