@@ -20,9 +20,15 @@ Rules:
   `enums.py`: `AttributeId` from `commodityAttributes` and `UnitId` from
   `unitsOfMeasure`, as `IntEnum`s. Commodity and country codes stay tables, not enums.
 - Every file has a row below naming the endpoint it came from, the date and the count.
-- Each packaged list gets a lookup task, `list_<thing>`, served as the MCP tool
-  `usda_psd_list_<thing>` so agents can form valid calls; `/refresh-reference-data`
-  adds the task where it is missing.
+- Each packaged list has a lookup task, `list_<thing>`, served as the MCP tool
+  `usda_psd_list_<thing>` so agents can form valid calls: `list_commodities`,
+  `list_countries`, `list_regions`, `list_units_of_measure`, `list_commodity_attributes`.
+  They answer from these files without an upstream call, with the file's `endpoint` as
+  `meta.endpoint` and its `fetched` date as `meta.vintage`. A list packaged later gets
+  its task through `/refresh-reference-data`.
+- Freshness: the live tests (`tests/test_live.py`, `XIPPIOS_LIVE_TESTS=1`) fetch each
+  list through its endpoint wrapper and fail when the packaged records differ, naming
+  what is gone and what is new.
 - Refresh policy: `/refresh-reference-data` inside `/release-prep`, and whenever a
   validation failure names a code the package lacks.
 

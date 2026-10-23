@@ -91,6 +91,13 @@ in `reference/README.md`, and regenerates `enums.py`. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
 names a code the package lacks.
 
+The `list_*` tasks answer from these files and never call upstream: `meta.endpoint` is
+the file's `endpoint`, `meta.vintage` its `fetched` date (upstream gives the lists no
+version), `meta.retrieved_at` when the task answered. Their filters select records
+client-side, codes and names unchanged, upstream order kept; `list_countries` needs them
+over MCP (251 countries, 200 rows per result). The live tests compare each packaged list
+with the live one, the freshness check.
+
 `enums.AttributeId` and `enums.UnitId` are `IntEnum`s, a deliberate departure from
 conventions §3 ("upstream enums become `StrEnum`"): PSD's ids are integers in the lists
 and in every data record, and fidelity to upstream wins. Where upstream gives two ids the
@@ -142,6 +149,7 @@ tests/
   conftest.py      enables xippios.core.testing.plugin; placeholder key for replay
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
   test_tasks.py    structural checks on every task plus per-task replay tests
+  test_lists.py    the list_* tasks: the recorded lists, no call, filters, MCP cap
   test_api.py      replay tests for the endpoint wrappers
   test_client.py   classify on recorded error bodies, quota snapshot and pause
   test_params.py   packaged lists, enums and the code checks
