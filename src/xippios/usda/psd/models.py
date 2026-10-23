@@ -165,10 +165,12 @@ class DataReleaseInfo(UpstreamModel):
     record. The release is a year and a month as digit strings, no day, no time, no time
     zone; both are parsed to ``int`` and nothing is combined into a date here.
 
-    The data records carry the same release in ``calendarYear``/``month``: for every
-    recorded case the data's latest release equals this list's record for the same
-    commodity, market year and country (or the latest across countries), so the data
-    tasks take ``meta.vintage`` from the data and need no second call.
+    The data records carry the same release in ``calendarYear``/``month``: in every case
+    recorded with its release list (wheat 2023: US, all countries, world) the data's
+    latest release equals this list's record for the same commodity, market year and
+    country (or the latest across countries); the corn and soybeans recordings are
+    internally consistent. So the data tasks take ``meta.vintage`` from the data and
+    need no second call.
     ``get_release_dates`` serves this list for polling.
 
     Attributes:

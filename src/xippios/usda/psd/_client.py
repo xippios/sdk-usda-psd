@@ -200,13 +200,16 @@ def classify(response: httpx.Response) -> XippiosError | None:
       3151``, ``x-ratelimit-remaining: 0``, body ``{"error": {"code":
       "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit. ..."}}``.
     - 404 with ``error.code`` ``NOT_FOUND`` is the gateway's: no such path.
-    - 404 with an empty body is PSD's own answer for a query without data, recorded for
-      market year 1900 (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``).
-      Both are ``NotFoundError``.
+    - 404 with an empty body is PSD's own answer for a market year without data,
+      recorded for 1900 on every data form: one country
+      (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
+      (``PSDData_GetCommodityDataByYear/year_1900.json``) and the world
+      (``PSDData_GetWorldCommodityDataByYear/year_1900.json``). Both are ``NotFoundError``.
 
     An unknown commodity or country code answers HTTP 200 with ``[]`` (``unknown_commodity``,
-    ``unknown_country``): empty means empty, not an error. Everything else falls through
-    to core's status mapping.
+    ``unknown_country``), and so do valid codes without data (wheat for Bermuda in 2023,
+    ``no_data_valid_codes``): empty means empty, not an error. Everything else falls
+    through to core's status mapping.
     """
     observe_quota(response)
     status = response.status_code
@@ -265,7 +268,11 @@ class QuotaAwareClient(AsyncClient):
     request the configured cache can answer skips the gate: it costs no quota. Core has
     no hook before a request, so this subclass overrides ``request``, which ``get`` and
     ``get_json`` call, and finds the cache entry the way core's ``request`` does (its
-    ``_pool`` and ``_cache_key``); the rest is core's.
+    ``_pool`` and ``_cache_key``); the rest is core's. Relying on those protected
+    methods is a stopgap until the ADR-0010 core helper offers a public cache probe or a
+    pre-request hook after the cache lookup; core 0.2.0 renames the lookup to
+    ``_cache_key_for`` (sdk-core#14), so ``_cached`` must be revisited when the core pin
+    moves.
     """
 
     def __init__(
@@ -328,7 +335,13 @@ class QuotaAwareClient(AsyncClient):
         return response
 
     def _cached(self, method: str, path: str, params: Params) -> bool:
-        """True when the configured cache holds a live entry for this request."""
+        """True when the configured cache holds a live entry for this request.
+
+        A stopgap on core's protected ``_pool()`` and ``_cache_key()``, until the ADR-0010
+        core helper offers a public cache probe or a pre-request hook after the cache
+        lookup. Core 0.2.0 renames the lookup to ``_cache_key_for`` (sdk-core#14):
+        revisit this when the core pin moves.
+        """
         cache = self.config.cache
         if cache is None or method.upper() != "GET":
             return False

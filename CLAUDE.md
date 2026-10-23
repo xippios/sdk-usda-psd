@@ -73,10 +73,12 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   records carry the latest of them (2026-10).
 - `meta.vintage` of `get_data` and `get_world_data` is the latest `calendarYear`-`month`
   across the result's records, `"YYYY-MM"` with the month zero-padded: `"2026-07"` for
-  wheat US 2023, `"2026-10"` for wheat all countries and world 2023. In every recorded
-  case it equals the release list's record for the same commodity, market year and
-  country, or the latest across countries (`test_vintage_equals_the_release_list`), so
-  the data tasks make no second call. `None` for an empty answer.
+  wheat US 2023, `"2026-10"` for wheat all countries and world 2023. In every case
+  recorded with its release list (wheat 2023: US, all countries, world) it equals the
+  release list's record for the same commodity, market year and country, or the latest
+  across countries (`test_vintage_equals_the_release_list`); the corn and soybeans
+  recordings are internally consistent. So the data tasks make no second call. `None`
+  for an empty answer.
 - `meta.published_at` is `None` for every task: PSD gives a month, no day, and the
   first of the month would predate the real mid-month release, a look-ahead bias in an
   as-of store.

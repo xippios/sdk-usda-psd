@@ -206,6 +206,8 @@ def test_get_release_dates_filters_after_the_one_call(
 def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -> None:
     with pytest.raises(UnknownCode, match="Omit country_code"):
         tasks.get_release_dates(WHEAT, country_code="all")
+    with pytest.raises(UnknownCode, match="the release list has no world record"):
+        tasks.get_release_dates(WHEAT, country_code="00")
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_release_dates(WHEAT, market_year=23)
     assert not respx_mock.calls
@@ -229,7 +231,7 @@ def test_unknown_codes_are_refused_before_any_request(respx_mock: respx.MockRout
         tasks.get_data("0410001", 2023, "US")
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):
         tasks.get_data(WHEAT, 2023, "XX")
-    with pytest.raises(UnknownCode, match="use get_world_data for the world") as world:
+    with pytest.raises(UnknownCode, match="use get_world_data for world data") as world:
         tasks.get_data(WHEAT, 2023, "00")
     assert world.value.closest == []
     with pytest.raises(UnknownCode, match="Omit country_code for every country"):

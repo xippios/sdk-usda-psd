@@ -100,8 +100,9 @@ def _closest(value: str, codes: dict[str, str]) -> list[tuple[str, str]]:
 
 COUNTRY_HINTS: dict[str, str] = {
     "all": "Omit country_code for every country; PSD's 'all' is a path element, not a code.",
-    "00": "'00' is the world aggregate PSD reports in world records; use get_world_data for "
-    "the world.",
+    "00": "'00' is the world aggregate in PSD's world records, not a country code: use "
+    "get_world_data for world data; the release list has no world record, pass market_year "
+    "only.",
 }
 """Values agents pass for a country that are not country codes, with what to do instead."""
 

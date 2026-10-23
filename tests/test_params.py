@@ -211,7 +211,7 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
 @pytest.mark.parametrize(
     ("value", "hint"),
     [("all", "Omit country_code for every country"), ("ALL", "Omit country_code"),
-     ("00", "use get_world_data for the world")],
+     ("00", "use get_world_data for world data")],
 )  # fmt: skip
 def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -> None:
     with pytest.raises(UnknownCode, match=hint) as info:
