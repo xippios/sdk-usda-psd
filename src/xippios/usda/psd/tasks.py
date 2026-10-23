@@ -9,12 +9,14 @@ exactly what is named there.
 Docstrings are read by agents: one sentence first, then ``Args:`` with examples of
 valid values for every parameter. ``/add-endpoint`` walks through the whole recipe.
 
-``meta.published_at`` is filled by the data tasks, the first in the family to fill it:
-from ``PSDData_GetDataReleaseInfo`` for the commodity, the release month of the
-requested market year (for one country, that country's; for every country or the world,
-the latest), reported as the first day of that month at 00:00 UTC because PSD gives the
-month only. ``None`` when the release list has no matching record or the answer is
-empty. See ``models.DataReleaseInfo``.
+``meta.vintage`` and ``meta.published_at`` are filled by the data tasks, the first in
+the family to fill them, from one record of ``PSDData_GetDataReleaseInfo`` for the
+commodity: the release of the requested market year (for one country, that country's;
+for every country or the world, the latest). ``vintage`` is that release as upstream
+gives it, ``"<releaseYear>-<releaseMonth>"`` zero-padded (``"2026-07"``);
+``published_at`` is the first day of that month at 00:00 UTC, a convention, because PSD
+gives the month only. Both ``None`` when the release list has no matching record or the
+answer is empty. See ``models.DataReleaseInfo``.
 """
 
 from collections.abc import Sequence
@@ -34,25 +36,38 @@ from xippios.usda.psd.params import (
 __all__ = ["get_data", "get_release_dates", "get_world_data"]
 
 
-def _published_at(
+def _release(
     releases: Sequence[DataReleaseInfo], market_year: int, country_code: str | None
-) -> datetime | None:
-    """The release month of ``market_year`` as a UTC datetime, or ``None`` when unknown.
+) -> DataReleaseInfo | None:
+    """The release record of ``market_year`` that the data carries, or ``None``.
 
     ``country_code`` ``None`` takes the latest release across countries, which is what
     the ``country/all`` and world records carry (``models.CommodityData``).
     """
-    months = [
-        (release.release_year, release.release_month)
+    matching = [
+        release
         for release in releases
         if release.market_year == market_year
         and (country_code is None or release.country_code == country_code)
     ]
-    if not months:
+    if not matching:
         return None
-    year, month = max(months)
+    return max(matching, key=lambda release: (release.release_year, release.release_month))
+
+
+def _vintage(release: DataReleaseInfo | None) -> str | None:
+    """``"<releaseYear>-<releaseMonth>"`` as upstream sends them, e.g. ``"2026-07"``."""
+    if release is None:
+        return None
+    return f"{release.release_year:04d}-{release.release_month:02d}"
+
+
+def _published_at(release: DataReleaseInfo | None) -> datetime | None:
+    """The first day of the release month at 00:00 UTC; ``None`` when unknown or invalid."""
+    if release is None:
+        return None
     try:
-        return datetime(year, month, 1, tzinfo=UTC)
+        return datetime(release.release_year, release.release_month, 1, tzinfo=UTC)
     except ValueError:
         return None
 
@@ -66,11 +81,17 @@ async def _data_result(
     country_code: str | None,
     request: dict[str, str | int | None],
 ) -> Result[list[CommodityData]]:
-    published_at = None
+    release = None
     if records:
         releases = await api.PSDData_GetDataReleaseInfo(commodity_code)
-        published_at = _published_at(releases, market_year, country_code)
-    meta = ResultMeta(source=SOURCE, endpoint=endpoint, published_at=published_at, request=request)
+        release = _release(releases, market_year, country_code)
+    meta = ResultMeta(
+        source=SOURCE,
+        endpoint=endpoint,
+        published_at=_published_at(release),
+        vintage=_vintage(release),
+        request=request,
+    )
     return Result(data=records, meta=meta)
 
 
@@ -94,11 +115,12 @@ async def get_data_async(
     consumption, stocks, ...): ``attribute_id`` and ``unit_id`` are PSD ids, named by
     ``enums.AttributeId`` and ``enums.UnitId``; ``value`` is in that unit. Codes and the
     year are checked against the packaged lists before any call; an unknown code raises
-    ``InvalidRequestError`` naming the closest ones. ``meta.published_at`` is the first
-    day of the PSD release month that last revised these figures (from
-    ``PSDData_GetDataReleaseInfo``); ``calendar_year`` and ``month`` on each record are
-    the same release. An empty list means PSD has no records for that combination; a
-    market year without data raises ``NotFoundError``.
+    ``InvalidRequestError`` naming the closest ones. ``meta.vintage`` is the PSD release
+    that last revised these figures, as upstream names it (``"2026-07"``, from
+    ``PSDData_GetDataReleaseInfo``), and ``meta.published_at`` the first day of that
+    month at 00:00 UTC (PSD gives no day); ``calendar_year`` and ``month`` on each record
+    are the same release. An empty list means PSD has no records for that combination;
+    a market year without data raises ``NotFoundError``.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -149,10 +171,11 @@ async def get_world_data_async(
     One record per attribute, aggregated by PSD over every applicable country
     (``country_code`` ``"00"``). ``attribute_id`` and ``unit_id`` are PSD ids, named by
     ``enums.AttributeId`` and ``enums.UnitId``; ``value`` is in that unit.
-    ``meta.published_at`` is the first day of the latest PSD release month for this
-    commodity and market year (from ``PSDData_GetDataReleaseInfo``). The code and the
-    year are checked before any call; a market year without data raises
-    ``NotFoundError``.
+    ``meta.vintage`` is the latest PSD release for this commodity and market year, as
+    upstream names it (``"2026-10"``, from ``PSDData_GetDataReleaseInfo``), and
+    ``meta.published_at`` the first day of that month at 00:00 UTC (PSD gives no day).
+    The code and the year are checked before any call; a market year without data
+    raises ``NotFoundError``.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),

@@ -17,6 +17,7 @@ from xippios.usda.psd._client import API_KEY_ENV, BASE_URL, auth
 from xippios.usda.psd.enums import AttributeId, UnitId
 from xippios.usda.psd.errors import UnknownCode
 from xippios.usda.psd.mcp import server
+from xippios.usda.psd.models import DataReleaseInfo
 
 SHELL_KEY = os.environ.get(API_KEY_ENV)
 """The key the shell held when the tests were collected, before any fixture; never printed."""
@@ -81,7 +82,7 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
         "market_year": 2023,
         "country_code": "US",
     }
-    assert result.meta.vintage is None
+    assert result.meta.vintage == "2026-07"
 
 
 def test_published_at_is_the_release_month_of_the_country_and_year(
@@ -91,6 +92,7 @@ def test_published_at_is_the_release_month_of_the_country_and_year(
     replay_fixture(DATA, "wheat_us_2023")
     replay_fixture(RELEASES, "wheat")
     result = tasks.get_data(WHEAT, 2023, "US")
+    assert result.meta.vintage == "2026-07"
     assert result.meta.published_at == datetime(2026, 7, 1, tzinfo=UTC)
     assert {(r.calendar_year, r.month) for r in result.data} == {(2026, 7)}
 
@@ -108,6 +110,7 @@ def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.R
         "country_code": None,
     }
     assert len(result.data) == 1845
+    assert result.meta.vintage == "2026-10"
     assert result.meta.published_at == datetime(2026, 10, 1, tzinfo=UTC)
     releases = {
         r.country_code: (r.release_year, r.release_month)
@@ -126,6 +129,7 @@ def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> No
     assert result.meta.request == {"commodity_code": WHEAT, "market_year": 2023}
     assert len(result.data) == 15
     assert {r.country_code for r in result.data} == {"00"}
+    assert result.meta.vintage == "2026-10"
     assert result.meta.published_at == datetime(2026, 10, 1, tzinfo=UTC)
     assert {(r.calendar_year, r.month) for r in result.data} == {(2026, 10)}
 
@@ -142,16 +146,37 @@ def test_release_dates_are_fetched_once_for_several_data_calls(
     assert releases.call_count == 1
 
 
-def test_published_at_is_none_when_the_release_list_lacks_the_year(
+def test_vintage_and_published_at_are_none_when_the_release_list_lacks_the_year(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     replay_fixture(RELEASES, "wheat")
     releases = tasks.get_release_dates(WHEAT).data
     assert max(r.market_year for r in releases) == 2026
-    assert tasks._published_at(releases, 2027, "US") is None
-    assert tasks._published_at(releases, 2023, "ZZ") is None
-    assert tasks._published_at(releases, 2023, "US") == datetime(2026, 7, 1, tzinfo=UTC)
-    assert tasks._published_at([], 2023, None) is None
+    for missing in (tasks._release(releases, 2027, "US"), tasks._release(releases, 2023, "ZZ")):
+        assert missing is None
+        assert tasks._vintage(missing) is None
+        assert tasks._published_at(missing) is None
+    assert tasks._release([], 2023, None) is None
+    us = tasks._release(releases, 2023, "US")
+    assert (tasks._vintage(us), tasks._published_at(us)) == (
+        "2026-07",
+        datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    latest = tasks._release(releases, 2023, None)
+    assert tasks._vintage(latest) == "2026-10"
+
+
+def test_vintage_keeps_upstreams_zero_padding() -> None:
+    release = DataReleaseInfo.model_validate(
+        {
+            "commodityCode": "0410000",
+            "countryCode": "US",
+            "marketYear": "2023",
+            "releaseYear": "2026",
+            "releaseMonth": "07",
+        }
+    )
+    assert tasks._vintage(release) == "2026-07"
 
 
 def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -218,6 +243,7 @@ async def test_mcp_tool_call_end_to_end(replay_fixture: Callable[[str, str], res
     }
     assert payload["meta"]["endpoint"] == "PSDData_GetCountryCommodityDataByYear"
     assert payload["meta"]["published_at"].startswith("2026-07-01T00:00:00")
+    assert payload["meta"]["vintage"] == "2026-07"
     with pytest.raises(AssertionError, match=r"UnknownCode.*0410000 \(Wheat\)"):
         await mcp_call(
             server, "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
