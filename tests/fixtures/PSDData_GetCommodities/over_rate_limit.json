@@ -1,0 +1,66 @@
+{
+  "recorded_at": "2026-10-23T08:39:18.290916Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.fas.usda.gov/api/psd/commodities"
+  },
+  "response": {
+    "body": "{\n  \"error\": {\n    \"code\": \"OVER_RATE_LIMIT\",\n    \"message\": \"You have exceeded your rate limit. Try again later or contact us for assistance: https://api.fas.usda.gov:443\"\n  }\n}",
+    "body_base64": false,
+    "headers": [
+      [
+        "date",
+        "Fri, 23 Oct 2026 08:39:16 GMT"
+      ],
+      [
+        "content-type",
+        "application/json"
+      ],
+      [
+        "access-control-allow-headers",
+        "X-Api-Key"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "retry-after",
+        "3151"
+      ],
+      [
+        "strict-transport-security",
+        "max-age=31536000; includeSubDomains; preload"
+      ],
+      [
+        "x-api-umbrella-request-id",
+        "d1cvl1b9rmp7nnj3s7h0"
+      ],
+      [
+        "x-cache",
+        "MISS"
+      ],
+      [
+        "x-content-type-options",
+        "nosniff"
+      ],
+      [
+        "x-ratelimit-limit",
+        "1000"
+      ],
+      [
+        "x-ratelimit-remaining",
+        "0"
+      ],
+      [
+        "x-vcap-request-id",
+        "589b19d4-d2fb-4b19-5ec8-36f8ed848d84"
+      ],
+      [
+        "x-frame-options",
+        "DENY"
+      ]
+    ],
+    "status": 429
+  }
+}

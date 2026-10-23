@@ -19,3 +19,50 @@ All notable changes to this project are documented here. The format follows
   sha256 and the pages that hold no documentation text.
 - `scripts/refresh_upstream.py`: regenerates the snapshot reproducibly, stdlib only and
   without a key (`uv run scripts/refresh_upstream.py`).
+- Endpoint wrappers for the nine PSD operations, named after the snapshot's
+  operationIds: the five reference lists (`PSDData_GetCommodities`, `PSDData_GetCountries`,
+  `PSDData_GetRegions`, `PSDData_GetUnitsOfMeasure`, `PSDData_GetCommodityAttributes`),
+  the data by country, for every country and for the world
+  (`PSDData_GetCountryCommodityDataByYear`, `PSDData_GetCommodityDataByYear`,
+  `PSDData_GetWorldCommodityDataByYear`) and the release dates
+  (`PSDData_GetDataReleaseInfo`). Models mirror the recorded records: `CommodityData`
+  with `value` as `Decimal` and attribute and unit ids as plain `int`, so a new upstream
+  id never fails an answer, and `DataReleaseInfo`.
+- Tasks `get_data(commodity_code, market_year, country_code=None)` (one country, or every
+  country through the `country/all` path), `get_world_data(commodity_code, market_year)`
+  and `get_release_dates(commodity_code, market_year=None, country_code=None)`, as MCP
+  tools `usda_psd_get_data`, `usda_psd_get_world_data`, `usda_psd_get_release_dates`
+  and HTTP routes. Codes and the market year are checked before any call. The data
+  tasks set `meta.vintage` to the PSD release that last revised the result, the latest
+  `calendarYear`-`month` of its records (`"2026-07"`), and leave `meta.published_at`
+  empty: PSD gives a month, no day. A market year without data is `NotFoundError`
+  naming commodity, country and year. `get_release_dates` filters upstream's full list
+  by market year and country, for polling over MCP.
+- Client (ADR-0010): `classify` maps api.data.gov's `API_KEY_*` answers to `AuthError`
+  naming the code and `DATA_GOV_API_KEY`, a 429 to `RateLimitError` (`Retry-After`, else
+  one hour), the gateway's `NOT_FOUND` and PSD's empty-body 404 to `NotFoundError`. The
+  client keeps 60 requests per minute, one at a time, asks for JSON, and records the
+  gateway's `x-ratelimit-*` headers in `quota()`, never from a cache hit. Once the
+  hourly quota is spent it waits before the next request when the wait is within
+  `RetryPolicy.backoff_max`, and otherwise raises `RateLimitError` with `retry_after`
+  without sending; a request the cache can answer is never delayed or refused.
+- Packaged reference data: the five lists under `reference/` with provenance, written by
+  `scripts/refresh_reference.py` through `api/`; `enums.AttributeId` and `enums.UnitId`
+  (`IntEnum`, named after upstream's names); `params.validate_commodity_code`,
+  `validate_country_code` (raising `errors.UnknownCode` with the closest packaged codes,
+  or a hint for `"all"` and `"00"`) and `validate_market_year`.
+- Recorded fixtures: the five lists; wheat US, wheat and corn for every country, wheat
+  and soybeans world, all 2023; the wheat release dates; an unknown commodity, country
+  and market year; valid codes without data (wheat, Bermuda, 2023: 200 `[]`); market
+  year 1900 for every country and the world (404, empty body); an invalid key; and the
+  gateway's 429 (`OVER_RATE_LIMIT`, `Retry-After: 3151`, `x-ratelimit-remaining: 0`),
+  recorded after spending the hourly quota. `CLAUDE.md` records what each answered.
+- `scripts/check-siblings.sh` and the CI job `siblings`: this wheel and
+  `xippios-usda-nass` install side by side, import, pass `uv pip check`, and add no
+  `__init__.py` to `xippios/` or `xippios/usda/` (ADR-0006).
+
+### Removed
+
+- The template's live reachability test `test_upstream_answers`: it sent the key to `/`,
+  which the gateway answers 404, spending a quota call. The three per-task live tests
+  remain.

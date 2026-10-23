@@ -6,5 +6,6 @@ in ``_client`` are internal.
 """
 
 from xippios.usda.psd._version import __version__
+from xippios.usda.psd.tasks import get_data, get_release_dates, get_world_data
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "get_data", "get_release_dates", "get_world_data"]

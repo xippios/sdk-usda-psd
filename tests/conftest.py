@@ -1,5 +1,6 @@
 import pytest
 
+from xippios.usda.psd import _client
 from xippios.usda.psd._client import API_KEY_ENV, auth
 
 pytest_plugins = ["xippios.core.testing.plugin"]
@@ -30,3 +31,9 @@ def placeholder_api_key(
     monkeypatch.setenv(API_KEY_ENV, PLACEHOLDER_KEY)
     monkeypatch.setattr(auth, "key", lambda: PLACEHOLDER_KEY)
     return PLACEHOLDER_KEY
+
+
+@pytest.fixture(autouse=True)
+def fresh_quota(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test starts without a quota snapshot, so no replayed answer makes the next pause."""
+    monkeypatch.setattr(_client, "_quota", None)

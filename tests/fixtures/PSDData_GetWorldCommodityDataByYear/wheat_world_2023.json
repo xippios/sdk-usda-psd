@@ -1,0 +1,74 @@
+{
+  "recorded_at": "2026-10-23T08:14:21.447814Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.fas.usda.gov/api/psd/commodity/0410000/world/year/2023"
+  },
+  "response": {
+    "body": "[{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":4,\"unitId\":4,\"value\":222218.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":20,\"unitId\":8,\"value\":274032.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":28,\"unitId\":8,\"value\":791593.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":57,\"unitId\":8,\"value\":222845.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":81,\"unitId\":8,\"value\":221131.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":84,\"unitId\":8,\"value\":19543.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":86,\"unitId\":8,\"value\":1288470.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":88,\"unitId\":8,\"value\":221671.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":113,\"unitId\":8,\"value\":224664.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":130,\"unitId\":8,\"value\":159570.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":192,\"unitId\":8,\"value\":637465.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":125,\"unitId\":8,\"value\":797035.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":176,\"unitId\":8,\"value\":269764.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":178,\"unitId\":8,\"value\":1288470.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"00\",\"marketYear\":\"2023\",\"calendarYear\":\"2026\",\"month\":\"10\",\"attributeId\":184,\"unitId\":26,\"value\":3.5622}]",
+    "body_base64": false,
+    "headers": [
+      [
+        "date",
+        "Fri, 23 Oct 2026 08:14:19 GMT"
+      ],
+      [
+        "content-type",
+        "application/json; charset=utf-8"
+      ],
+      [
+        "access-control-allow-headers",
+        "X-Api-Key"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "age",
+        "1"
+      ],
+      [
+        "strict-transport-security",
+        "max-age=31536000; includeSubDomains; preload"
+      ],
+      [
+        "vary",
+        "Accept-Encoding"
+      ],
+      [
+        "via",
+        "https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])"
+      ],
+      [
+        "x-api-umbrella-request-id",
+        "d1cv9jpsi0u3bmhepm1g"
+      ],
+      [
+        "x-cache",
+        "MISS"
+      ],
+      [
+        "x-content-type-options",
+        "nosniff"
+      ],
+      [
+        "x-ratelimit-limit",
+        "1000"
+      ],
+      [
+        "x-ratelimit-remaining",
+        "988"
+      ],
+      [
+        "x-vcap-request-id",
+        "770f3f1d-facf-4ac6-44f3-500d463924d7"
+      ],
+      [
+        "x-frame-options",
+        "DENY"
+      ]
+    ],
+    "status": 200
+  }
+}
