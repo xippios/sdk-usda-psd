@@ -39,12 +39,14 @@ All notable changes to this project are documented here. The format follows
   and `get_release_dates(commodity_code)`, as MCP tools `usda_psd_get_data`,
   `usda_psd_get_world_data`, `usda_psd_get_release_dates` and HTTP routes. Codes and the
   market year are checked before any call. The data tasks fill `meta.published_at` from
-  PSD's release dates (first of the release month, UTC); a market year without data is
-  `NotFoundError` naming commodity, country and year.
+  PSD's release dates: `meta.vintage` is the release as upstream names it (`"2026-07"`),
+  `meta.published_at` the first of that month at 00:00 UTC; a market year without data
+  is `NotFoundError` naming commodity, country and year.
 - Endpoint wrappers `PSDData_GetCountryCommodityDataByYear`,
   `PSDData_GetCommodityDataByYear`, `PSDData_GetWorldCommodityDataByYear` and
-  `PSDData_GetDataReleaseInfo`, models `CommodityData` (`value` as `Decimal`, ids as the
-  packaged enums) and `DataReleaseInfo`; release dates are cached for an hour.
+  `PSDData_GetDataReleaseInfo`, models `CommodityData` (`value` as `Decimal`, attribute
+  and unit ids as plain `int`, so a new upstream id never fails an answer) and
+  `DataReleaseInfo`; release dates are cached for an hour.
 - A spent api.data.gov quota is waited out only within the client's
   `RetryPolicy.backoff_max`; a longer wait raises `RateLimitError` with `retry_after`
   without sending.
@@ -55,7 +57,15 @@ All notable changes to this project are documented here. The format follows
   `xippios-usda-nass` install side by side, import, pass `uv pip check`, and add no
   `__init__.py` to `xippios/` or `xippios/usda/` (ADR-0006).
 
+### Removed
+
+- The template's live reachability test `test_upstream_answers`: it sent the key to `/`,
+  which the gateway answers 404, spending a quota call. The three per-task live tests
+  remain.
+
 ### Fixed
+
+- The quota snapshot no longer takes headers from a cache hit (ADR-0010).
 
 - Cached release dates failed to decode when upstream had sent them gzip-compressed:
   core's cache keeps `content-encoding` over the decoded body. The package's cache

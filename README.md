@@ -25,15 +25,16 @@ from xippios.usda.psd.enums import AttributeId
 result = get_data("0410000", 2023, "US")  # wheat, market year 2023, United States
 production = next(r for r in result.data if r.attribute_id == AttributeId.PRODUCTION)
 production.value, production.unit_id  # Decimal('49095.0'), UnitId._1000_MT
-result.meta.published_at  # first day of the PSD release month that last revised it
+result.meta.vintage  # "2026-07": the PSD release that last revised these figures
+result.meta.published_at  # 2026-07-01 00:00 UTC, the first day of that month
 result.meta.retrieved_at, result.meta.request
 ```
 
 Codes are PSD's own (commodity `0410000` wheat, `0440000` corn, `2222000` soybeans;
 country `US`, `BR`, `E4`), checked against the lists packaged in `reference/` before any
 call. Leave out the country for every country at once, or use `get_world_data` for the
-world total. `attribute_id` and `unit_id` are named by `enums.AttributeId` and
-`enums.UnitId`.
+world total. `attribute_id` and `unit_id` are PSD's integer ids; `enums.AttributeId` and
+`enums.UnitId` name the packaged ones and compare equal to them.
 
 ## MCP
 
