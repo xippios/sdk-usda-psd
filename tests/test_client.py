@@ -6,6 +6,7 @@ need them build the response from api.data.gov's developer manual and say so.
 """
 
 import dataclasses
+import gzip
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,8 @@ from xippios.usda.psd._client import (
     BASE_URL,
     QUOTA_WINDOW,
     RATE_LIMIT,
+    RELEASE_DATES_CACHE,
+    DecodedMemoryCache,
     QuotaAwareClient,
     auth,
     classify,
@@ -37,6 +40,7 @@ from xippios.usda.psd._client import (
     observe_quota,
     quota,
     quota_pause,
+    release_client,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -267,35 +271,96 @@ def test_a_spent_quota_pauses_for_the_window_or_retry_after() -> None:
 
 
 @pytest.mark.anyio
-async def test_the_next_request_waits_when_the_last_answer_spent_the_quota(
+async def test_a_spent_quota_beyond_backoff_max_is_refused_without_sending(
     respx_mock: respx.MockRouter,
 ) -> None:
-    """The second request sleeps about an hour before it is sent; the first does not."""
+    """The last answer left 0 and the gateway names no time: the next request would have
+    to wait an hour, longer than ``backoff_max``, so it raises instead of hanging."""
     events: list[str] = []
 
     async def fake_sleep(seconds: float) -> None:
         events.append(f"sleep {seconds:.0f}")
 
-    remaining = iter(["0", "999"])
+    def respond(request: httpx.Request) -> httpx.Response:
+        events.append("sent")
+        headers = {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"}
+        return httpx.Response(200, json=[], headers=headers)
+
+    route = respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(side_effect=respond)
+    paced = QuotaAwareClient(dataclasses.replace(config, rate_limit=None), sleep=fake_sleep)
+    assert await paced.get_json("/api/psd/regions") == []
+    with pytest.raises(RateLimitError) as info:
+        await paced.get_json("/api/psd/regions")
+    assert events == ["sent"], "nothing sent, nothing slept"
+    assert route.call_count == 1
+    assert info.value.retry_after is not None
+    assert 3590 <= info.value.retry_after <= 3600
+    assert "0 of 1000 requests left" in info.value.message
+    assert "retry after 3600 s" in info.value.message or "retry after 3599 s" in info.value.message
+    assert "Nothing was sent" in info.value.message
+
+
+@pytest.mark.anyio
+async def test_a_spent_quota_within_backoff_max_is_waited_out(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """NOT RECORDED: a 429 naming 20 s; the next request sleeps that long, then is sent."""
+    events: list[str] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        events.append(f"sleep {seconds:.0f}")
+
+    answers = iter(
+        [
+            httpx.Response(429, json=OVER_RATE_LIMIT, headers={"Retry-After": "20"}),
+            httpx.Response(
+                200, json=[], headers={"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "999"}
+            ),
+        ]
+    )
 
     def respond(request: httpx.Request) -> httpx.Response:
         events.append("sent")
-        headers = {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": next(remaining)}
-        return httpx.Response(200, json=[], headers=headers)
+        return next(answers)
 
     respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(side_effect=respond)
-    paced = QuotaAwareClient(dataclasses.replace(config, rate_limit=None), sleep=fake_sleep)
-    assert await paced.get_json("/api/psd/regions") == []
-    assert events == ["sent"]
+    paced = QuotaAwareClient(
+        dataclasses.replace(config, rate_limit=None, retry=RetryPolicy(max_attempts=1)),
+        sleep=fake_sleep,
+    )
+    with pytest.raises(RateLimitError):
+        await paced.get_json("/api/psd/regions")
     assert await paced.get_json("/api/psd/regions") == []
     assert events[0] == "sent"
-    assert events[1].startswith("sleep 3")
-    assert 3590 <= float(events[1].split()[1]) <= 3600
+    assert events[1] in {"sleep 20", "sleep 19"}
     assert events[2] == "sent"
     snapshot = quota()
     assert snapshot is not None
     assert snapshot.remaining == 999
     assert quota_pause() == 0.0
+
+
+@pytest.mark.anyio
+async def test_the_bound_is_the_clients_backoff_max(respx_mock: respx.MockRouter) -> None:
+    """A long-running script that would rather wait raises ``backoff_max`` in its config."""
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(
+        return_value=httpx.Response(
+            200, json=[], headers={"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "999"}
+        )
+    )
+    observe_quota(synthesised(200, [], {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"}))
+    patient = QuotaAwareClient(
+        dataclasses.replace(config, rate_limit=None, retry=RetryPolicy(backoff_max=7200.0)),
+        sleep=fake_sleep,
+    )
+    assert await patient.get_json("/api/psd/regions") == []
+    assert len(slept) == 1
+    assert 3590 <= slept[0] <= 3600
 
 
 @pytest.mark.anyio
@@ -326,3 +391,25 @@ def test_the_recorded_bodies_are_the_documented_shapes() -> None:
     assert "x-ratelimit-remaining" not in response.headers
     listed = recorded("PSDData_GetCommodities", "all")
     assert listed.headers["x-ratelimit-limit"] == "1000"
+
+
+@pytest.mark.anyio
+async def test_a_gzip_answer_survives_the_release_date_cache(respx_mock: respx.MockRouter) -> None:
+    """Core's cache keeps ``content-encoding: gzip`` over the decoded body; ours drops it.
+
+    Without that, the cached answer fails with ``httpx.DecodingError`` (first live run,
+    2026-10-23). The body here is a slice of the recorded wheat release dates, gzipped.
+    """
+    recorded_body = recorded("PSDData_GetDataReleaseInfo", "wheat").json()[:3]
+    raw = json.dumps(recorded_body).encode()
+    route = respx_mock.get(f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates").mock(
+        return_value=httpx.Response(
+            200, content=gzip.compress(raw), headers={"content-encoding": "gzip"}
+        )
+    )
+    first = await release_client.get_json("/api/psd/commodity/0410000/dataReleaseDates")
+    second = await release_client.get_json("/api/psd/commodity/0410000/dataReleaseDates")
+    assert first == second == recorded_body
+    assert route.call_count == 1
+    assert len(RELEASE_DATES_CACHE) == 1
+    assert isinstance(RELEASE_DATES_CACHE, DecodedMemoryCache)

@@ -1,7 +1,7 @@
 import pytest
 
 from xippios.usda.psd import _client
-from xippios.usda.psd._client import API_KEY_ENV, auth
+from xippios.usda.psd._client import API_KEY_ENV, RELEASE_DATES_CACHE, auth
 
 pytest_plugins = ["xippios.core.testing.plugin"]
 
@@ -37,3 +37,14 @@ def placeholder_api_key(
 def fresh_quota(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every test starts without a quota snapshot, so no replayed answer makes the next pause."""
     monkeypatch.setattr(_client, "_quota", None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_release_dates(request: pytest.FixtureRequest) -> None:
+    """Replay tests start with an empty release-date cache, so every route is really called.
+
+    Live tests share it: the release dates one live test fetched serve the next, which
+    keeps the live run within its call budget.
+    """
+    if "live" not in request.keywords:
+        RELEASE_DATES_CACHE.clear()
