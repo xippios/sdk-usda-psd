@@ -53,9 +53,10 @@ All notable changes to this project are documented here. The format follows
   or a hint for `"all"` and `"00"`) and `validate_market_year`.
 - Recorded fixtures: the five lists; wheat US, wheat and corn for every country, wheat
   and soybeans world, all 2023; the wheat release dates; an unknown commodity, country
-  and market year; an invalid key; and the gateway's 429 (`OVER_RATE_LIMIT`,
-  `Retry-After: 3151`, `x-ratelimit-remaining: 0`), recorded after spending the hourly
-  quota. `CLAUDE.md` records what each answered.
+  and market year; valid codes without data (wheat, Bermuda, 2023: 200 `[]`); market
+  year 1900 for every country and the world (404, empty body); an invalid key; and the
+  gateway's 429 (`OVER_RATE_LIMIT`, `Retry-After: 3151`, `x-ratelimit-remaining: 0`),
+  recorded after spending the hourly quota. `CLAUDE.md` records what each answered.
 - `scripts/check-siblings.sh` and the CI job `siblings`: this wheel and
   `xippios-usda-nass` install side by side, import, pass `uv pip check`, and add no
   `__init__.py` to `xippios/` or `xippios/usda/` (ADR-0006).

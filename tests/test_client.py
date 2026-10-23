@@ -153,6 +153,31 @@ async def test_a_year_without_data_answers_404_with_an_empty_body(
     assert route.call_count == 1
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "case"),
+    [
+        ("PSDData_GetCountryCommodityDataByYear", "unknown_year"),
+        ("PSDData_GetCommodityDataByYear", "year_1900"),
+        ("PSDData_GetWorldCommodityDataByYear", "year_1900"),
+    ],
+)
+def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
+    endpoint: str, case: str
+) -> None:
+    response = recorded(endpoint, case)
+    assert (response.status_code, response.content) == (404, b"")
+    assert response.headers["content-type"].startswith("text/plain")
+    error = classify(response)
+    assert isinstance(error, NotFoundError)
+    assert "HTTP 404 with an empty body" in error.message
+
+
+def test_valid_codes_without_data_answer_200_with_an_empty_list() -> None:
+    response = recorded("PSDData_GetCountryCommodityDataByYear", "no_data_valid_codes")
+    assert (response.status_code, response.json()) == (200, [])
+    assert classify(response) is None
+
+
 def test_the_gateway_not_found_is_a_not_found_error() -> None:
     """NOT RECORDED: api.data.gov's documented NOT_FOUND body."""
     body = {

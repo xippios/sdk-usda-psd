@@ -304,3 +304,44 @@ async def test_value_is_a_json_number_through_both_adapters(
     )
     assert rejected.status_code == 422
     assert rejected.json()["title"] == "UnknownCode"
+
+
+def test_valid_codes_without_data_are_an_empty_result(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Recorded: wheat for Bermuda (BD; PSD's BM is Burma) in 2023 answers 200 with ``[]``.
+    Empty means empty, not an error: no vintage, nothing else fetched."""
+    route = replay_fixture(DATA, "no_data_valid_codes")
+    result = tasks.get_data(WHEAT, 2023, "BD")
+    assert result.data == []
+    assert (result.meta.vintage, result.meta.published_at) == (None, None)
+    assert result.meta.request == {
+        "commodity_code": WHEAT,
+        "market_year": 2023,
+        "country_code": "BD",
+    }
+    assert route.call_count == 1
+
+
+def test_a_market_year_without_data_is_not_found_for_every_country(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Recorded: ``country/all`` for 1900 answers 404 with an empty body, like one country."""
+    route = replay_fixture(ALL, "year_1900")
+    with pytest.raises(NotFoundError) as info:
+        tasks.get_data(WHEAT, 1900)
+    assert "commodity 0410000, every country, market year 1900" in str(info.value)
+    assert "upstream answered HTTP 404" in str(info.value)
+    assert route.call_count == 1
+
+
+def test_a_market_year_without_data_is_not_found_for_the_world(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Recorded: the world form for 1900 answers 404 with an empty body as well."""
+    route = replay_fixture(WORLD, "year_1900")
+    with pytest.raises(NotFoundError) as info:
+        tasks.get_world_data(WHEAT, 1900)
+    assert "commodity 0410000, the world, market year 1900" in str(info.value)
+    assert "upstream answered HTTP 404" in str(info.value)
+    assert route.call_count == 1

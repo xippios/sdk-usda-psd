@@ -32,8 +32,13 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   code (`commodity/0410000/country/XX/year/2023`): HTTP 200 with `[]`. Empty means
   empty, not an error; `params.validate_commodity_code` / `validate_country_code` refuse
   unknown codes before the call (`UnknownCode`, naming the closest packaged codes).
-- Market year without data (`commodity/0410000/country/US/year/1900`): HTTP 404 with an
-  empty `text/plain` body, mapped to `NotFoundError`.
+- Valid codes without data: wheat for Bermuda 2023 (`commodity/0410000/country/BD/year/2023`;
+  PSD's `BM` is Burma, which has wheat data) answers HTTP 200 with `[]`
+  (`no_data_valid_codes`). Empty means empty: `get_data` returns an empty list.
+- Market year without data: HTTP 404 with an empty `text/plain` body on every data form,
+  one country (`commodity/0410000/country/US/year/1900`, `unknown_year`), every country
+  (`.../country/all/year/1900`) and the world (`.../world/year/1900`, both `year_1900`),
+  mapped to `NotFoundError`; the tasks re-raise it naming commodity, country and year.
 - Invalid key: HTTP 403 `{"error": {"code": "API_KEY_INVALID", "message": "An invalid
   api_key was supplied. Get one at https://api.fas.usda.gov:443"}}`, no quota headers;
   mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
