@@ -1,10 +1,11 @@
 """Live smoke tests: skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-Every task function gets one live smoke test here, next to the reachability check. The
-run costs four keyed calls: the reachability check, ``get_data`` (data and release
-dates), ``get_world_data`` (data; the release dates come from ``RELEASE_DATES_CACHE``,
-which live tests share) and ``get_release_dates`` (from the cache). Wheat, United
-States, market year 2023, all checked against the packaged lists.
+One live smoke test per task function. The run costs three keyed calls: ``get_data``
+(data and release dates) and ``get_world_data`` (data; the release dates come from
+``RELEASE_DATES_CACHE``, which live tests share), while ``get_release_dates`` is answered
+from the cache. Wheat, United States, market year 2023, all checked against the packaged
+lists. The template's reachability check is gone: it sent the key to ``/``, which the
+gateway answers 404, spending a quota call for nothing.
 """
 
 from datetime import UTC, datetime
@@ -12,17 +13,12 @@ from datetime import UTC, datetime
 import pytest
 
 from xippios.usda.psd import tasks
-from xippios.usda.psd._client import client, quota
+from xippios.usda.psd._client import quota
 from xippios.usda.psd.enums import AttributeId
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
 WHEAT = "0410000"
-
-
-async def test_upstream_answers() -> None:
-    response = await client.request("GET", "/", raise_on_error=False)
-    assert response.status_code < 500
 
 
 async def test_get_data_live() -> None:
