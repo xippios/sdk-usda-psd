@@ -433,3 +433,24 @@ async def test_a_gzip_answer_survives_the_release_date_cache(respx_mock: respx.M
     assert route.call_count == 1
     assert len(RELEASE_DATES_CACHE) == 1
     assert isinstance(RELEASE_DATES_CACHE, DecodedMemoryCache)
+
+
+@pytest.mark.anyio
+async def test_a_cache_hit_never_updates_the_quota(respx_mock: respx.MockRouter) -> None:
+    """ADR-0010: quota headers are never taken from a cache hit; they are as old as the entry."""
+    respx_mock.get(f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates").mock(
+        return_value=httpx.Response(
+            200, json=[], headers={"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "5"}
+        )
+    )
+    path = "/api/psd/commodity/0410000/dataReleaseDates"
+    await release_client.request("GET", path, raise_on_error=False)
+    first = quota()
+    assert first is not None
+    assert first.remaining == 5
+    observe_quota(recorded("PSDData_GetCommodities", "all"), now=NOW)
+    hit = await release_client.request("GET", path, raise_on_error=False)
+    assert hit.extensions.get("xippios_cache") == "hit"
+    snapshot = quota()
+    assert snapshot is not None
+    assert (snapshot.remaining, snapshot.observed_at) == (999, NOW)

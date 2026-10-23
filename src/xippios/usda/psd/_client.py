@@ -14,8 +14,9 @@ Rate limits. The snapshot documents none, so the client keeps its own pace,
 ``RATE_LIMIT``. The gateway enforces api.data.gov's quota: 1,000 requests per rolling
 hour per key, reported as ``x-ratelimit-limit: 1000`` and ``x-ratelimit-remaining`` on
 every recorded answer (2026-10-23) and shared by every package that uses the same
-``DATA_GOV_API_KEY``. Johannes's decision: the quota may be spent quickly when the data
-is worth it; the client interprets the gateway's answers and pauses instead:
+``DATA_GOV_API_KEY`` (ADR-0009). The policy is ADR-0010's, implemented here as its
+proving package: the quota may be spent quickly when the data is worth it; the client
+interprets the gateway's answers and pauses instead:
 
 - every response's quota headers land in a module-level snapshot, ``quota()``;
 - a 429 becomes ``RateLimitError`` with ``retry_after`` from ``Retry-After``, which the
@@ -308,8 +309,9 @@ class QuotaAwareClient(AsyncClient):
         response = await super().request(
             method, path, params=params, json=json, headers=headers, raise_on_error=raise_on_error
         )
-        if not raise_on_error:
-            # classify, which records the quota otherwise, only runs when errors are raised.
+        if not raise_on_error and response.extensions.get("xippios_cache") != "hit":
+            # classify, which records the quota otherwise, only runs when errors are raised
+            # (and never on a cache hit, whose quota headers are as old as the entry).
             observe_quota(response)
         return response
 
