@@ -12,12 +12,45 @@ that works here; the family rules it points to apply as well.
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
 | Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header |
-| Rate limit | 60 requests per minute, enforced client-side in `_client.py` |
+| Rate limit | 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. The api.data.gov gateway enforces 1,000 requests per rolling hour per key, observed in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package using the same `DATA_GOV_API_KEY`. A 429 raises `RateLimitError` with `retry_after` from `Retry-After`, else 3600 s; once `x-ratelimit-remaining` reaches 0 the next request waits that long instead of firing into a 429 (`QuotaAwareClient`); `quota()` reports what is left |
 | Write tools | no, this package is read-only |
 
 The snapshot in `docs/upstream/` is the reference for names, parameters and semantics.
 If it is empty or stale, run `/refresh-upstream` first and review the diff. Never write a
 wrapper from memory of the API.
+
+## Upstream behaviour established by fixtures
+
+The snapshot types every response as `object`, so these facts come from the answers
+recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them once.
+
+- Record shapes of the five lists are in `models.py`, each naming its fixture. Unit
+  descriptions are padded with spaces to 20 characters (kept); attribute names are not
+  unique (`Total Disappearance` is 126 and 173); four countries sit in region `R15`,
+  which `PSDData_GetRegions` does not list.
+- Unknown commodity code (`commodity/9999999/country/US/year/2023`) and unknown country
+  code (`commodity/0410000/country/XX/year/2023`): HTTP 200 with `[]`. Empty means
+  empty, not an error; `params.validate_commodity_code` / `validate_country_code` refuse
+  unknown codes before the call (`UnknownCode`, naming the closest packaged codes).
+- Market year without data (`commodity/0410000/country/US/year/1900`): HTTP 404 with an
+  empty `text/plain` body, mapped to `NotFoundError`.
+- Invalid key: HTTP 403 `{"error": {"code": "API_KEY_INVALID", "message": "An invalid
+  api_key was supplied. Get one at https://api.fas.usda.gov:443"}}`, no quota headers;
+  mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
+  `API_KEY_*` codes map the same way. The gateway's `NOT_FOUND` 404 is `NotFoundError`.
+- Quota: every keyed answer carries `x-ratelimit-limit: 1000` and
+  `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. No 429 has been
+  recorded, so whether it carries `Retry-After` is not known; until it is, the client
+  assumes not and falls back to one hour (api.data.gov: "The block will automatically be
+  lifted by waiting an hour").
+
+## Reference data
+
+`scripts/refresh_reference.py` packages the five lists (`commodities`, `countries`,
+`regions`, `unitsOfMeasure`, `commodityAttributes`) under `reference/` with provenance
+in `reference/README.md`, and regenerates `enums.py`. Refresh policy:
+`/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
+names a code the package lacks.
 
 ## Read first, in this order
 
@@ -51,8 +84,9 @@ src/xippios/usda/psd/
   tasks.py         task functions; __all__ is what the adapters register
   mcp.py           xippios-usda-psd-mcp entry point
   http.py          FastAPI router
-  params.py        packaged value lists: PACKAGED_LISTS, packaged_values()
-  enums.py         StrEnums generated from the packaged lists; never edited by hand
+  errors.py        UnknownCode: a code the packaged lists lack (InvalidRequestError)
+  params.py        packaged lists (PACKAGED_LISTS, packaged_values()) and code checks
+  enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
   reference/       packaged code lists (CSV/JSON) plus README with provenance
 scripts/
   refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py
@@ -60,6 +94,9 @@ tests/
   conftest.py      enables xippios.core.testing.plugin; placeholder key for replay
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
   test_tasks.py    structural checks on every task plus per-task replay tests
+  test_api.py      replay tests for the endpoint wrappers
+  test_client.py   classify on recorded error bodies, quota snapshot and pause
+  test_params.py   packaged lists, enums and the code checks
   test_adapters.py the adapters expose exactly tasks.__all__
   test_layout.py   namespace levels stay empty; py.typed ships
   test_live.py     @pytest.mark.live smoke tests, one per task
