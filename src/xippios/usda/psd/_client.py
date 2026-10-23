@@ -1,9 +1,9 @@
 """The configured ``xippios.core`` client for USDA FAS PSD Online.
 
 One ``AsyncClient`` for the whole package: task functions share its rate limiter, and
-the same instance serves the sync facades and the MCP server. Release dates go through
-``release_client``, the same client with a one-hour cache, because every data task looks
-them up for ``published_at`` and the answer is large (about 1 MB for wheat).
+the same instance serves the sync facades and the MCP server. It asks for JSON
+(``Accept: application/json``): the snapshot's operations produce JSON and XML, and
+without the header httpx sends ``Accept: */*``.
 
 ``https://api.fas.usda.gov`` is the api.data.gov gateway (API Umbrella, named in the
 ``via`` header of every recorded answer); every path keeps its documented ``/api/psd/``
@@ -28,10 +28,11 @@ interprets the gateway's answers and pauses instead:
   ``Retry-After``), and otherwise raises ``RateLimitError`` with ``retry_after`` without
   sending, so MCP and HTTP callers read "retry after N s" instead of hanging. A
   long-running script that would rather wait raises ``backoff_max`` in its own config.
+  A request the client's cache can answer is never delayed or refused, and a cache hit
+  never updates the snapshot: its headers are as old as the entry.
 """
 
 import asyncio
-import dataclasses
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Mapping
@@ -45,14 +46,12 @@ from xippios.core import (
     AuthError,
     ClientConfig,
     HeaderKeyAuth,
-    MemoryCache,
     NotFoundError,
     RateLimit,
     RateLimitError,
     XippiosError,
 )
 from xippios.core.client import Params
-from xippios.core.client.cache import CachedResponse
 from xippios.core.errors import parse_retry_after
 
 from xippios.usda.psd._version import __version__
@@ -109,8 +108,13 @@ class Quota:
         """One line for messages, e.g. ``"994 of 1000 requests left (as of ...Z)"``."""
         left = "?" if self.remaining is None else str(self.remaining)
         limit = "?" if self.limit is None else str(self.limit)
-        when = self.observed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        return f"{left} of {limit} requests left in the rolling hour (as of {when})"
+        return (
+            f"{left} of {limit} requests left in the rolling hour (as of {_utc(self.observed_at)})"
+        )
+
+
+def _utc(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _quota: Quota | None = None
@@ -221,12 +225,17 @@ def classify(response: httpx.Response) -> XippiosError | None:
         wait = retry_after if retry_after is not None else QUOTA_WINDOW
         upstream = ": ".join(part for part in (code, message) if part)
         snapshot = quota()
+        allowance = (
+            f"{snapshot.limit} requests per rolling hour per key"
+            if snapshot is not None and snapshot.limit is not None
+            else "an hourly quota per key"
+        )
         state = f" Quota: {snapshot.describe()}." if snapshot is not None else ""
+        back = _utc(datetime.now(UTC) + timedelta(seconds=wait))
         return RateLimitError(
             f"api.data.gov rate limit reached for the key in {API_KEY_ENV} "
-            f"(HTTP 429{' ' + upstream if upstream else ''}). The gateway allows 1000 requests "
-            f"per rolling hour per key, shared by every package using that key; retry after "
-            f"{wait:.0f} s.{state}",
+            f"(HTTP 429{' ' + upstream if upstream else ''}). The gateway allows {allowance}, "
+            f"shared by every package using that key; it should be back at {back}.{state}",
             retry_after=wait,
             source=SOURCE,
         )
@@ -252,9 +261,11 @@ class QuotaAwareClient(AsyncClient):
     Before each request (not before each retry of it) it asks ``quota_pause()`` how long
     the quota needs to come back. Within ``config.retry.backoff_max``, the bound core
     uses for a ``Retry-After``, it sleeps that long and sends; beyond it, it raises
-    ``RateLimitError`` with ``retry_after`` and the quota snapshot, sending nothing.
-    Core has no hook before a request, so this subclass overrides ``request``, which
-    ``get`` and ``get_json`` call; the rest is core's.
+    ``RateLimitError`` with ``retry_after`` and the quota snapshot, sending nothing. A
+    request the configured cache can answer skips the gate: it costs no quota. Core has
+    no hook before a request, so this subclass overrides ``request``, which ``get`` and
+    ``get_json`` call, and finds the cache entry the way core's ``request`` does (its
+    ``_pool`` and ``_cache_key``); the rest is core's.
     """
 
     def __init__(
@@ -284,16 +295,17 @@ class QuotaAwareClient(AsyncClient):
             RateLimitError: Before sending, when the quota needs longer than
                 ``config.retry.backoff_max`` seconds to come back.
         """
-        wait = quota_pause()
+        wait = 0.0 if self._cached(method, path, params) else quota_pause()
         if wait > 0:
             snapshot = quota()
             state = snapshot.describe() if snapshot is not None else "spent"
             bound = self.config.retry.backoff_max
             if wait > bound:
+                back = _utc(datetime.now(UTC) + timedelta(seconds=wait))
                 raise RateLimitError(
-                    f"api.data.gov quota for the key in {API_KEY_ENV} is spent ({state}); "
-                    f"retry after {wait:.0f} s. Nothing was sent: the wait is longer than "
-                    f"the client's RetryPolicy.backoff_max ({bound:.0f} s).",
+                    f"api.data.gov quota for the key in {API_KEY_ENV} is spent ({state}). "
+                    f"Nothing was sent: the quota should be back at {back}, later than the "
+                    f"client waits inside a call (RetryPolicy.backoff_max, {bound:.0f} s).",
                     retry_after=wait,
                     source=SOURCE,
                 )
@@ -315,12 +327,22 @@ class QuotaAwareClient(AsyncClient):
             observe_quota(response)
         return response
 
+    def _cached(self, method: str, path: str, params: Params) -> bool:
+        """True when the configured cache holds a live entry for this request."""
+        cache = self.config.cache
+        if cache is None or method.upper() != "GET":
+            return False
+        probe = self._pool().build_request("GET", path, params=params)
+        key = self._cache_key("GET", probe.url)
+        return key is not None and cache.get(key) is not None
+
 
 config = ClientConfig(
     source=SOURCE,
     version=__version__,
     base_url=BASE_URL,
     rate_limit=RATE_LIMIT,
+    headers={"Accept": "application/json"},
     classify=classify,
 )
 # The key is read from the environment on the first request, never at import.
@@ -328,53 +350,12 @@ auth = HeaderKeyAuth("X-Api-Key", API_KEY_ENV, source=SOURCE)
 client = QuotaAwareClient(config, auth=auth)
 
 
-class DecodedMemoryCache(MemoryCache):
-    """Core's ``MemoryCache``, minus the headers that describe the wire encoding.
-
-    Core stores the decoded body (``response.content``) with the original headers, so a
-    gzip answer (``api.fas.usda.gov`` compresses large ones) comes back from the cache
-    with ``content-encoding: gzip`` over plain bytes and fails to decode
-    (``httpx.DecodingError``, seen in the first live run on 2026-10-23). Dropping
-    ``content-encoding``, ``content-length`` and ``transfer-encoding`` on the way in, as
-    core's fixture writer does, fixes it here until core does.
-    """
-
-    WIRE_HEADERS = frozenset({"content-encoding", "content-length", "transfer-encoding"})
-
-    def set(self, key: str, value: CachedResponse) -> None:
-        """Store ``value`` without its wire-encoding headers."""
-        headers = tuple(
-            (name, text) for name, text in value.headers if name.lower() not in self.WIRE_HEADERS
-        )
-        super().set(key, dataclasses.replace(value, headers=headers))
-
-
-RELEASE_DATES_CACHE = DecodedMemoryCache(ttl=3600.0, maxsize=8)
-"""GET cache for ``release_client``: release dates kept one hour, eight commodities.
-
-``get_data`` and ``get_world_data`` look up ``PSDData_GetDataReleaseInfo`` for
-``published_at`` on every call; the answer covers every country and market year of the
-commodity (7,754 records, about 840 KB of JSON for wheat on 2026-10-23) and changes at
-most once a month, when PSD releases. One hour keeps a burst of data calls from
-re-fetching it and bounds how stale a new release can look. Only HTTP 200 is kept.
-"""
-
-release_client = QuotaAwareClient(dataclasses.replace(config, cache=RELEASE_DATES_CACHE), auth=auth)
-"""The same client with ``RELEASE_DATES_CACHE``; used by the release-date wrapper only.
-
-It shares the key, ``classify`` and the quota snapshot; its rate limiter is its own, so
-an uncached release-date call may follow a data call without the one-second spacing.
-Data calls never go through the cache: ``retrieved_at`` stays the time of the fetch.
-"""
-
 __all__ = [
     "API_KEY_ENV",
     "BASE_URL",
     "QUOTA_WINDOW",
     "RATE_LIMIT",
-    "RELEASE_DATES_CACHE",
     "SOURCE",
-    "DecodedMemoryCache",
     "Quota",
     "QuotaAwareClient",
     "auth",
@@ -384,5 +365,4 @@ __all__ = [
     "observe_quota",
     "quota",
     "quota_pause",
-    "release_client",
 ]

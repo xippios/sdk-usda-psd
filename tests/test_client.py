@@ -8,9 +8,8 @@ a short one) are built in the recorded body's shape and say so.
 """
 
 import dataclasses
-import gzip
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -19,11 +18,13 @@ import pytest
 import respx
 from xippios.core import (
     AuthError,
+    MemoryCache,
     NotFoundError,
     RateLimitError,
     RetryPolicy,
     UpstreamError,
 )
+from xippios.core.mcp.errors import error_to_text
 from xippios.core.testing import load_fixture
 
 from xippios.usda.psd import api
@@ -32,8 +33,6 @@ from xippios.usda.psd._client import (
     BASE_URL,
     QUOTA_WINDOW,
     RATE_LIMIT,
-    RELEASE_DATES_CACHE,
-    DecodedMemoryCache,
     QuotaAwareClient,
     auth,
     classify,
@@ -42,7 +41,6 @@ from xippios.usda.psd._client import (
     observe_quota,
     quota,
     quota_pause,
-    release_client,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -185,7 +183,8 @@ def test_the_recorded_429_is_a_rate_limit_error_with_its_retry_after() -> None:
     assert error.retry_after == 3151.0
     assert "OVER_RATE_LIMIT: You have exceeded your rate limit" in error.message
     assert "1000 requests per rolling hour per key" in error.message
-    assert "retry after 3151 s" in error.message
+    assert "should be back at" in error.message
+    assert "retry after" not in error.message, "core's adapters append the retry hint"
     assert "0 of 1000 requests left" in error.message
     assert API_KEY_ENV in error.message
     snapshot = quota()
@@ -216,7 +215,8 @@ def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
     error = classify(synthesised(429, OVER_RATE_LIMIT))
     assert isinstance(error, RateLimitError)
     assert error.retry_after == QUOTA_WINDOW == 3600.0
-    assert "retry after 3600 s" in error.message
+    assert "an hourly quota per key" in error.message, "no limit known, none invented"
+    assert "should be back at" in error.message
     snapshot = quota()
     assert snapshot is not None
     assert snapshot.remaining == 0
@@ -316,8 +316,11 @@ async def test_a_spent_quota_beyond_backoff_max_is_refused_without_sending(
     assert info.value.retry_after is not None
     assert 3590 <= info.value.retry_after <= 3600
     assert "0 of 1000 requests left" in info.value.message
-    assert "retry after 3600 s" in info.value.message or "retry after 3599 s" in info.value.message
-    assert "Nothing was sent" in info.value.message
+    assert "Nothing was sent: the quota should be back at" in info.value.message
+    assert "retry after" not in info.value.message, "core's adapters append the retry hint"
+    assert error_to_text(info.value).endswith("(retry after 3600 s)") or error_to_text(
+        info.value
+    ).endswith("(retry after 3599 s)")
 
 
 @pytest.mark.anyio
@@ -413,44 +416,71 @@ def test_the_recorded_bodies_are_the_documented_shapes() -> None:
     assert listed.headers["x-ratelimit-limit"] == "1000"
 
 
-@pytest.mark.anyio
-async def test_a_gzip_answer_survives_the_release_date_cache(respx_mock: respx.MockRouter) -> None:
-    """Core's cache keeps ``content-encoding: gzip`` over the decoded body; ours drops it.
+def _cached_client(sleep: Callable[[float], Awaitable[None]]) -> QuotaAwareClient:
+    cached = dataclasses.replace(config, rate_limit=None, cache=MemoryCache(ttl=None))
+    return QuotaAwareClient(cached, sleep=sleep)
 
-    Without that, the cached answer fails with ``httpx.DecodingError`` (first live run,
-    2026-10-23). The body here is a slice of the recorded wheat release dates, gzipped.
-    """
-    recorded_body = recorded("PSDData_GetDataReleaseInfo", "wheat").json()[:3]
-    raw = json.dumps(recorded_body).encode()
-    route = respx_mock.get(f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates").mock(
-        return_value=httpx.Response(
-            200, content=gzip.compress(raw), headers={"content-encoding": "gzip"}
-        )
+
+@pytest.mark.anyio
+async def test_a_cache_hit_is_served_while_the_quota_is_spent(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """B1: the gate never refuses or delays what the cache can answer; it costs no quota."""
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    spent = {"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "0"}
+    route = respx_mock.get(f"{BASE_URL}/api/psd/regions").mock(
+        return_value=httpx.Response(200, json=[{"regionCode": "R00"}], headers=spent)
     )
-    first = await release_client.get_json("/api/psd/commodity/0410000/dataReleaseDates")
-    second = await release_client.get_json("/api/psd/commodity/0410000/dataReleaseDates")
-    assert first == second == recorded_body
+    other = respx_mock.get(f"{BASE_URL}/api/psd/countries").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    paced = _cached_client(fake_sleep)
+    first = await paced.get_json("/api/psd/regions")
+    assert quota_pause() > RetryPolicy().backoff_max, "the quota is spent"
+    assert await paced.get_json("/api/psd/regions") == first
+    raw = await paced.request("GET", "/api/psd/regions", raise_on_error=False)
+    assert raw.extensions.get("xippios_cache") == "hit"
     assert route.call_count == 1
-    assert len(RELEASE_DATES_CACHE) == 1
-    assert isinstance(RELEASE_DATES_CACHE, DecodedMemoryCache)
+    assert slept == []
+    with pytest.raises(RateLimitError, match="Nothing was sent"):
+        await paced.get_json("/api/psd/countries")
+    assert other.call_count == 0
 
 
 @pytest.mark.anyio
-async def test_a_cache_hit_never_updates_the_quota(respx_mock: respx.MockRouter) -> None:
+@pytest.mark.parametrize("raw", [False, True], ids=["get_json", "raise_on_error=False"])
+async def test_a_cache_hit_never_updates_the_quota(respx_mock: respx.MockRouter, raw: bool) -> None:
     """ADR-0010: quota headers are never taken from a cache hit; they are as old as the entry."""
-    respx_mock.get(f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates").mock(
+
+    async def no_sleep(seconds: float) -> None:
+        raise AssertionError(f"slept {seconds}")
+
+    path = "/api/psd/regions"
+    respx_mock.get(f"{BASE_URL}{path}").mock(
         return_value=httpx.Response(
             200, json=[], headers={"x-ratelimit-limit": "1000", "x-ratelimit-remaining": "5"}
         )
     )
-    path = "/api/psd/commodity/0410000/dataReleaseDates"
-    await release_client.request("GET", path, raise_on_error=False)
+    paced = _cached_client(no_sleep)
+    await paced.get_json(path)
     first = quota()
     assert first is not None
     assert first.remaining == 5
     observe_quota(recorded("PSDData_GetCommodities", "all"), now=NOW)
-    hit = await release_client.request("GET", path, raise_on_error=False)
-    assert hit.extensions.get("xippios_cache") == "hit"
+    if raw:
+        hit = await paced.request("GET", path, raise_on_error=False)
+        assert hit.extensions.get("xippios_cache") == "hit"
+    else:
+        await paced.get_json(path)
     snapshot = quota()
     assert snapshot is not None
     assert (snapshot.remaining, snapshot.observed_at) == (999, NOW)
+
+
+def test_the_client_asks_for_json() -> None:
+    """The snapshot's operations produce JSON and XML; httpx alone sends ``Accept: */*``."""
+    assert config.headers == {"Accept": "application/json"}
