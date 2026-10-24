@@ -126,7 +126,7 @@ HTTP instead of stdio.
 | `PSDData_GetUnitsOfMeasure` (`unitsOfMeasure`) | `list_units_of_measure()` | `usda_psd_list_units_of_measure` | packaged; `list_*` task |
 | `PSDData_GetCommodityAttributes` (`commodityAttributes`) | `list_commodity_attributes(search)` | `usda_psd_list_commodity_attributes` | packaged; `list_*` task |
 
-Wave 2, the slices: task-shaped functions over the operations above, no new endpoint.
+The slices: task-shaped functions over the operations above, no new endpoint.
 
 | Upstream operation | Task function | MCP tool | Example | Status |
 | --- | --- | --- | --- | --- |
@@ -138,8 +138,8 @@ Wave 2, the slices: task-shaped functions over the operations above, no new endp
 Every request counts against api.data.gov's quota of 1,000 requests per hour per key,
 shared by every package using the same `DATA_GOV_API_KEY`; the `list_*` tasks spend none.
 The client keeps its own pace of one request per second; once the quota is spent it waits
-out a wait of up to 30 s and otherwise raises `RateLimitError` with `retry_after` instead
-of sending.
+for it when that takes at most 30 s, and otherwise raises `RateLimitError` with
+`retry_after` instead of sending.
 
 ## Upstream terms and attribution
 
