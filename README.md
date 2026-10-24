@@ -116,10 +116,10 @@ HTTP instead of stdio.
 
 | Upstream operation | Task function | MCP tool | Status |
 | --- | --- | --- | --- |
-| `PSDData_GetCountryCommodityDataByYear` (`commodity/{commodityCode}/country/{countryCode}/year/{marketYear}`) | `get_data(commodity_code, market_year, country_code)` | `usda_psd_get_data` | done |
-| `PSDData_GetCommodityDataByYear` (`commodity/{commodityCode}/country/all/year/{marketYear}`) | `get_data(commodity_code, market_year)` | `usda_psd_get_data` | done |
-| `PSDData_GetWorldCommodityDataByYear` (`commodity/{commodityCode}/world/year/{marketYear}`) | `get_world_data(commodity_code, market_year)` | `usda_psd_get_world_data` | done |
-| `PSDData_GetDataReleaseInfo` (`commodity/{commodityCode}/dataReleaseDates`) | `get_release_dates(commodity_code, market_year, country_code)` | `usda_psd_get_release_dates` | done |
+| `PSDData_GetCountryCommodityDataByYear` (`commodity/{commodityCode}/country/{countryCode}/year/{marketYear}`) | `get_data(commodity_code, market_year, country_code)` | `usda_psd_get_data` | alpha |
+| `PSDData_GetCommodityDataByYear` (`commodity/{commodityCode}/country/all/year/{marketYear}`) | `get_data(commodity_code, market_year)` | `usda_psd_get_data` | alpha |
+| `PSDData_GetWorldCommodityDataByYear` (`commodity/{commodityCode}/world/year/{marketYear}`) | `get_world_data(commodity_code, market_year)` | `usda_psd_get_world_data` | alpha |
+| `PSDData_GetDataReleaseInfo` (`commodity/{commodityCode}/dataReleaseDates`) | `get_release_dates(commodity_code, market_year, country_code)` | `usda_psd_get_release_dates` | alpha |
 | `PSDData_GetCommodities` (`commodities`) | `list_commodities(search)` | `usda_psd_list_commodities` | packaged; `list_*` task |
 | `PSDData_GetCountries` (`countries`) | `list_countries(region_code, search)` | `usda_psd_list_countries` | packaged; `list_*` task |
 | `PSDData_GetRegions` (`regions`) | `list_regions()` | `usda_psd_list_regions` | packaged; `list_*` task |
@@ -130,16 +130,19 @@ The slices: task-shaped functions over the operations above, no new endpoint.
 
 | Upstream operation | Task function | MCP tool | Example | Status |
 | --- | --- | --- | --- | --- |
-| `PSDData_GetCountryCommodityDataByYear`, one request | `get_balance_sheet(commodity_code, country_code, market_year)` | `usda_psd_get_balance_sheet` | `get_balance_sheet("0410000", "US", 2023)`: wheat US 2023 as one record, 15 attributes | done |
-| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)` | `usda_psd_get_time_series` | `get_time_series("0440000", "US", 28, 2021, 2023)`: US corn production, three years | done |
-| `PSDData_GetCommodityDataByYear`, one request | `get_top_countries(commodity_code, market_year, attribute_id, n=10)` | `usda_psd_get_top_countries` | `get_top_countries("2222000", 2023, 28, n=5)`: the five largest soybean producers | done |
-| `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised; MCP returns at most 200 rows, a release adding a market year can exceed that (wheat 2026-10: 146), `get_release_dates(commodity_code, market_year=..., country_code=...)` returns any part in full | done |
+| `PSDData_GetCountryCommodityDataByYear`, one request | `get_balance_sheet(commodity_code, country_code, market_year)` | `usda_psd_get_balance_sheet` | `get_balance_sheet("0410000", "US", 2023)`: wheat US 2023 as one record, 15 attributes | alpha |
+| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)` | `usda_psd_get_time_series` | `get_time_series("0440000", "US", 28, 2021, 2023)`: US corn production, three years | alpha |
+| `PSDData_GetCommodityDataByYear`, one request | `get_top_countries(commodity_code, market_year, attribute_id, n=10)` | `usda_psd_get_top_countries` | `get_top_countries("2222000", 2023, 28, n=5)`: the five largest soybean producers | alpha |
+| `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised; MCP returns at most 200 rows, a release adding a market year can exceed that (wheat 2026-10: 146), `get_release_dates(commodity_code, market_year=..., country_code=...)` returns any part in full | alpha |
+
+All twelve tasks are covered in 0.1.0, the first release. Alpha: the public surface may
+change in a minor version before 1.0 (conventions §12); `CHANGELOG.md` lists every change.
 
 Every request counts against api.data.gov's quota of 1,000 requests per hour per key,
 shared by every package using the same `DATA_GOV_API_KEY`; the `list_*` tasks spend none.
 The client keeps its own pace of one request per second; once the quota is spent it waits
-for it when that takes at most 30 s, and otherwise raises `RateLimitError` with
-`retry_after` instead of sending.
+for the quota to come back when that takes at most 30 s, and otherwise raises
+`RateLimitError` with `retry_after` instead of sending.
 
 ## Upstream terms and attribution
 

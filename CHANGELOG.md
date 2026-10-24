@@ -37,9 +37,9 @@ All notable changes to this project are documented here. The format follows
   and HTTP routes. Codes and the market year are checked before any call. The data
   tasks set `meta.vintage` to the PSD release that last revised the result, the latest
   `calendarYear`-`month` of its records (`"2026-07"`), and leave `meta.published_at`
-  empty: PSD gives a month, no day. A market year without data is `NotFoundError`
-  naming commodity, country and year. `get_release_dates` filters upstream's full list
-  by market year and country, for polling over MCP.
+  empty: PSD gives a month, no day. A market year without data is `NoDataForYear`,
+  a `NotFoundError`, naming commodity, country and year. `get_release_dates` filters
+  upstream's full list by market year and country, for polling over MCP.
 - Tasks `list_commodities(search=None)`, `list_countries(region_code=None, search=None)`,
   `list_regions()`, `list_units_of_measure()` and `list_commodity_attributes(search=None)`,
   as MCP tools `usda_psd_list_*` and HTTP routes. They answer from the packaged lists
@@ -75,7 +75,7 @@ All notable changes to this project are documented here. The format follows
   `NOT_FOUND` stays a plain `NotFoundError` and reaches the caller unchanged.
 - `params.validate_attribute_id` and `params.attribute_names`: attribute ids are checked
   against the packaged `commodityAttributes` list before any call; `UnknownCode` names
-  the closest ids and now takes an integer value and its own reason.
+  the closest ids and takes an integer value and its own reason.
 - Client (ADR-0010): `classify` maps api.data.gov's `API_KEY_*` answers to `AuthError`
   naming the code and `DATA_GOV_API_KEY`, a 429 to `RateLimitError` (`Retry-After`, else
   one hour), the gateway's `NOT_FOUND` to `NotFoundError` and PSD's empty-body 404 to
