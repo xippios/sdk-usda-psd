@@ -20,7 +20,9 @@ from xippios.usda.psd.models import (
 )
 from xippios.usda.psd.params import (
     PACKAGED_LISTS,
+    attribute_names,
     packaged_values,
+    validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
     validate_market_year,
@@ -163,7 +165,47 @@ def test_other_market_years_are_refused(year: int) -> None:
         validate_market_year(year)
 
 
+def test_attribute_names_are_the_packaged_list() -> None:
+    names = attribute_names()
+    packaged = packaged_values("commodityAttributes")
+    assert packaged is not None
+    assert names == {r["attributeId"]: r["attributeName"] for r in packaged.records}
+    assert list(names) == [r["attributeId"] for r in packaged.records], "upstream order"
+    assert names[28] == "Production"
+    assert names[126] == names[173] == "Total Disappearance"
+    assert names[133] == names[135] == "Fresh Dom. Consumption"
+
+
+@pytest.mark.parametrize("attribute_id", [28, 88, 176, 126, 173, enums.AttributeId.PRODUCTION])
+def test_known_attribute_ids_pass(attribute_id: int) -> None:
+    assert validate_attribute_id(attribute_id) == attribute_id
+
+
+def test_unknown_attribute_id_names_the_closest() -> None:
+    with pytest.raises(UnknownCode) as info:
+        validate_attribute_id(999)
+    error = info.value
+    assert status_for(error) == 422
+    assert (error.param, error.value, error.list_name) == (
+        "attribute_id",
+        999,
+        "commodityAttributes",
+    )
+    assert error.closest == [("99", "Refined Exp.(Raw Val)")]
+    assert error.message.startswith("999 is not an attribute_id in PSD's commodityAttributes")
+    assert "list_commodity_attributes lists the ids" in error.message
+    assert "PSD answers unknown codes" not in error.message, "its own reason"
+
+
+@pytest.mark.parametrize("attribute_id", [True, False, "28", 28.0])
+def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -> None:
+    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
+        validate_attribute_id(attribute_id)  # type: ignore[arg-type]
+
+
 DATA_FIXTURES = [
+    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2021"),
+    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2022"),
     ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2023"),
     ("PSDData_GetCommodityDataByYear", "corn_all_2023"),
     ("PSDData_GetCommodityDataByYear", "wheat_all_2023"),

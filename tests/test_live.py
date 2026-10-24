@@ -1,9 +1,13 @@
 """Live smoke tests: skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-One live smoke test per task function, one keyed call each, eight in all. The data
-tasks ask for wheat, United States, market year 2023, all checked against the packaged
-lists. The list tasks answer from the package without a call, so their test fetches the
-list through its endpoint wrapper and checks that the packaged records equal it: the
+One live smoke test per task function, twelve in all, fourteen keyed calls: one each,
+except the time series, which spends one per market year (corn, United States, 2021 to
+2023, three). The data tasks ask for wheat, United States, market year 2023, all
+checked against the packaged lists; the slices for wheat (balance sheet, latest
+release), corn (time series) and soybeans (top producers, 2023). The slices record what
+they answered as test properties (``--junitxml`` shows them), never a key. The list
+tasks answer from the package without a call, so their test fetches the list through
+its endpoint wrapper and checks that the packaged records equal it: the
 freshness check ``reference/README.md`` promises. A difference fails the test naming
 what is gone and what is new; ``/refresh-reference-data`` then refreshes the package.
 The template's reachability check is gone: it sent the key to ``/``, which the gateway
@@ -11,6 +15,7 @@ answers 404, spending a quota call for nothing.
 """
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -21,7 +26,7 @@ from xippios.usda.psd.enums import AttributeId
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
-WHEAT = "0410000"
+WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
 VINTAGE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
@@ -50,6 +55,53 @@ async def test_get_release_dates_live() -> None:
     assert len(result.data) == 1
     assert result.data[0].release_month in range(1, 13)
     assert result.meta.published_at is None
+
+
+async def test_get_balance_sheet_live(record_property: Callable[[str, object], None]) -> None:
+    result = await tasks.get_balance_sheet_async(WHEAT, "US", 2023)
+    sheet = result.data
+    assert (sheet.commodity_code, sheet.country_code, sheet.market_year) == (WHEAT, "US", 2023)
+    assert sheet.attributes["Production"].attribute_id == AttributeId.PRODUCTION
+    ids = [entry.attribute_id for entry in sheet.attributes.values()]
+    assert len(ids) == len(set(ids)), "one entry per record"
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
+    assert result.meta.published_at is None
+    record_property("attributes", list(sheet.attributes))
+    record_property("vintage", result.meta.vintage)
+
+
+async def test_get_time_series_live(record_property: Callable[[str, object], None]) -> None:
+    result = await tasks.get_time_series_async(CORN, "US", AttributeId.PRODUCTION, 2021, 2023)
+    assert [r.market_year for r in result.data] == [2021, 2022, 2023]
+    assert {(r.country_code, r.attribute_id) for r in result.data} == {("US", 28)}
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
+    record_property("series", [(r.market_year, str(r.value), r.unit_id) for r in result.data])
+    record_property("vintage", result.meta.vintage)
+
+
+async def test_get_top_countries_live(record_property: Callable[[str, object], None]) -> None:
+    result = await tasks.get_top_countries_async(SOYBEANS, 2023, AttributeId.PRODUCTION, n=5)
+    assert len(result.data) == 5
+    values = [r.value for r in result.data]
+    assert values == sorted(values, reverse=True)
+    assert {r.attribute_id for r in result.data} == {28}
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
+    record_property("top", [(r.country_code, str(r.value), r.unit_id) for r in result.data])
+    record_property("vintage", result.meta.vintage)
+
+
+async def test_get_latest_release_live(record_property: Callable[[str, object], None]) -> None:
+    result = await tasks.get_latest_release_async(WHEAT)
+    releases = {(r.release_year, r.release_month) for r in result.data}
+    assert len(releases) == 1
+    ((year, month),) = releases
+    assert result.meta.vintage == f"{year:04d}-{month:02d}"
+    assert result.meta.published_at is None
+    record_property("vintage", result.meta.vintage)
+    record_property("records", len(result.data))
 
 
 LISTS = [

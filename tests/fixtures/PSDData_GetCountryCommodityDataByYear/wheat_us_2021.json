@@ -1,0 +1,74 @@
+{
+  "recorded_at": "2026-10-23T15:22:41.069801Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.fas.usda.gov/api/psd/commodity/0410000/country/US/year/2021"
+  },
+  "response": {
+    "body": "[{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":4,\"unitId\":4,\"value\":15032.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":20,\"unitId\":8,\"value\":23001.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":28,\"unitId\":8,\"value\":44804.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":57,\"unitId\":8,\"value\":2617.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":81,\"unitId\":8,\"value\":2731.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":84,\"unitId\":8,\"value\":0.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":86,\"unitId\":8,\"value\":70422.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":88,\"unitId\":8,\"value\":21656.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":113,\"unitId\":8,\"value\":21347.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":130,\"unitId\":8,\"value\":2402.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":192,\"unitId\":8,\"value\":28009.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":125,\"unitId\":8,\"value\":30411.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":176,\"unitId\":8,\"value\":18355.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":178,\"unitId\":8,\"value\":70422.0000},{\"commodityCode\":\"0410000\",\"countryCode\":\"US\",\"marketYear\":\"2021\",\"calendarYear\":\"2026\",\"month\":\"07\",\"attributeId\":184,\"unitId\":26,\"value\":2.9806}]",
+    "body_base64": false,
+    "headers": [
+      [
+        "date",
+        "Fri, 23 Oct 2026 15:22:39 GMT"
+      ],
+      [
+        "content-type",
+        "application/json; charset=utf-8"
+      ],
+      [
+        "access-control-allow-headers",
+        "X-Api-Key"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "age",
+        "0"
+      ],
+      [
+        "strict-transport-security",
+        "max-age=31536000; includeSubDomains; preload"
+      ],
+      [
+        "vary",
+        "Accept-Encoding"
+      ],
+      [
+        "via",
+        "https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])"
+      ],
+      [
+        "x-api-umbrella-request-id",
+        "d1d5dm9jvbl7k1ouska0"
+      ],
+      [
+        "x-cache",
+        "MISS"
+      ],
+      [
+        "x-content-type-options",
+        "nosniff"
+      ],
+      [
+        "x-ratelimit-limit",
+        "1000"
+      ],
+      [
+        "x-ratelimit-remaining",
+        "995"
+      ],
+      [
+        "x-vcap-request-id",
+        "3029a340-dd09-4ef4-475f-be46722f4568"
+      ],
+      [
+        "x-frame-options",
+        "DENY"
+      ]
+    ],
+    "status": 200
+  }
+}
