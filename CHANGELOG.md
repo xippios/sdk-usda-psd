@@ -6,11 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-24
+
 ### Added
 
 - Scaffold from [sdk-template](https://github.com/xippios/sdk-template): configured
-  client for USDA FAS PSD Online, empty task layer, MCP server and FastAPI router
-  wired to it, test harness, CI and publishing.
+  client for USDA FAS PSD Online, MCP server and FastAPI router wired to the task
+  layer, test harness, CI and publishing.
 - Upstream documentation snapshot in `docs/upstream/` (2026-10-23): the PSD part of
   the FAS Open Data Services Swagger 2.0 document as the portal loads it
   (`openapi/portal-document.json`) and as the API serves it itself
@@ -50,7 +52,7 @@ All notable changes to this project are documented here. The format follows
   `PSDData_GetRegions` lacks, included; an unknown region is an empty list), so agents
   can see past the MCP cap of 200 rows (251 countries). Live tests check each packaged
   list against the live one.
-- Wave 2 slices, as MCP tools `usda_psd_get_*` and HTTP routes, composing the existing
+- Slices, as MCP tools `usda_psd_get_*` and HTTP routes, composing the existing
   wrappers and packaged lists, records unchanged (ADR-0003):
   `get_balance_sheet(commodity_code, country_code, market_year)` pivots one country-year
   into one `BalanceSheet` record, lossless, its `attributes` keyed by the packaged
@@ -102,5 +104,5 @@ All notable changes to this project are documented here. The format follows
 ### Removed
 
 - The template's live reachability test `test_upstream_answers`: it sent the key to `/`,
-  which the gateway answers 404, spending a quota call. The three per-task live tests
-  remain.
+  which the gateway answers 404, spending a quota call. Each task has its own live smoke
+  test instead, twelve in all.
