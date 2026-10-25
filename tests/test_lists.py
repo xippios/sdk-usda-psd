@@ -95,13 +95,16 @@ async def test_list_answers_the_recorded_records_without_a_call(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("task", "name", "endpoint", "count", "request_"), LISTS, ids=IDS)
+@pytest.mark.parametrize(
+    ("task", "name", "endpoint", "request_"),
+    [(task, name, endpoint, request_) for task, name, endpoint, _, request_ in LISTS],
+    ids=IDS,
+)
 async def test_list_tool_end_to_end(
     respx_mock: respx.MockRouter,
     task: str,
     name: str,
     endpoint: str,
-    count: int,
     request_: dict[str, Any],
 ) -> None:
     """Every list reaches an agent whole: ``list_countries`` through its own cap."""
