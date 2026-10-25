@@ -20,8 +20,10 @@ cd "$root"
 uv build --wheel --out-dir "$work/dist"
 uv venv --python "${PYTHON:-3.12}" "$work/venv"
 python="$work/venv/bin/python"
-# While pyproject.toml pins xippios-core in [tool.uv.sources], core comes from that pin too;
-# this turns itself off once the pin goes and the wheel's bound resolves from PyPI.
+# Inert today: pyproject.toml has no [tool.uv.sources] since the adoption of core 0.2.0, so
+# core resolves from PyPI through the wheel's bound and $core stays empty. Kept for a
+# development pin of core (conventions §12): while pyproject.toml pins xippios-core there,
+# the wheel needs core from that pin too, which the bound alone would not fetch.
 core="$("$python" - "$root/pyproject.toml" <<'PY'
 import sys
 import tomllib
