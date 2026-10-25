@@ -30,7 +30,11 @@ packages no tenant data, only reference lists that are the same for every tenant
    refuses to run with both mappings filled; a source with lists of both kinds keeps the
    second kind in a module of its own and says so in the PR. Tables that are not plain
    value lists go under `reference/` as CSV with upstream column names, written by the
-   same script. `uv run python scripts/refresh_reference.py --render-only` regenerates
+   same script. In this package a table (commodities, countries, regions) goes into
+   `TABLES` and is packaged as JSON records under upstream's field names, like an id
+   list; every packaged list, of `ID_LISTS` and `TABLES` alike, is in `PACKAGED_LISTS`
+   in `params.py`, which the script checks.
+   `uv run python scripts/refresh_reference.py --render-only` regenerates
    `enums.py` from the packaged files alone, without a request or a key, as an adoption
    does after a core release changes the renderers (`/adopt-release`).
 4. Update the provenance table in `reference/README.md`: file, origin (endpoint or
