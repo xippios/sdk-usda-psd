@@ -141,9 +141,16 @@ Attribute ids are checked against the packaged list before any call
 `regions`, `unitsOfMeasure`, `commodityAttributes`) under `reference/` with provenance
 in `reference/README.md`, and regenerates `enums.py` through core's `render_int_enums`,
 committed as rendered; `--render-only` regenerates it from the packaged files without a
-request. Refresh policy:
+request. The two id lists, `unitsOfMeasure` and `commodityAttributes`, are the script's
+`ID_LISTS`; the three tables, `commodities`, `countries` and `regions`, are its own
+`TABLES`, packaged as JSON records under upstream's field names like an id list and
+rendered to no enum; `LISTS`, the template's value lists, stays empty. Every packaged
+list, of either mapping, is in `params.PACKAGED_LISTS`, which the script checks before a
+refresh. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
-names a code the package lacks.
+names a code the package lacks. A refresh that renames an attribute, or adds an id under
+an existing name, in `commodityAttributes` changes `get_balance_sheet`'s public keys:
+record it in `CHANGELOG.md` as a breaking change (conventions §12).
 
 The `list_*` tasks answer from these files and never call upstream: `meta.endpoint` is
 the file's `endpoint`, `meta.vintage` its `fetched` date (upstream gives the lists no
@@ -263,9 +270,10 @@ subset of an upstream record builds its model with `UpstreamModel.project`; noth
 renamed or computed, parsing a value (`parse_decimal`) is the only override. Upstream's
 documented error shapes go into `ClientConfig.classify` in `_client.py`, once; wrappers
 use `client.get_json` and never inspect status codes. An upstream that reports an hourly
-or daily quota gets one `QuotaPolicy` installed on `config` there, as the commented block
-in `_client.py` shows, and `classify` maps its answer to a spent quota to
-`RateLimitError` with `retry_after` (ADR-0010, ADR-0015).
+or daily quota gets one `QuotaPolicy` installed on `config` there, as `_client.py` does:
+`policy = QuotaPolicy(...)` installed on `config` with `policy.install(...)`, and
+`classify` maps its answer to a spent quota to `RateLimitError` with `retry_after`
+(ADR-0010, ADR-0015).
 
 ## How to record a fixture
 

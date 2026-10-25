@@ -30,11 +30,7 @@ packages no tenant data, only reference lists that are the same for every tenant
    refuses to run with both mappings filled; a source with lists of both kinds keeps the
    second kind in a module of its own and says so in the PR. Tables that are not plain
    value lists go under `reference/` as CSV with upstream column names, written by the
-   same script. In this package a table (commodities, countries, regions) goes into
-   `TABLES` and is packaged as JSON records under upstream's field names, like an id
-   list; every packaged list, of `ID_LISTS` and `TABLES` alike, is in `PACKAGED_LISTS`
-   in `params.py`, which the script checks.
-   `uv run python scripts/refresh_reference.py --render-only` regenerates
+   same script. `uv run python scripts/refresh_reference.py --render-only` regenerates
    `enums.py` from the packaged files alone, without a request or a key, as an adoption
    does after a core release changes the renderers (`/adopt-release`).
 4. Update the provenance table in `reference/README.md`: file, origin (endpoint or
@@ -46,7 +42,4 @@ packages no tenant data, only reference lists that are the same for every tenant
    that is longer than the default result cap (200 rows or 64 KB) gets a cap of its own,
    `MCP_CAPS` in `tasks.py`, keyed by the task's name (ADR-0016).
 6. Run the checks and open the PR with the diff summarised: how many rows changed, any
-   codes that disappeared (those may break existing fixtures or callers). An attribute
-   renamed, or an id added under an existing name, in `commodityAttributes` changes
-   `get_balance_sheet`'s public keys: record it in `CHANGELOG.md` as a breaking change
-   (conventions §12). Do not merge.
+   codes that disappeared (those may break existing fixtures or callers). Do not merge.
