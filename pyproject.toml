@@ -47,7 +47,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-# temporary until core v0.2.0 is on PyPI; the orchestrator removes it before the PR opens
+# temporary: removed once core v0.2.0 is on PyPI, before this PR merges
 xippios-core = { git = "https://github.com/xippios/sdk-core.git", rev = "6e4db23594fd25dad517f616c6a03620d971b63e" }  # pragma: allowlist secret (a git ref, not a key)
 
 [build-system]
