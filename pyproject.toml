@@ -18,13 +18,13 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "xippios-core>=0.1.0",
+  "xippios-core~=0.2.0",
 ]
 
 [project.optional-dependencies]
-mcp = ["xippios-core[mcp]>=0.1.0"]
-http = ["xippios-core[http]>=0.1.0"]
-testing = ["xippios-core[testing]>=0.1.0"]
+mcp = ["xippios-core[mcp]~=0.2.0"]
+http = ["xippios-core[http]~=0.2.0"]
+testing = ["xippios-core[testing]~=0.2.0"]
 
 [project.scripts]
 xippios-usda-psd-mcp = "xippios.usda.psd.mcp:run"
@@ -45,6 +45,10 @@ dev = [
   "anyio>=4",
   "detect-secrets>=1.5",
 ]
+
+[tool.uv.sources]
+# temporary until core v0.2.0 is on PyPI; the orchestrator removes it before the PR opens
+xippios-core = { git = "https://github.com/xippios/sdk-core.git", rev = "6e4db23594fd25dad517f616c6a03620d971b63e" }  # pragma: allowlist secret (a git ref, not a key)
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -87,7 +91,7 @@ quote-style = "double"
 strict = true
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true

@@ -1428,16 +1428,12 @@ wheels = [
 
 [[package]]
 name = "xippios-core"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.2.0"
+source = { git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e#6e4db23594fd25dad517f616c6a03620d971b63e" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/84/c669abe59b5d437466f18cee260dcad4c5a0c767abd7aa514ce9b26a87b9/xippios_core-0.1.0.tar.gz", hash = "sha256:b2f22c6adfafbdb0f7bc5f685b10a4aa9373404968f323e80a76359de5e2c8d0", size = 65162, upload-time = "2026-10-22T14:01:37.034Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/91/518a8358c9731c10ae4a4e6737f3a45ce9c961263ba28d58fcc39fd4f8b1/xippios_core-0.1.0-py3-none-any.whl", hash = "sha256:fcf8d3a4951309a1590b925a696b02ab8a05815588525b86d8b4a055b7d1a49d", size = 48404, upload-time = "2026-10-22T14:01:35.73Z" },
 ]
 
 [package.optional-dependencies]
@@ -1449,6 +1445,7 @@ mcp = [
 ]
 testing = [
     { name = "anyio" },
+    { name = "httpcore" },
     { name = "pytest" },
     { name = "respx" },
 ]
@@ -1485,10 +1482,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "xippios-core", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", specifier = ">=0.1.0" },
+    { name = "xippios-core", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
+    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
+    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
+    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
 ]
 provides-extras = ["mcp", "http", "testing"]
 
