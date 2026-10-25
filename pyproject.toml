@@ -100,3 +100,4 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --import-mode=importlib"
 testpaths = ["tests"]
+xippios_placeholder_key_envs = ["DATA_GOV_API_KEY"]

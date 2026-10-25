@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from xippios.usda.psd import api, tasks
-from xippios.usda.psd._client import quota
+from xippios.usda.psd._client import policy
 from xippios.usda.psd.enums import AttributeId
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
@@ -38,7 +38,7 @@ async def test_get_data_live() -> None:
     assert result.meta.vintage is not None
     assert VINTAGE.match(result.meta.vintage)
     assert result.meta.published_at is None
-    snapshot = quota()
+    snapshot = policy.snapshot()
     assert snapshot is not None
     assert snapshot.limit == 1000
 
