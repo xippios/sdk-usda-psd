@@ -54,6 +54,10 @@ All notable changes to this project are documented here. The format follows
   ADR-0006 sibling proof moves to `.github/workflows/siblings.yml`.
   `.github/workflows/live.yml` runs the live tests nightly at 01:25 UTC and on demand
   (conventions §10).
+- From sdk-template v0.2.0 too: `publish.yml` refuses a `pyproject.toml` with
+  `[tool.uv.sources]`; `.secrets.baseline` drops the `is_swagger_file` filter, so the
+  Swagger snapshots in `docs/upstream/` are scanned now; the new `/adopt-release` command
+  and the re-rendered `.claude/commands`.
 
 ## [0.1.0] - 2026-10-24
 

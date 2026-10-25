@@ -25,6 +25,8 @@ Rules:
   a table and a list of integer ids alike hold their records under upstream's field
   names.
 - Every file has a row below naming the endpoint it came from, the date and the count.
+- A multi-tenant source packages no tenant data (ADR-0014); PSD is single-tenant, every
+  list is the same for every caller of the api.data.gov key.
 - Agents get a lookup task for every packaged list so they can form valid calls: one
   lookup task per list, `list_<thing>`, served as the MCP tool `usda_psd_list_<thing>`,
   or the upstream's own lookup operation when it serves every list through one. PSD
