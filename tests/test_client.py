@@ -6,9 +6,11 @@ hourly quota on 2026-10-23). Cases the recordings do not cover (the gateway's
 ``NOT_FOUND`` 404, the other ``API_KEY_*`` codes, a 429 without ``Retry-After``) are
 built in the recorded body's shape and say so. The quota policy itself is core's
 (``QuotaPolicy``, ADR-0015) and is tested there; this module checks that the package
-installs it on the gateway's headers and that it reads the recorded 429.
+installs it on the gateway's headers, that it reads the recorded 429, and that ``classify``
+shapes core's retries of a 429.
 """
 
+import dataclasses
 import json
 from collections.abc import Callable
 from datetime import timedelta
@@ -17,7 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from xippios.core import AuthError, NotFoundError, RateLimitError
+from xippios.core import AsyncClient, AuthError, NotFoundError, RateLimitError, RetryPolicy
 from xippios.core.testing import load_fixture
 
 from xippios.usda.psd import api
@@ -58,9 +60,9 @@ def synthesised(status: int, body: object, headers: dict[str, str] | None = None
     )
 
 
-OVER_RATE_LIMIT = json.loads(
-    load_fixture(FIXTURES / "PSDData_GetCommodities" / "over_rate_limit.json").response.body
-)
+RECORDED_429 = load_fixture(FIXTURES / "PSDData_GetCommodities" / "over_rate_limit.json").response
+"""The recorded 429: ``Retry-After: 3151``, ``x-ratelimit-remaining: 0``."""
+OVER_RATE_LIMIT = json.loads(RECORDED_429.body)
 """The recorded 429 body, for the variants built around it."""
 
 
@@ -282,6 +284,55 @@ def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
     assert error.retry_after == policy.window == 3600.0
     assert "an hourly quota per key" in error.message, "no limit known, none invented"
     assert "expected back in 3600 s" in error.message
+
+
+def _recorded_429(retry_after: str | None) -> httpx.Response:
+    """The recorded 429 with ``Retry-After: 3151``; with ``None``, NOT A RECORDING: the same
+    answer, body and quota headers, with its ``Retry-After`` dropped."""
+    headers = [
+        (name, value)
+        for name, value in RECORDED_429.headers
+        if retry_after is not None or name.lower() != "retry-after"
+    ]
+    assert dict(headers).get("retry-after") == retry_after
+    return httpx.Response(RECORDED_429.status, headers=headers, content=RECORDED_429.content)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("retry_after", "shaped", "attempts"),
+    [("3151", True, 1), (None, True, 1), (None, False, 4)],
+    ids=["recorded", "without_retry_after", "control_without_classify"],
+)
+async def test_core_retries_a_429_only_within_its_backoff(
+    respx_mock: respx.MockRouter, retry_after: str | None, shaped: bool, attempts: int
+) -> None:
+    """psd's ``classify`` shapes core's retries (ADR-0015): its ``RateLimitError`` carries the
+    wait, the recorded ``Retry-After`` or else the one-hour window, beyond ``backoff_max``
+    (30 s), so a 429 is sent once, with or without the header. The control drops
+    ``classify``: core then retries the 429 without ``Retry-After`` on its status alone,
+    three more times at its short backoff, so this test fails if ``classify`` stops
+    shaping the retries."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    route = respx_mock.get(f"{BASE_URL}/api/psd/commodities").mock(
+        return_value=_recorded_429(retry_after)
+    )
+    quick = dataclasses.replace(config, rate_limit=None)
+    if not shaped:
+        quick = dataclasses.replace(quick, classify=None)
+    with pytest.raises(RateLimitError) as info:
+        await AsyncClient(quick, sleep=fake_sleep).get_json("/api/psd/commodities")
+    assert route.call_count == attempts
+    assert len(sleeps) == attempts - 1
+    assert all(seconds <= RetryPolicy().backoff_max for seconds in sleeps)
+    if shaped:
+        assert info.value.retry_after == float(retry_after or 3600)
+    else:
+        assert info.value.retry_after is None, "core's own mapping: no Retry-After, no wait"
 
 
 def test_the_recorded_bodies_are_the_documented_shapes() -> None:
