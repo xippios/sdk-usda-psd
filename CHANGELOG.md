@@ -12,8 +12,8 @@ All notable changes to this project are documented here. The format follows
   (`AsyncClient.get` passes `auth=` to a `request` override that did not take it, so the
   first request raised `TypeError`). The `mcp`, `http` and `testing` extras name
   `xippios-core[...]~=0.2.0` likewise (conventions §12, ADR-0018).
-- Adopts xippios-core 0.2.0 and conventions 1.13; sdk-template stays at v0.1.5 until
-  v0.1.6 is tagged.
+- Adopts xippios-core 0.2.0 and conventions 1.13, and the sdk-template release that adopts
+  core 0.2.0 (not tagged yet; psd stays on v0.1.5 until then).
 - The client's quota handling is core's `QuotaPolicy` (ADR-0015), installed on the
   gateway's `x-ratelimit-limit` and `x-ratelimit-remaining` with a one-hour `window`:
   `QuotaAwareClient` and its cache probe, `Quota`, `quota()`, `observe_quota`,
@@ -42,7 +42,8 @@ All notable changes to this project are documented here. The format follows
   machinery core now owns go from `test_client.py`; one test, marked `rate_limited`,
   replays the recorded 429 through the policy.
 - mypy checks `scripts/` too; `tests/test_layout.py` walks the namespace levels up to
-  `xippios` and stops there (sdk-template v0.1.6 Hand-apply).
+  `xippios` and stops there (Hand-apply of the sdk-template release that adopts core 0.2.0,
+  not tagged yet; psd stays on v0.1.5 until then).
 
 ## [0.1.0] - 2026-10-24
 
