@@ -12,7 +12,7 @@ that works here; the family rules it points to apply as well.
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
 | Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header. ADR-0009: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
-| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. A 429 is `RateLimitError` with `retry_after` from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s; core retries it only within `RetryPolicy.backoff_max`. The quota snapshot (`quota()`) records every answer's headers, never a cache hit's. Once `remaining` is 0 the next request never fires into a 429 (`QuotaAwareClient`): it waits the quota out inside the call, logged, when the wait is within `RetryPolicy.backoff_max` (30 s by default, the same bound core uses for a `Retry-After`), and otherwise raises `RateLimitError` with `retry_after` before sending anything, saying that nothing was sent and when the quota should be back. A request a configured cache can answer is never delayed or refused (no client caches today; the pattern is what ESR, GATS and the core helper copy). The wait counts from the last answer: the 429's `Retry-After`, or one hour after a 200 that left `remaining` at 0 (it carries no `Retry-After`) |
+| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, one at a time (`RateLimit(per_minute=60, burst=1)` in `_client.py`), self-imposed: the snapshot documents no limit. Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` (the hourly quota, not a pace) and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. Core's `QuotaPolicy` (`_client.policy`, ADR-0015) keeps the snapshot from every answer from the wire, never a cache hit's, and gates: once the quota is spent the next request waits it out inside the call, logged, when that is within `RetryPolicy.backoff_max` (30 s by default), and otherwise raises `RateLimitError` with `retry_after` without sending. The wait counts from the last answer: a 429's `Retry-After`, else the policy's `window` of one hour (the gateway sends no reset header, and the 200 that leaves `remaining` at 0 no `Retry-After`). `classify` maps the 429 to `RateLimitError` with `retry_after` from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s, and core shapes its retries from that: a wait beyond `backoff_max` is raised after one request. In offline tests core's pytest plugin bypasses the limiter and the quota policy and forgets the snapshot around each test; a test that asserts a wait or a refusal is marked `rate_limited` |
 | Write tools | no, this package is read-only |
 
 The snapshot in `docs/upstream/` is the reference for names, parameters and semantics.
@@ -139,21 +139,25 @@ Attribute ids are checked against the packaged list before any call
 
 `scripts/refresh_reference.py` packages the five lists (`commodities`, `countries`,
 `regions`, `unitsOfMeasure`, `commodityAttributes`) under `reference/` with provenance
-in `reference/README.md`, and regenerates `enums.py`. Refresh policy:
+in `reference/README.md`, and regenerates `enums.py` through core's `render_int_enums`,
+committed as rendered; `--render-only` regenerates it from the packaged files without a
+request. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
 names a code the package lacks.
 
 The `list_*` tasks answer from these files and never call upstream: `meta.endpoint` is
 the file's `endpoint`, `meta.vintage` its `fetched` date (upstream gives the lists no
 version), `meta.retrieved_at` when the task answered. Their filters select records
-client-side, codes and names unchanged, upstream order kept; `list_countries` needs them
-over MCP (251 countries, 200 rows per result). The live tests compare each packaged list
-with the live one, the freshness check.
+client-side, codes and names unchanged, upstream order kept. Over MCP `list_countries` has a
+cap of its own, 300 rows (`tasks.MCP_CAPS`, ADR-0016), so its 251 countries arrive whole;
+every other tool keeps the family default, 200 rows or 64 KB. The live tests compare each
+packaged list with the live one, the freshness check.
 
-`enums.AttributeId` and `enums.UnitId` are `IntEnum`s, a deliberate departure from
-conventions §3 ("upstream enums become `StrEnum`"): PSD's ids are integers in the lists
-and in every data record, and fidelity to upstream wins. Where upstream gives two ids the
-same name, both members carry the id (`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
+`enums.AttributeId` and `enums.UnitId` are `IntEnum`s, as conventions §3 has it for integer
+ids (ADR-0008 amendment, which this package's ruling of 2026-10-23 led to): PSD's ids are
+integers in the lists and in every data record, and fidelity to upstream wins. Where
+upstream gives two ids the same name, both members carry the id (`TOTAL_DISAPPEARANCE_126`,
+`TOTAL_DISAPPEARANCE_173`).
 The enums are for lookups and for the wave 2 slice parameters; the models keep the ids
 as plain `int` (the NASS pattern), and members compare equal to them.
 
@@ -198,13 +202,13 @@ scripts/
   refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py
   check-siblings.sh      this wheel and xippios-usda-nass share xippios.usda (CI job siblings)
 tests/
-  conftest.py      enables xippios.core.testing.plugin; placeholder key for replay
+  conftest.py      enables xippios.core.testing.plugin: no network, placeholder key, no waits
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
   test_tasks.py    structural checks on every task plus per-task replay tests
   test_lists.py    the list_* tasks: the recorded lists, no call, filters, MCP cap
   test_slices.py   the wave 2 slices: pivot, series, ranking, newest release, checks first
   test_api.py      replay tests for the endpoint wrappers
-  test_client.py   classify on recorded error bodies, quota snapshot and pause
+  test_client.py   classify on recorded error bodies; core's quota policy on the recorded 429
   test_params.py   packaged lists, enums and the code checks
   test_adapters.py the adapters expose exactly tasks.__all__
   test_layout.py   namespace levels stay empty; py.typed ships

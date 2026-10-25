@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- BREAKING: requires xippios-core 0.2.x (~=0.2.0); 0.1.0 does not work on core 0.2.0
+  (`AsyncClient.get` passes `auth=` to a `request` override that did not take it, so the
+  first request raised `TypeError`). The `mcp`, `http` and `testing` extras name
+  `xippios-core[...]~=0.2.0` likewise (conventions §12, ADR-0018).
+- Adopts xippios-core 0.2.0 and conventions 1.13; sdk-template stays at v0.1.5 until
+  v0.1.6 is tagged.
+- The client's quota handling is core's `QuotaPolicy` (ADR-0015), installed on the
+  gateway's `x-ratelimit-limit` and `x-ratelimit-remaining` with a one-hour `window`:
+  `QuotaAwareClient` and its cache probe, `Quota`, `quota()`, `observe_quota`,
+  `quota_pause` and `QUOTA_WINDOW` are removed from `_client`, and `_client.policy`
+  with `policy.snapshot()` replaces `quota()`. A spent quota still waits within
+  `RetryPolicy.backoff_max` or raises `RateLimitError` without sending.
+- A 429 is retried only when its wait is within `RetryPolicy.backoff_max`: core asks
+  `classify` before it retries (ADR-0015), so a 429 without `Retry-After` is raised after
+  one request with the one-hour `retry_after`, not after four. Its message describes the
+  policy's snapshot and says that nothing was retried.
+- Error messages quote the gateway's text with its URL written `<host>` (conventions §5,
+  ADR-0005 amendment).
+- `usda_psd_list_countries` returns all 251 countries over MCP through a cap of its own,
+  `tasks.MCP_CAPS` (ADR-0016), passed by `mcp.py`; every other tool keeps 200 rows or
+  64 KB, with core's note "narrow the query to see the rest". The docstring of
+  `list_countries` no longer tells agents to filter past the cap.
+- `enums.py` re-rendered by core's `render_int_enums` (ADR-0008 amendment): members and
+  values unchanged; the docstrings are ASCII-only and `__all__` lists one name per line.
+  `scripts/refresh_reference.py` drops `render_id_enums` and `member_names` for
+  `render_int_enums` with `id_name_pairs`, needs no formatting step after a refresh, and
+  takes `--render-only` to regenerate `enums.py` from the packaged files without a request.
+- Tests: `tests/conftest.py` drops `placeholder_api_key`, `PLACEHOLDER_KEY` and
+  `fresh_quota`, and `test_tasks.py` drops `test_replay_tests_send_the_placeholder_key`:
+  core's pytest plugin pins the key named in `xippios_placeholder_key_envs` and forgets
+  every quota snapshot around each offline test (ADR-0013). The tests of the quota
+  machinery core now owns go from `test_client.py`; one test, marked `rate_limited`,
+  replays the recorded 429 through the policy.
+- mypy checks `scripts/` too; `tests/test_layout.py` walks the namespace levels up to
+  `xippios` and stops there (sdk-template v0.1.6 Hand-apply).
+
 ## [0.1.0] - 2026-10-24
 
 ### Added

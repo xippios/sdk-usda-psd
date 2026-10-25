@@ -54,8 +54,7 @@ list_commodities(search="soybean").data  # meal, oil and oilseed, each also "(Lo
 
 `meta.vintage` of a list is the day the package fetched it (upstream gives these lists no
 version), `meta.retrieved_at` when the task answered. Over MCP `usda_psd_list_countries`
-stops at 200 of its 251 countries, before the United States; pass `region_code` or
-`search` there.
+returns all 251 countries through a cap of its own.
 
 The slices answer the common questions from the same operations. They select, order or
 pivot upstream's records and change none: no derived totals, no unit conversion, no gap
@@ -109,8 +108,9 @@ NEC, ...) rank alongside countries; filter with `list_countries` if you must.
 ```
 
 Tools are read-only and named `usda_psd_<verb>_<noun>`. Results are capped at
-200 rows or 64 KB with a note on how to narrow the query. `--http` serves streamable
-HTTP instead of stdio.
+200 rows or 64 KB with a note on how to narrow the query; `usda_psd_list_countries` has a
+cap of its own, 300 rows, so all 251 countries arrive. `--http` serves streamable HTTP
+instead of stdio.
 
 ## Status
 
