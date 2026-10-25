@@ -1429,11 +1429,15 @@ wheels = [
 [[package]]
 name = "xippios-core"
 version = "0.2.0"
-source = { git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e#6e4db23594fd25dad517f616c6a03620d971b63e" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8d/ed/21c7db5f9e6db83360cde3832e7e64c76ce5df38ae49e4706b0da0e2f3c9/xippios_core-0.2.0.tar.gz", hash = "sha256:352b48345d0f9e5e25744dc213005b25737f5f46c9145989cd57d31951265750", size = 193964, upload-time = "2026-10-25T13:50:49.226Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/f9/9e7b53acc1a9367b6094d854c2901e98c5e7b617a204fe6ca7fa9c1a2361/xippios_core-0.2.0-py3-none-any.whl", hash = "sha256:8aae984185fd24428d13a8bcd045d37f4039d4566632a4264a108218104c4e80", size = 99881, upload-time = "2026-10-25T13:50:47.844Z" },
 ]
 
 [package.optional-dependencies]
@@ -1482,10 +1486,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "xippios-core", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
-    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
-    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
-    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", git = "https://github.com/xippios/sdk-core.git?rev=6e4db23594fd25dad517f616c6a03620d971b63e" },
+    { name = "xippios-core", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", specifier = "~=0.2.0" },
 ]
 provides-extras = ["mcp", "http", "testing"]
 

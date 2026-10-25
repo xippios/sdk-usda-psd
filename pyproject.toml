@@ -46,10 +46,6 @@ dev = [
   "detect-secrets>=1.5",
 ]
 
-[tool.uv.sources]
-# temporary: removed once core v0.2.0 is on PyPI, before this PR merges
-xippios-core = { git = "https://github.com/xippios/sdk-core.git", rev = "6e4db23594fd25dad517f616c6a03620d971b63e" }  # pragma: allowlist secret (a git ref, not a key)
-
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
@@ -58,7 +54,9 @@ build-backend = "hatchling.build"
 packages = ["src/xippios"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE"]
+# Anchored: hatch reads gitignore-style patterns, so a bare README.md would match
+# tests/fixtures/README.md as well. The sdist ships no tests; they live in the repository.
+include = ["/src", "/docs", "/README.md", "/CHANGELOG.md", "/LICENSE"]
 
 [tool.ruff]
 line-length = 100
@@ -100,4 +98,5 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --import-mode=importlib"
 testpaths = ["tests"]
+# Core's plugin sets it to the placeholder key in every test not marked live (ADR-0013).
 xippios_placeholder_key_envs = ["DATA_GOV_API_KEY"]

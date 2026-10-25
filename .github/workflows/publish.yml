@@ -26,6 +26,13 @@ jobs:
             echo "tag ${GITHUB_REF_NAME} does not match project version ${version}"
             exit 1
           fi
+      - name: Refuse a pyproject with [tool.uv.sources]
+        run: |
+          if grep -q '^\[tool\.uv\.sources\]' pyproject.toml; then
+            echo "pyproject.toml has [tool.uv.sources]: a git-pinned core cannot be published."
+            echo "Remove the pin and raise core_version to the core release first (/release-prep)."
+            exit 1
+          fi
       - run: uv build
       - uses: actions/upload-artifact@v7
         with:
