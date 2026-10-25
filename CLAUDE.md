@@ -215,7 +215,8 @@ tests/
   test_params.py   packaged lists, enums and the code checks
   test_adapters.py the adapters expose exactly tasks.__all__
   test_layout.py   namespace levels stay empty; py.typed ships
-  test_live.py     @pytest.mark.live smoke tests, one per task (14 keyed calls in all)
+  test_live.py     @pytest.mark.live smoke tests, one per task (14 keyed calls in all), and
+                   the template's keyless reachability check
 docs/upstream/     documentation snapshot and FETCHED.md
 .github/workflows/ ci.yml (the required ci check), publish.yml (tag to PyPI), live.yml (nightly live tests),
                    siblings.yml (scripts/check-siblings.sh, this package's own)
