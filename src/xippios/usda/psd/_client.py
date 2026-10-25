@@ -33,6 +33,7 @@ from xippios.usda.psd._version import __version__
 SOURCE = "usda-psd"
 BASE_URL = "https://api.fas.usda.gov"
 API_KEY_ENV = "DATA_GOV_API_KEY"  # pragma: allowlist secret (a variable name, not a key)
+# A self-imposed pace: upstream documents no limit (ADR-0010 decision 1).
 RATE_LIMIT = RateLimit(per_minute=60, burst=1)
 """One request per second, no burst: a pace of our own, since the snapshot documents none.
 
