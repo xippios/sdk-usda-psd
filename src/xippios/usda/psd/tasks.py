@@ -39,6 +39,7 @@ costs.
 """
 
 from collections import Counter
+from collections.abc import Mapping
 
 from xippios.core import (
     InvalidRequestError,
@@ -88,6 +89,21 @@ __all__ = [
     "list_regions",
     "list_units_of_measure",
 ]
+
+try:
+    from xippios.core.mcp import ResultCap
+except ImportError:  # pragma: no cover - a base install, without the mcp extra, has no server
+    MCP_CAPS: "Mapping[str, ResultCap]" = {}
+else:
+    MCP_CAPS = {"list_countries": ResultCap(max_rows=300)}
+"""MCP result caps of their own, by task function name (conventions §8, ADR-0016).
+
+``list_countries`` is a reference list an agent needs whole: 251 countries when packaged,
+past the family's default of 200 rows, and 22,467 bytes of compact JSON, well within its
+64 KB. Every other tool keeps the default, 200 rows or 64 KB, with core's note.
+``ResultCap`` lives in ``xippios.core.mcp``, which needs the ``mcp`` extra, so a base
+install, which serves no MCP tool, has no caps.
+"""
 
 
 SERIES_START = 1960
@@ -636,12 +652,8 @@ async def list_countries_async(
     packaged, in upstream order, each with its PSD region (``list_regions``) and its GENC
     code where upstream has one. Codes are PSD's own, not ISO: ``"US"`` United States,
     ``"BR"`` Brazil, ``"CH"`` China, ``"E4"`` European Union; aggregates such as ``"T3"``
-    Africa, NEC have no GENC code. The MCP server returns at most 200 rows per call,
-    which cuts this list after Somalia, before the United States, so pass
-    ``region_code`` (the largest, ``"R11"`` Sub-Saharan Africa, has 57 countries) or
-    ``search`` there to see the rest; Python and HTTP results are whole.
-    ``meta.vintage`` is the day the package fetched the list (``"2026-10-23"``),
-    ``meta.retrieved_at`` when this task answered.
+    Africa, NEC have no GENC code. ``meta.vintage`` is the day the package fetched the
+    list (``"2026-10-23"``), ``meta.retrieved_at`` when this task answered.
 
     Args:
         region_code: Keep the countries of this PSD region, spelled exactly as

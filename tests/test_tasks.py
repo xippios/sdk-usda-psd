@@ -180,6 +180,20 @@ def test_get_release_dates_filters_after_the_one_call(
     assert route.call_count == 3
 
 
+@pytest.mark.anyio
+async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Wheat's release list over MCP, every country and market year: cut at the family's
+    default cap with core's note, which promises no filter the tool lacks (ADR-0016)."""
+    replay_fixture(RELEASES, "wheat")
+    payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
+    assert len(payload["data"]) == 200
+    assert payload["note"] == (
+        "showing 200 of 7754 rows (cap: 200 rows or 65536 bytes); narrow the query to see the rest"
+    )
+
+
 def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -> None:
     with pytest.raises(UnknownCode, match="Omit country_code"):
         tasks.get_release_dates(WHEAT, country_code="all")
