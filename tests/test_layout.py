@@ -8,12 +8,11 @@ PACKAGE_DIR = Path(package.__file__ or "").parent
 
 
 def test_namespace_levels_have_no_init() -> None:
-    level = PACKAGE_DIR.parent
-    while True:
+    levels = list(PACKAGE_DIR.parents)
+    names = [level.name for level in levels]
+    assert "xippios" in names, f"no xippios directory above {PACKAGE_DIR}; is it under src/?"
+    for level in levels[: names.index("xippios") + 1]:
         assert not (level / "__init__.py").exists(), f"{level} must stay a namespace portion"
-        if level.name == "xippios":
-            break
-        level = level.parent
 
 
 def test_py_typed_marker_ships() -> None:
