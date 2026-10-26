@@ -43,8 +43,8 @@ Rules:
 - Public keys: `get_balance_sheet` keys its entries by the names in
   `commodityAttributes.json`, with the id where the list gives one name to several ids.
   A refresh that renames an attribute, or adds an id under an existing name, changes
-  those keys: a breaking change under conventions §12, recorded in the CHANGELOG by
-  `/refresh-reference-data`.
+  those keys: a breaking change, recorded in `CHANGELOG.md` when the lists are refreshed
+  (conventions §12).
 
 | File | Origin | Fetched (UTC) | Records |
 | --- | --- | --- | --- |
