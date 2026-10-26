@@ -103,8 +103,8 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   `"attribute <id>"`; records that one entry each cannot hold (a repeated id, mixed
   keys, two records with the same key) are a `ValidationError`, never merged. A
   reference refresh that renames an attribute or adds an id under an existing name
-  changes public keys: a breaking change (conventions §12), which
-  `/refresh-reference-data` records in the CHANGELOG. Each `BalanceSheetEntry` is a
+  changes public keys: a breaking change, recorded in `CHANGELOG.md` when the lists are
+  refreshed (conventions §12). Each `BalanceSheetEntry` is a
   projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
   `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
   `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
