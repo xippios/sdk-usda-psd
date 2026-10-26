@@ -5,13 +5,21 @@ named as upstream names them in snake_case. Where upstream spells a field differ
 ``Field(validation_alias=...)`` accepts that spelling on input; never ``alias=``, which the
 adapters would serialise, handing agents the upstream spelling. Within-source hygiene only:
 dates become ``datetime.date``, numbers become numbers, upstream enumerations become
-``StrEnum``. No cross-source normalisation (ADR-0003): an upstream concept stays an
-upstream concept.
+``StrEnum``, and an enumeration of integer ids ``IntEnum``. No cross-source normalisation
+(ADR-0003): an upstream concept stays an upstream concept.
+
+These read models stay faithful, documented personal identifiers included (``ssn``,
+``iban`` and their like). The projections tasks return leave those out, a write task does
+not echo one in ``meta.request``, and fixtures never carry their values (ADR-0017).
 
 The snapshot types every PSD response as ``object`` and defines no schemas
 (``definitions`` is empty in ``docs/upstream/openapi/portal-document.json``). The record
 shapes below therefore come from the recorded answers, each named in its model's
-docstring; every field is an assumption from that fixture, recorded 2026-10-23.
+docstring; every field is an assumption from that fixture, recorded 2026-10-23. No PSD
+record carries a personal identifier. PSD's attribute and unit ids stay plain ``int``
+here, not ``IntEnum``: an id PSD adds before the packaged lists are refreshed must not
+fail an answer; ``enums.AttributeId`` and ``enums.UnitId`` name the packaged ids and
+compare equal to them.
 """
 
 from decimal import Decimal

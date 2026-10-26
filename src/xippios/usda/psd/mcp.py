@@ -21,6 +21,7 @@ server = build_server(
     [getattr(tasks, name) for name in tasks.__all__],
     version=__version__,
     instructions=INSTRUCTIONS,
+    caps=getattr(tasks, "MCP_CAPS", None),
 )
 
 

@@ -1,0 +1,25 @@
+# Sibling proof for ADR-0006: this wheel and xippios-usda-nass install side by side as
+# portions of the namespaces xippios and xippios.usda (scripts/check-siblings.sh).
+# The source's own workflow: ci.yml is the template's, core's file byte for byte, and
+# copier update keeps it so; this job therefore runs next to it, on pull requests and
+# pushes to main, like ci.yml.
+name: Siblings
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  siblings:
+    name: siblings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+      - run: scripts/check-siblings.sh

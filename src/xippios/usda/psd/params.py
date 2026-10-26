@@ -45,7 +45,8 @@ PACKAGED_LISTS: tuple[str, ...] = (
 )
 """Lists that ship inside the package, named as the upstream path names them.
 
-Keep in step with ``LISTS`` in ``scripts/refresh_reference.py``.
+Keep in step with ``ID_LISTS`` and ``TABLES`` in ``scripts/refresh_reference.py``, which
+checks it before a refresh.
 """
 
 

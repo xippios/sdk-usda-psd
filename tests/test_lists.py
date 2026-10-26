@@ -44,7 +44,8 @@ LISTS: list[tuple[str, str, str, int, dict[str, Any]]] = [
 ]
 IDS = [task for task, *_ in LISTS]
 CAP = 200
-"""The MCP result cap in rows (conventions §8)."""
+"""The family's default MCP result cap in rows (conventions §8); ``list_countries`` has a
+cap of its own, ``tasks.MCP_CAPS`` (ADR-0016)."""
 
 
 def _fetched(name: str) -> str:
@@ -94,20 +95,23 @@ async def test_list_answers_the_recorded_records_without_a_call(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("task", "name", "endpoint", "count", "request_"), LISTS, ids=IDS)
+@pytest.mark.parametrize(
+    ("task", "name", "endpoint", "request_"),
+    [(task, name, endpoint, request_) for task, name, endpoint, _, request_ in LISTS],
+    ids=IDS,
+)
 async def test_list_tool_end_to_end(
     respx_mock: respx.MockRouter,
     task: str,
     name: str,
     endpoint: str,
-    count: int,
     request_: dict[str, Any],
 ) -> None:
+    """Every list reaches an agent whole: ``list_countries`` through its own cap."""
     payload = await mcp_call(server, f"usda_psd_{task}", {})
     rows = [record.model_dump(mode="json") for record in getattr(tasks, task)().data]
-    assert payload["data"] == rows[:CAP]
-    assert len(payload["data"]) == min(count, CAP)
-    assert ("note" in payload) == (count > CAP)
+    assert payload["data"] == rows
+    assert "note" not in payload
     assert payload["meta"]["source"] == "usda-psd"
     assert payload["meta"]["endpoint"] == endpoint
     assert payload["meta"]["vintage"] == _fetched(name)
@@ -117,18 +121,19 @@ async def test_list_tool_end_to_end(
 
 
 @pytest.mark.anyio
-async def test_countries_over_mcp_are_capped_without_a_filter_and_whole_with_one(
+async def test_countries_over_mcp_are_whole_without_a_filter_and_with_one(
     respx_mock: respx.MockRouter,
 ) -> None:
-    """251 countries, 200 rows per tool result: unfiltered, the list stops at Somalia,
-    before the United States; every region and a search fit under the cap."""
+    """More countries than the default cap of 200 rows: ``list_countries``'s own cap
+    (``tasks.MCP_CAPS``, ADR-0016) lets every one through, the United States included, and
+    every region and a search come back whole as well."""
     every = await mcp_call(server, "usda_psd_list_countries", {})
-    assert len(every["data"]) == CAP
-    assert every["note"].startswith("showing 200 of 251 rows")
-    assert every["data"][-1]["country_name"] == "Somalia"
-    assert "US" not in {row["country_code"] for row in every["data"]}
-    regions = Counter(country.region_code for country in tasks.list_countries().data)
-    assert max(regions.values()) == 57, "R11, the largest region"
+    countries = tasks.list_countries().data
+    assert every["data"] == [country.model_dump(mode="json") for country in countries]
+    assert len(every["data"]) > CAP, "past the default cap"
+    assert "note" not in every
+    assert "US" in {row["country_code"] for row in every["data"]}
+    regions = Counter(country.region_code for country in countries)
     for region_code, count in regions.items():
         payload = await mcp_call(server, "usda_psd_list_countries", {"region_code": region_code})
         assert len(payload["data"]) == count, region_code

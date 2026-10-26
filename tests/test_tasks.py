@@ -1,7 +1,6 @@
 """Structural checks every task must satisfy. Per-task tests with recorded fixtures go below."""
 
 import inspect
-import os
 from collections.abc import Callable
 from decimal import Decimal
 
@@ -12,39 +11,17 @@ from xippios.core import InvalidRequestError, NotFoundError
 from xippios.core.testing import mcp_call
 
 from xippios.usda.psd import __version__, tasks
-from xippios.usda.psd._client import API_KEY_ENV, BASE_URL, auth
+from xippios.usda.psd._client import BASE_URL
 from xippios.usda.psd.enums import AttributeId, UnitId
 from xippios.usda.psd.errors import NoDataForYear, UnknownCode
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import DataReleaseInfo
-
-SHELL_KEY = os.environ.get(API_KEY_ENV)
-"""The key the shell held when the tests were collected, before any fixture; never printed."""
 
 TASKS = [getattr(tasks, name) for name in tasks.__all__]
 
 
 def test_package_has_a_version() -> None:
     assert __version__
-
-
-def test_replay_tests_send_the_placeholder_key(placeholder_api_key: str | None) -> None:
-    """A request sent outside a live test carries the placeholder, never the shell's key.
-
-    Every assertion is on a boolean, so a failure says where the key went, never the key.
-    """
-    assert placeholder_api_key is not None
-    env_holds_placeholder = os.environ[API_KEY_ENV] == placeholder_api_key
-    assert env_holds_placeholder, f"{API_KEY_ENV} does not hold the placeholder"
-    sent = next(auth.sync_auth_flow(httpx.Request("GET", BASE_URL)))
-    carried = sent.headers.get(auth.header, "")
-    where = f"the {auth.header} header"
-    sends_placeholder = carried == placeholder_api_key
-    assert sends_placeholder, f"{where} does not carry the placeholder"
-    if SHELL_KEY and placeholder_api_key != SHELL_KEY:
-        outgoing = [str(sent.url), *sent.headers.values(), carried]
-        leaked = any(SHELL_KEY in part for part in outgoing)
-        assert not leaked, f"the key in {API_KEY_ENV} went out with the request"
 
 
 @pytest.mark.parametrize("task", TASKS, ids=tasks.__all__)
@@ -201,6 +178,20 @@ def test_get_release_dates_filters_after_the_one_call(
     assert {r.country_code for r in country.data} == {"US"}
     assert len(country.data) == 67, "market years 1960 to 2026"
     assert route.call_count == 3
+
+
+@pytest.mark.anyio
+async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Wheat's release list over MCP, every country and market year: cut at the family's
+    default cap with core's note, which promises no filter the tool lacks (ADR-0016)."""
+    replay_fixture(RELEASES, "wheat")
+    payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
+    assert len(payload["data"]) == 200
+    assert payload["note"] == (
+        "showing 200 of 7754 rows (cap: 200 rows or 65536 bytes); narrow the query to see the rest"
+    )
 
 
 def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -> None:

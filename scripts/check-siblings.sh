@@ -20,7 +20,25 @@ cd "$root"
 uv build --wheel --out-dir "$work/dist"
 uv venv --python "${PYTHON:-3.12}" "$work/venv"
 python="$work/venv/bin/python"
-uv pip install --python "$python" "$work"/dist/*.whl "$nass"
+# Inert today: pyproject.toml has no [tool.uv.sources] since the adoption of core 0.2.0, so
+# core resolves from PyPI through the wheel's bound and $core stays empty. Kept for a
+# development pin of core (conventions §12): while pyproject.toml pins xippios-core there,
+# the wheel needs core from that pin too, which the bound alone would not fetch.
+core="$("$python" - "$root/pyproject.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as file:
+    pin = tomllib.load(file).get("tool", {}).get("uv", {}).get("sources", {}).get("xippios-core")
+if isinstance(pin, dict) and "git" in pin:
+    ref = next((pin[key] for key in ("rev", "tag", "branch") if key in pin), None)
+    print(f"xippios-core @ git+{pin['git']}" + (f"@{ref}" if ref else ""))
+PY
+)"
+if [ -n "$core" ]; then
+  echo "xippios-core from the git pin in pyproject.toml: $core"
+fi
+uv pip install --python "$python" "$work"/dist/*.whl "$nass" ${core:+"$core"}
 
 "$python" - <<'PY'
 import xippios.usda.nass

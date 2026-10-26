@@ -1428,16 +1428,16 @@ wheels = [
 
 [[package]]
 name = "xippios-core"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/84/c669abe59b5d437466f18cee260dcad4c5a0c767abd7aa514ce9b26a87b9/xippios_core-0.1.0.tar.gz", hash = "sha256:b2f22c6adfafbdb0f7bc5f685b10a4aa9373404968f323e80a76359de5e2c8d0", size = 65162, upload-time = "2026-10-22T14:01:37.034Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/ed/21c7db5f9e6db83360cde3832e7e64c76ce5df38ae49e4706b0da0e2f3c9/xippios_core-0.2.0.tar.gz", hash = "sha256:352b48345d0f9e5e25744dc213005b25737f5f46c9145989cd57d31951265750", size = 193964, upload-time = "2026-10-25T13:50:49.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/91/518a8358c9731c10ae4a4e6737f3a45ce9c961263ba28d58fcc39fd4f8b1/xippios_core-0.1.0-py3-none-any.whl", hash = "sha256:fcf8d3a4951309a1590b925a696b02ab8a05815588525b86d8b4a055b7d1a49d", size = 48404, upload-time = "2026-10-22T14:01:35.73Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/f9/9e7b53acc1a9367b6094d854c2901e98c5e7b617a204fe6ca7fa9c1a2361/xippios_core-0.2.0-py3-none-any.whl", hash = "sha256:8aae984185fd24428d13a8bcd045d37f4039d4566632a4264a108218104c4e80", size = 99881, upload-time = "2026-10-25T13:50:47.844Z" },
 ]
 
 [package.optional-dependencies]
@@ -1449,6 +1449,7 @@ mcp = [
 ]
 testing = [
     { name = "anyio" },
+    { name = "httpcore" },
     { name = "pytest" },
     { name = "respx" },
 ]
@@ -1485,10 +1486,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "xippios-core", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", specifier = ">=0.1.0" },
-    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", specifier = ">=0.1.0" },
+    { name = "xippios-core", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["http"], marker = "extra == 'http'", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["mcp"], marker = "extra == 'mcp'", specifier = "~=0.2.0" },
+    { name = "xippios-core", extras = ["testing"], marker = "extra == 'testing'", specifier = "~=0.2.0" },
 ]
 provides-extras = ["mcp", "http", "testing"]
 
