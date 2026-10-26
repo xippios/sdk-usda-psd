@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-26
+
 ### Changed
 
 - BREAKING: requires xippios-core 0.2.x (~=0.2.0); 0.1.0 does not work on core 0.2.0
