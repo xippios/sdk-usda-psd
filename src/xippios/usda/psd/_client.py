@@ -2,141 +2,72 @@
 
 One ``AsyncClient`` for the whole package, shared by the tasks, the sync facades and the
 MCP server, on api.data.gov's gateway at ``BASE_URL`` (API Umbrella, named in the
-``via`` header of every recorded answer) with the key in the ``X-Api-Key`` header and
-``Accept: application/json``. It keeps a pace of its own, ``RATE_LIMIT``, since the
-snapshot documents none; core's ``QuotaPolicy``, ``policy``, keeps api.data.gov's hourly
-quota from every answer and never fires a request into a spent one, waiting within
-``RetryPolicy.backoff_max`` or refusing without sending (ADR-0010, ADR-0015); and
-``classify`` maps the gateway's ``API_KEY_*`` answers to ``AuthError``, its 429 to
-``RateLimitError``, its ``NOT_FOUND`` to ``NotFoundError`` and PSD's empty 404 on a data
-path to ``errors.NoDataForYear``.
+``via`` header of every recorded answer) with ``Accept: application/json``. It keeps a
+pace of its own, ``RATE_LIMIT``, since the snapshot documents none. The gateway is core's,
+``xippios.core.data_gov``'s ``Gateway`` (ADR-0009): ``gateway.auth`` sends the key from
+``DATA_GOV_API_KEY`` in the ``X-Api-Key`` header; ``Gateway.policy``, the one
+``QuotaPolicy`` per process for that key, keeps api.data.gov's hourly quota from every
+answer and never fires a request into a spent one, waiting within the policy's
+``pause_cap`` or refusing without sending, a refusal that speaks for ``api.data.gov``
+(ADR-0010, ADR-0015); and ``gateway.classify`` maps the gateway's ``API_KEY_*`` answers to
+``AuthError``, its 429 to ``RateLimitError`` and its ``NOT_FOUND`` to ``NotFoundError``.
+``classify`` asks the gateway first and then maps PSD's empty 404 on a data path to
+``errors.NoDataForYear``.
 """
 
 import re
 
 import httpx
-from xippios.core import (
-    AsyncClient,
-    AuthError,
-    ClientConfig,
-    HeaderKeyAuth,
-    NotFoundError,
-    QuotaPolicy,
-    RateLimit,
-    RateLimitError,
-    XippiosError,
-)
-from xippios.core.errors import parse_retry_after
+from xippios.core import AsyncClient, ClientConfig, NotFoundError, RateLimit, XippiosError
+from xippios.core.data_gov import API_KEY_ENV, Gateway
 
 from xippios.usda.psd._version import __version__
 
 SOURCE = "usda-psd"
 BASE_URL = "https://api.fas.usda.gov"
-API_KEY_ENV = "DATA_GOV_API_KEY"  # pragma: allowlist secret (a variable name, not a key)
-# A self-imposed pace: upstream documents no limit (ADR-0010 decision 1).
+# A self-imposed pace: upstream documents no per-second or per-minute limit (ADR-0010 decision 1).
 RATE_LIMIT = RateLimit(per_minute=60, burst=1)
 """One request per second, no burst: a pace of our own, since the snapshot documents none.
 
-At this pace the gateway's 1,000 requests per hour last about 17 minutes; past that the
-quota policy takes over.
+At this pace the gateway's 1,000 requests per hour, shared with every other package using
+the same key, last about 17 minutes; past that the quota policy takes over.
 """
 
 DATA_PATH = re.compile(r"/api/psd/commodity/[^/]+/(?:country/[^/]+|world)/year/[^/]+")
 """The three data forms: one country, ``country/all`` and ``world``, by market year."""
 
-policy = QuotaPolicy(
-    window=3600.0,
-    source=SOURCE,
-    limit_header="x-ratelimit-limit",
-    remaining_header="x-ratelimit-remaining",
-)
-"""api.data.gov's quota for the key, kept by core from every answer from the wire.
+# api.data.gov's key, its documented answers and its hourly quota, kept by one policy per
+# process that every source behind the gateway shares (ADR-0009).
+gateway = Gateway(SOURCE)
+"""api.data.gov for this package: ``auth``, ``classify`` and ``install``.
 
-``x-ratelimit-limit: 1000`` and ``x-ratelimit-remaining`` count requests per rolling hour
-per key, not a pace, on every recorded keyed answer (2026-10-23), shared by every package
-and process using the same ``DATA_GOV_API_KEY`` (ADR-0009). The gateway sends no reset
-header: a spent quota comes back after a 429's ``Retry-After`` (recorded: 3151 s,
-``over_rate_limit.json``), else after ``window``, one hour, from api.data.gov's developer
-manual (https://api.data.gov/docs/developer-manual/, read 2026-10-23): "The block will
+``Gateway.policy`` reads ``x-ratelimit-limit: 1000`` and ``x-ratelimit-remaining``, which
+count requests per rolling hour per key, not a pace, on every recorded keyed answer
+(2026-10-23), shared by every package and process using the same ``DATA_GOV_API_KEY``
+(ADR-0009). The gateway sends no reset header: a spent quota comes back after a 429's
+``Retry-After`` (recorded: 3151 s, ``over_rate_limit.json``), else after the policy's
+``window``, one hour, from api.data.gov's developer manual
+(https://api.data.gov/docs/developer-manual/, read 2026-10-23): "The block will
 automatically be lifted by waiting an hour". That applies to the 200 that left
 ``remaining`` at 0, which carries no ``Retry-After``, and to a 429 without one.
-``policy.snapshot()`` reads the quota as the last answer reported it.
+``Gateway.policy.snapshot()`` reads the quota as the last answer reported it.
 """
-
-_URL = re.compile(r"https?://[^/\s]+")
-
-
-def _gateway_error(response: httpx.Response) -> tuple[str | None, str]:
-    """api.data.gov's ``{"error": {"code": ..., "message": ...}}``, or ``(None, "")``.
-
-    The message comes back host-free (conventions §5): the gateway ends its messages with
-    its URL (``"Get one at https://api.fas.usda.gov:443"``), written ``<host>`` here.
-    """
-    try:
-        payload = response.json()
-    except ValueError:
-        return None, ""
-    error = payload.get("error") if isinstance(payload, dict) else None
-    if not isinstance(error, dict) or not isinstance(error.get("code"), str):
-        return None, ""
-    message = error.get("message")
-    return error["code"], _URL.sub("<host>", message) if isinstance(message, str) else ""
-
-
-def _over_rate_limit(response: httpx.Response) -> RateLimitError:
-    """The gateway's 429, ``retry_after`` as long as the policy keeps the quota spent.
-
-    Core's ``observe`` has read this answer before ``classify`` runs, so
-    ``policy.snapshot()`` describes it; called on its own, without the client, there may be
-    no snapshot, and the message says how long instead.
-    """
-    code, message = _gateway_error(response)
-    upstream = ": ".join(part for part in (code, message) if part)
-    named = parse_retry_after(response.headers.get("Retry-After"))
-    wait = policy.window if named is None else min(named, policy.window)
-    snapshot = policy.snapshot()
-    allowance = (
-        f"{snapshot.limit} requests per rolling hour per key"
-        if snapshot is not None and snapshot.limit is not None
-        else "an hourly quota per key"
-    )
-    state = (
-        f"Quota: {snapshot.describe()}."
-        if snapshot is not None
-        else f"The quota is expected back in {wait:.0f} s."
-    )
-    bound = config.retry.backoff_max
-    retried = (
-        f" Nothing was retried: that is longer than a call waits ({bound:g} s)."
-        if wait > bound
-        else ""
-    )
-    return RateLimitError(
-        f"api.data.gov rate limit reached for the key in {API_KEY_ENV} "
-        f"(HTTP 429{' ' + upstream if upstream else ''}). The gateway allows {allowance}, "
-        f"shared by every package using that key. {state}{retried}",
-        retry_after=wait,
-        source=SOURCE,
-    )
 
 
 def classify(response: httpx.Response) -> XippiosError | None:
     """The gateway's documented and PSD's observed error shapes, mapped once (ADR-0008).
 
-    - 401/403 with an api.data.gov ``error.code`` starting ``API_KEY_`` (developer manual:
-      ``API_KEY_MISSING``, ``API_KEY_INVALID``, ``API_KEY_DISABLED``,
-      ``API_KEY_UNAUTHORIZED``, ``API_KEY_UNVERIFIED``) is ``AuthError`` naming the code
-      and the variable, never the key. Recorded: ``API_KEY_INVALID``
-      (``PSDData_GetCommodities/invalid_key.json``).
-    - 429 (``OVER_RATE_LIMIT``) is ``RateLimitError`` with ``retry_after`` from
-      ``Retry-After``, else the policy's ``window`` (3600 s): as long as ``policy`` keeps
-      the quota spent. Recorded after spending the quota on 2026-10-23
-      (``PSDData_GetCommodities/over_rate_limit.json``): ``Retry-After: 3151``,
-      ``x-ratelimit-remaining: 0``, body ``{"error": {"code": "OVER_RATE_LIMIT",
-      "message": "You have exceeded your rate limit. ..."}}``. Core asks ``classify``
-      before it retries, so a wait beyond ``RetryPolicy.backoff_max`` is raised after one
-      request, and the message describes ``policy.snapshot()``.
-    - 404 with ``error.code`` ``NOT_FOUND`` is the gateway's: no such path.
+    The gateway's answers come first, mapped by ``gateway.classify``: its ``API_KEY_*``
+    refusals as ``AuthError`` naming the code and the variable, never the key (recorded:
+    ``API_KEY_INVALID``, ``PSDData_GetCommodities/invalid_key.json``); its 429
+    (``OVER_RATE_LIMIT``) as ``RateLimitError`` whose ``retry_after`` is the wait
+    ``Gateway.policy`` keeps the quota spent for, from ``Retry-After``, else the hour
+    (recorded after spending the quota on 2026-10-23,
+    ``PSDData_GetCommodities/over_rate_limit.json``: ``Retry-After: 3151``,
+    ``x-ratelimit-remaining: 0``); core asks ``classify`` before it retries, so a wait
+    beyond ``RetryPolicy.backoff_max`` is raised after one request; and its ``NOT_FOUND``
+    404 as ``NotFoundError``: no such path. PSD's own follows:
+
     - 404 with an empty ``text/plain`` body on a data path is PSD's own answer for a
       market year without data, recorded for 1900 on every data form: one country
       (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
@@ -150,41 +81,25 @@ def classify(response: httpx.Response) -> XippiosError | None:
     ``no_data_valid_codes``): empty means empty, not an error. Everything else falls
     through to core's status mapping. Messages name the path, never the host.
     """
-    status = response.status_code
-    if status in (401, 403):
-        code, message = _gateway_error(response)
-        if code is not None and code.startswith("API_KEY_"):
-            return AuthError(
-                f"api.data.gov refused the key in {API_KEY_ENV} (HTTP {status} {code}: "
-                f"{message}). Check that the variable holds a valid, active api.data.gov key.",
-                status=status,
-                source=SOURCE,
-            )
-    if status == 429:
-        return _over_rate_limit(response)
-    if status == 404:
-        code, message = _gateway_error(response)
+    error = gateway.classify(response)
+    if error is not None:
+        return error
+    if response.status_code == 404 and not response.content.strip():
         path = response.request.url.path
-        if code == "NOT_FOUND":
-            return NotFoundError(
-                f"api.data.gov has no route for {path} (HTTP 404 NOT_FOUND: {message})",
-                source=SOURCE,
-            )
-        if not response.content.strip():
-            content_type = response.headers.get("content-type", "").lower()
-            if content_type.startswith("text/plain") and DATA_PATH.fullmatch(path):
-                # errors imports SOURCE from this module, so it is imported here, not above
-                from xippios.usda.psd.errors import NoDataForYear
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type.startswith("text/plain") and DATA_PATH.fullmatch(path):
+            # errors imports SOURCE from this module, so it is imported here, not above
+            from xippios.usda.psd.errors import NoDataForYear
 
-                return NoDataForYear(path)
-            return NotFoundError(
-                f"PSD Online has no data for {path} (HTTP 404 with an empty body)",
-                source=SOURCE,
-            )
+            return NoDataForYear(path)
+        return NotFoundError(
+            f"PSD Online has no data for {path} (HTTP 404 with an empty body)",
+            source=SOURCE,
+        )
     return None
 
 
-config = policy.install(
+config = gateway.install(
     ClientConfig(
         source=SOURCE,
         version=__version__,
@@ -195,7 +110,7 @@ config = policy.install(
     )
 )
 # The key is read from the environment on the first request, never at import.
-auth = HeaderKeyAuth("X-Api-Key", API_KEY_ENV, source=SOURCE)
+auth = gateway.auth
 client = AsyncClient(config, auth=auth)
 
 
@@ -208,5 +123,5 @@ __all__ = [
     "classify",
     "client",
     "config",
-    "policy",
+    "gateway",
 ]
