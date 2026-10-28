@@ -1,32 +1,35 @@
 """Refresh the packaged reference data from upstream (``/refresh-reference-data``).
 
 Every list in ``LISTS``, ``ID_LISTS`` or ``TABLES`` is fetched through its layer-1 wrapper
-in ``api/``, never through a task that might answer from the package, and written to
-``reference/<name>.json`` with the operation it came from and the fetch date; then
-``enums.py`` is regenerated as core renders it, ASCII-only and ruff-clean, with no
-formatting step after it (ADR-0008). A value list in ``LISTS`` would become one
-``StrEnum`` through ``xippios.core.reference.render_str_enums``; a list of integer ids
-and names in ``ID_LISTS`` becomes one ``IntEnum`` through ``id_name_pairs`` and
-``render_int_enums``, so that a member compares equal to the id in upstream's data
-(conventions §3). Each renderer writes a whole module, so ``enums.py`` holds one kind:
-fill one of the two. ``TABLES`` is this package's own: record lists packaged without an
-enum.
+in ``api/``, never through a task that might answer from the package; once all are
+fetched, each is written to ``reference/<name>.json`` by core's ``PackagedList.write``:
+the list's name, the operation it came from, the UTC time of the fetch to the second and
+upstream's records under upstream's field names (``dump_upstream``), a value list as
+records of one field named by the list (conventions §3). Then ``enums.py`` is regenerated
+from the packaged files by one ``xippios.core.reference.render_enums`` call, a ``StrEnum``
+per value list in ``LISTS`` and an ``IntEnum`` per list of integer ids and names in
+``ID_LISTS`` (``id_name_pairs``), so that a member compares equal to the id in upstream's
+data, each class naming the day its list was fetched; and formatted with ``ruff format``
+and ``ruff check --fix``, as it is committed (ADR-0008). ``TABLES``, this package's own
+and now the template's too, are record lists packaged without an enum. Where a member
+name derives to nothing, or two collide, name it by hand in ``render``'s call:
+``render_enums(member_names=...)``, per list and value (an id for an ``IntEnum``).
 
-PSD publishes five lists, all of them records, packaged under upstream's field names
-(``upstream_record``): ``unitsOfMeasure`` and ``commodityAttributes`` are id lists, which
-make ``UnitId`` and ``AttributeId``; ``commodities``, ``countries`` and ``regions`` stay
-tables, not enums. PSD has no value list, so ``LISTS`` stays empty. The list endpoints
-take the api.data.gov key, so ``DATA_GOV_API_KEY`` must be in the environment; run from
-the repository root::
+PSD publishes five lists, all of them records: ``unitsOfMeasure`` and
+``commodityAttributes`` are id lists, which make ``UnitId`` and ``AttributeId``;
+``commodities``, ``countries`` and ``regions`` stay tables, not enums. PSD has no value
+list, so ``LISTS`` stays empty. The list endpoints take the api.data.gov key, so
+``DATA_GOV_API_KEY`` must be in the environment; run from the repository root::
 
     uv run python scripts/refresh_reference.py
 
-Five requests against api.data.gov's hourly quota. Then update the dates in
-``reference/README.md``. Only lists that are the same for every caller are packaged; a
-multi-tenant source packages no tenant data (ADR-0014), which PSD is not.
+Five requests against api.data.gov's hourly quota, shared with every package using the
+key. Then update the times in ``reference/README.md``. Only lists that are the same for
+every caller are packaged; a multi-tenant source packages no tenant data (ADR-0014),
+which PSD is not.
 
 ``--render-only`` regenerates ``enums.py`` from the packaged ``reference/*.json`` alone,
-without a request and without a key: after a core release changes the renderers
+without a request and without a key: after a core release changes the renderer
 (conventions §15, item 6), it changes ``enums.py`` and nothing else.
 
 PSD's ids are integers (``attributeId: 28``) and the data records carry them as integers,
@@ -37,14 +40,15 @@ both 126 and 173), so a name several ids share gets ``_<id>`` appended
 """
 
 import argparse
-import json
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+import subprocess
+import sys
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from xippios.core import UpstreamModel, sync
-from xippios.core.reference import id_name_pairs, render_int_enums, render_str_enums
+from xippios.core import PackagedList, UpstreamModel, sync
+from xippios.core.reference import id_name_pairs, render_enums
 
 from xippios.usda.psd import api
 from xippios.usda.psd.params import PACKAGED_LISTS
@@ -58,7 +62,7 @@ GENERATOR = "scripts/refresh_reference.py"
 Fetcher = Callable[[], Coroutine[Any, Any, Sequence[UpstreamModel]]]
 """An endpoint wrapper in ``api/`` that returns a list's records, named after its operation."""
 
-LISTS: dict[str, Callable[[], Coroutine[Any, Any, list[str]]]] = {}
+LISTS: dict[str, Callable[[], Coroutine[Any, Any, Sequence[str]]]] = {}
 """Value lists, one ``StrEnum`` each: PSD publishes none, its lists are records."""
 
 ID_LISTS: dict[str, tuple[str, str, Fetcher]] = {
@@ -90,102 +94,74 @@ def operation(fetch: Callable[[], object]) -> str:
     return fetch.__name__
 
 
-def upstream_record(record: UpstreamModel) -> dict[str, Any]:
-    """``record`` as JSON under upstream's field names, for ``reference/<name>.json``.
-
-    A field's upstream name is its ``Field(validation_alias=...)`` where the model has a
-    string one, else the field's own name. The models set no serialisation alias
-    (``models.py``), so ``model_dump(by_alias=True)`` would not restore upstream's names;
-    values are dumped as JSON.
-    """
-    upstream = {
-        name: info.validation_alias if isinstance(info.validation_alias, str) else name
-        for name, info in type(record).model_fields.items()
-    }
-    dumped = record.model_dump(mode="json")
-    return {upstream.get(name, name): value for name, value in dumped.items()}
+def packaged(
+    name: str, fetch: Callable[[], object], records: Sequence[dict[str, Any]]
+) -> PackagedList:
+    """The list ``name`` as just fetched through ``fetch``, for ``reference/<name>.json``."""
+    return PackagedList(
+        param=name, endpoint=operation(fetch), fetched=datetime.now(UTC), records=list(records)
+    )
 
 
-def write(name: str, endpoint: str, fetched: str, key: str, rows: Sequence[object]) -> None:
-    """Write ``reference/<name>.json``: the list, its operation, the fetch date, ``rows``."""
-    path = REFERENCE / f"{name}.json"
-    payload = {"param": name, "endpoint": endpoint, "fetched": fetched, key: list(rows)}
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"{path.name}: {len(rows)} {key}")  # noqa: T201
-
-
-def read(name: str) -> dict[str, Any]:
-    """The packaged ``reference/<name>.json``, as ``write`` wrote it."""
+def read(name: str) -> PackagedList:
+    """The packaged ``reference/<name>.json``, as ``refresh`` wrote it."""
     path = REFERENCE / f"{name}.json"
     if not path.is_file():
         raise SystemExit(f"{path.name} is not packaged yet: run the script without --render-only")
-    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return payload
+    return PackagedList.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def render(
-    values: Mapping[str, Sequence[str]],
-    pairs: Mapping[str, Sequence[tuple[int, str]]],
-    fetched: str | None,
-) -> str:
-    """``enums.py`` as core renders it: one ``IntEnum`` per id list, else one ``StrEnum`` each.
-
-    Args:
-        values: Value list name to its values, e.g. ``{}`` for PSD.
-        pairs: Id list name to its ``(id, name)`` pairs, e.g.
-            ``{"unitsOfMeasure": [(1, "(1000 BUSHES)"), ...]}``.
-        fetched: The fetch date each class docstring names, e.g. ``"2026-10-23"``.
-    """
-    if pairs:
-        fields = {name: ID_LISTS[name][0] for name in pairs}
-        return render_int_enums(
-            {fields[name]: rows for name, rows in pairs.items()},
-            class_names={field: field[:1].upper() + field[1:] for field in fields.values()},
-            fetched=fetched,
-            generator=GENERATOR,
-        )
-    return render_str_enums(values, fetched=fetched, generator=GENERATOR)
+def render() -> None:
+    """Regenerate ``enums.py`` from the packaged files and format it as it is committed."""
+    lists: dict[str, Sequence[str] | Sequence[tuple[int, str]]] = {}
+    fetched: dict[str, str] = {}
+    class_names: dict[str, str] = {}
+    keys = [*LISTS, *(id_field for id_field, _, _ in ID_LISTS.values())]
+    if len(set(keys)) < len(keys):
+        raise SystemExit("an id field of ID_LISTS names a list of LISTS: one enum each")
+    for name in LISTS:
+        values = read(name)
+        lists[name] = [record[name] for record in values.records]
+        fetched[name] = f"{values.fetched:%Y-%m-%d}"
+    for name, (id_field, name_field, _) in ID_LISTS.items():
+        ids = read(name)
+        lists[id_field] = id_name_pairs(ids.records, id_field=id_field, name_field=name_field)
+        fetched[id_field] = f"{ids.fetched:%Y-%m-%d}"
+        class_names[id_field] = id_field[:1].upper() + id_field[1:]
+    module = render_enums(lists, fetched=fetched, class_names=class_names, generator=GENERATOR)
+    ENUMS.write_text(module, encoding="utf-8")
+    sys.stdout.flush()
+    for command in (["format"], ["check", "--fix"]):
+        run = subprocess.run([sys.executable, "-m", "ruff", *command, str(ENUMS)], cwd=ROOT)
+        if run.returncode:
+            raise SystemExit(f"ruff {' '.join(command)} left {ENUMS.name} failing")
+    print(f"{ENUMS.name}: {len(lists)} enums")  # noqa: T201
 
 
 def refresh() -> None:
-    """Fetch every list, write its file and regenerate ``enums.py``."""
-    if {*LISTS, *ID_LISTS, *TABLES} != set(PACKAGED_LISTS):
+    """Fetch every list, then write its file, then regenerate ``enums.py`` from the files."""
+    if sorted([*LISTS, *ID_LISTS, *TABLES]) != sorted(PACKAGED_LISTS):
         raise SystemExit("LISTS, ID_LISTS and TABLES name other lists than params.PACKAGED_LISTS")
-    today = datetime.now(UTC).date().isoformat()
+    lists = [
+        *(
+            packaged(name, fetch, [{name: value} for value in sync(fetch)()])
+            for name, fetch in LISTS.items()
+        ),
+        *(
+            packaged(name, fetch, [record.dump_upstream() for record in sync(fetch)()])
+            for name, fetch in TABLES.items()
+        ),
+        *(
+            packaged(name, fetch, [record.dump_upstream() for record in sync(fetch)()])
+            for name, (_, _, fetch) in ID_LISTS.items()
+        ),
+    ]
     REFERENCE.mkdir(exist_ok=True)
-    values: dict[str, list[str]] = {}
-    for name, fetch in LISTS.items():
-        values[name] = sync(fetch)()
-        write(name, operation(fetch), today, "values", values[name])
-    for name, fetch_records in TABLES.items():
-        records = [upstream_record(record) for record in sync(fetch_records)()]
-        write(name, operation(fetch_records), today, "records", records)
-    pairs: dict[str, list[tuple[int, str]]] = {}
-    for name, (id_field, name_field, fetch_records) in ID_LISTS.items():
-        records = [upstream_record(record) for record in sync(fetch_records)()]
-        write(name, operation(fetch_records), today, "records", records)
-        pairs[name] = id_name_pairs(records, id_field=id_field, name_field=name_field)
-    ENUMS.write_text(render(values, pairs, today), encoding="utf-8")
-    print(f"{ENUMS.name}: {len(values) + len(pairs)} enums")  # noqa: T201
-
-
-def render_only() -> None:
-    """Regenerate ``enums.py`` from the packaged files, without a request."""
-    dates: set[str] = set()
-    values: dict[str, list[str]] = {}
-    for name in LISTS:
-        payload = read(name)
-        values[name] = payload["values"]
-        dates.add(payload["fetched"])
-    pairs: dict[str, list[tuple[int, str]]] = {}
-    for name, (id_field, name_field, _) in ID_LISTS.items():
-        payload = read(name)
-        pairs[name] = id_name_pairs(payload["records"], id_field=id_field, name_field=name_field)
-        dates.add(payload["fetched"])
-    if len(dates) > 1:
-        raise SystemExit(f"the packaged lists were fetched on different days: {sorted(dates)}")
-    ENUMS.write_text(render(values, pairs, dates.pop() if dates else None), encoding="utf-8")
-    print(f"{ENUMS.name}: {len(values) + len(pairs)} enums, from the packaged files")  # noqa: T201
+    for fetched in lists:
+        path = REFERENCE / f"{fetched.param}.json"
+        fetched.write(path)
+        print(f"{path.name}: {len(fetched.records)} records from {fetched.endpoint}")  # noqa: T201
+    render()
 
 
 def main() -> None:
@@ -197,10 +173,8 @@ def main() -> None:
         help="regenerate enums.py from the packaged reference/*.json, without a request or a key",
     )
     args = parser.parse_args()
-    if LISTS and ID_LISTS:
-        raise SystemExit("enums.py holds one kind of enum: fill LISTS or ID_LISTS, not both")
     if args.render_only:
-        render_only()
+        render()
     else:
         refresh()
 
