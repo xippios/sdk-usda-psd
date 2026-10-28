@@ -17,7 +17,14 @@ from typing import Any
 import httpx
 import pytest
 import respx
-from xippios.core import InvalidRequestError, NotFoundError, UnknownCode, ValidationError, parse
+from xippios.core import (
+    InvalidRequestError,
+    NotFoundError,
+    PackagedList,
+    UnknownCode,
+    ValidationError,
+    parse,
+)
 from xippios.core.testing import (
     ReplayFixture,
     assert_projection,
@@ -32,7 +39,7 @@ from xippios.usda.psd.enums import AttributeId, UnitId
 from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import BalanceSheetEntry, CommodityData, DataReleaseInfo
-from xippios.usda.psd.params import attribute_names
+from xippios.usda.psd.params import PACKAGE, attribute_names, country_regions
 
 FIXTURES = Path(__file__).parent / "fixtures"
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
@@ -587,6 +594,7 @@ def test_get_top_countries_sorted_and_truncated(
         "market_year": 2023,
         "attribute_id": 28,
         "n": 5,
+        "exclude_groupings": False,
     }
     assert tasks._vintage(result.data) == "2026-09", "the five returned"
     assert result.meta.vintage == "2026-10", "every record ranked, not only the five"
@@ -631,6 +639,76 @@ def test_top_countries_default_n_is_ten(
         "MD",
     ]
     assert result.meta.request["n"] == 10
+
+
+def test_top_countries_of_one_region(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """``region_code`` maps each record's country through the packaged list (the records
+    carry no region); the vintage is that of the region's records, the ranked set."""
+    replay_fixture(ALL, "wheat_all_2023")
+    result = tasks.get_top_countries(WHEAT, 2023, AttributeId.PRODUCTION, 5, region_code="R04")
+    assert [(r.country_code, r.value) for r in result.data] == [
+        ("AR", Decimal("15850.0")),
+        ("BR", Decimal("8097.0")),
+        ("CI", Decimal("1189.0")),
+        ("PA", Decimal("1078.0")),
+        ("BL", Decimal("293.0")),
+    ]
+    regions = country_regions()
+    recorded = _recorded(ALL, "wheat_all_2023", list[CommodityData])
+    south_america = [
+        r for r in recorded if r.attribute_id == 28 and regions[r.country_code] == "R04"
+    ]
+    assert result.meta.vintage == tasks._vintage(south_america) == "2026-09"
+    assert tasks._vintage([r for r in recorded if r.attribute_id == 28]) == "2026-10", "all"
+    assert result.meta.request == {
+        "commodity_code": WHEAT,
+        "market_year": 2023,
+        "attribute_id": 28,
+        "n": 5,
+        "region_code": "R04",
+        "exclude_groupings": False,
+    }
+
+
+def test_top_countries_without_groupings(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """``exclude_groupings`` leaves out ``GROUPINGS``: of those, the cut answer holds the
+    European Union, second in production, which then drops out."""
+    replay_fixture(ALL, "wheat_all_2023")
+    recorded = _recorded(ALL, "wheat_all_2023", list[CommodityData])
+    assert "E4" in {r.country_code for r in recorded}
+    result = tasks.get_top_countries(WHEAT, 2023, AttributeId.PRODUCTION, 5, exclude_groupings=True)
+    assert [r.country_code for r in result.data] == ["CH", "IN", "RS", "CA", "PK"]
+    every = tasks.get_top_countries(WHEAT, 2023, 28, 200, exclude_groupings=True)
+    ranked = [r for r in recorded if r.attribute_id == 28 and r.country_code not in tasks.GROUPINGS]
+    assert sorted(every.data, key=lambda r: r.country_code) == ranked
+    assert every.meta.vintage == tasks._vintage(ranked)
+    assert result.meta.request["exclude_groupings"] is True
+    union = tasks.get_top_countries(WHEAT, 2023, 28, region_code="R05", exclude_groupings=True)
+    assert union.data == [], "R05 holds E4 alone in this answer, a grouping"
+    assert union.meta.vintage is None, "nothing ranked, no release"
+
+
+def test_groupings_are_the_packaged_aggregates() -> None:
+    """Every code of ``GROUPINGS`` is in the packaged countries under the name its docstring
+    gives it; a reference refresh that renames or drops one fails here."""
+    countries = {
+        str(record["countryCode"]): record["countryName"]
+        for record in PackagedList.load(PACKAGE, "countries").records
+    }
+    assert {code: countries.get(code) for code in tasks.GROUPINGS} == {
+        "E4": "European Union",
+        "E2": "EU-15",
+        "E3": "EU-25",
+        "C1": "Caribbean Basin",
+        "T3": "Africa, NEC",
+        "X8": "Southern Asia NEC",
+        "Z7": "Other Pacific Islands, NEC",
+        "ZZ": "Other",
+    }
 
 
 def test_top_countries_for_a_market_year_without_data_is_not_found(
@@ -692,6 +770,21 @@ async def test_top_countries_tool_end_to_end(
     ]
     assert payload["data"][0]["unit_id"] == 8
     assert payload["meta"]["vintage"] == "2026-10"
+    filtered = await mcp_call(
+        server,
+        "usda_psd_get_top_countries",
+        {
+            "commodity_code": WHEAT,
+            "market_year": 2023,
+            "attribute_id": 88,
+            "n": 3,
+            "region_code": "R16",
+            "exclude_groupings": True,
+        },
+    )
+    assert [row["country_code"] for row in filtered["data"]] == ["RB", "BK", "MK"]
+    assert filtered["meta"]["request"]["region_code"] == "R16"
+    assert filtered["meta"]["request"]["exclude_groupings"] is True
 
 
 # get_latest_release
@@ -787,6 +880,11 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
         tasks.get_top_countries(SOYBEANS, 23, 28)
     with pytest.raises(UnknownCode):
         tasks.get_top_countries("soybeans", 2023, 28)
+    with pytest.raises(UnknownCode, match="'R99' is not a region_code") as region:
+        tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R99")
+    assert region.value.closest == (("R09", "Middle East"),)
+    with pytest.raises(InvalidRequestError, match="exclude_groupings must be true or false"):
+        tasks.get_top_countries(SOYBEANS, 2023, 28, exclude_groupings=1)  # type: ignore[arg-type]
 
     with pytest.raises(UnknownCode) as by_name:
         tasks.get_latest_release("wheat")

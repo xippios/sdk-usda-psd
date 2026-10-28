@@ -23,10 +23,12 @@ __all__ = [
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
     "attribute_names",
+    "country_regions",
     "validate_attribute_id",
     "validate_commodity_code",
     "validate_country_code",
     "validate_market_year",
+    "validate_region_code",
 ]
 
 PACKAGE = "xippios.usda.psd"
@@ -204,5 +206,60 @@ def validate_attribute_id(attribute_id: int) -> int:
         reason="The data operations take no attribute; the task keeps this id's records "
         "after the call, so an id the packaged list lacks would give an empty result, and "
         "the package refuses it. list_commodity_attributes lists the ids.",
+        source=SOURCE,
+    )
+
+
+def country_regions() -> dict[str, str]:
+    """``{countryCode: regionCode}`` of the packaged ``countries`` list, in upstream order.
+
+    PSD's data records carry no region; a task that selects by region maps each record's
+    ``countryCode`` through this. Four countries sit in ``"R15"``, which the packaged
+    ``regions`` list lacks.
+    """
+    _, regions = _codes("countries", "countryCode", "regionCode")
+    return dict(regions)
+
+
+def validate_region_code(region_code: str) -> str:
+    """Check a region code against the ``regionCode`` values the packaged countries carry.
+
+    The data operations take no region: a task that keeps one region's countries maps
+    each record through the packaged ``countries`` list after the call, so a code no
+    country carries would select nothing. The check runs before any upstream call.
+    ``"R15"`` passes, carried by four countries although ``PSDData_GetRegions`` lacks
+    it; ``"R00"`` (World) is carried by none.
+
+    Args:
+        region_code: A region code as ``list_countries`` gives it, e.g. ``"R01"`` (North
+            America), ``"R04"`` (South America), ``"R15"``.
+
+    Returns:
+        The code, unchanged.
+
+    Raises:
+        UnknownCode: Naming up to three close codes with their names in the packaged
+            ``regions`` list, or for ``"R15"`` its countries' names.
+    """
+    fetched, regions = _codes("countries", "countryCode", "regionCode")
+    carried = set(regions.values())
+    if region_code in carried:
+        return region_code
+    _, names = _codes("regions", "regionCode", "regionName")
+    _, countries = _codes("countries", "countryCode", "countryName")
+    known = {
+        code: names.get(code)
+        or "; ".join(countries[country] for country, region in regions.items() if region == code)
+        for code in sorted(carried)
+    }
+    raise UnknownCode(
+        "region_code",
+        region_code,
+        list_name="countries",
+        fetched=fetched,
+        closest=closest(region_code, known),
+        reason="The data operations take no region; the task keeps the countries whose "
+        "packaged regionCode equals it, so a code no country carries would rank nothing, "
+        "and the package refuses it. list_regions and list_countries name the regions.",
         source=SOURCE,
     )

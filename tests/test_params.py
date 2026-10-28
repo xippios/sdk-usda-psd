@@ -22,10 +22,12 @@ from xippios.usda.psd.params import (
     PACKAGE,
     PACKAGED_LISTS,
     attribute_names,
+    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
     validate_market_year,
+    validate_region_code,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -276,3 +278,43 @@ def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -
         validate_country_code(value)
     assert info.value.closest == ()
     assert "Did you mean" not in info.value.message
+
+
+def test_country_regions_are_the_packaged_list() -> None:
+    records = _records("countries")
+    regions = country_regions()
+    assert regions == {r["countryCode"]: r["regionCode"] for r in records}
+    assert (regions["US"], regions["BR"], regions["E4"]) == ("R01", "R04", "R05")
+
+
+@pytest.mark.parametrize("code", ["R01", "R04", "R18", "R15"])
+def test_region_codes_the_packaged_countries_carry_pass(code: str) -> None:
+    """``R15`` too: four countries carry it although ``PSDData_GetRegions`` lacks it."""
+    assert validate_region_code(code) == code
+
+
+def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
+    with pytest.raises(UnknownCode) as info:
+        validate_region_code("R99")
+    error = info.value
+    assert status_for(error) == 422
+    assert (error.param, error.value, error.list_name) == ("region_code", "R99", "countries")
+    assert error.fetched == FETCHED
+    assert error.closest == (("R09", "Middle East"),)
+    assert "Did you mean R09 (Middle East)?" in error.message
+    assert "list_regions and list_countries name the regions" in error.message
+    with pytest.raises(UnknownCode, match="'R00' is not a region_code"):
+        validate_region_code("R00")
+    with pytest.raises(UnknownCode) as by_name:
+        validate_region_code("South America")
+    assert ("R04", "South America") in by_name.value.closest
+
+
+def test_a_region_the_regions_list_lacks_is_named_by_its_countries() -> None:
+    """``closest`` names ``R15`` by the countries that carry it, the packaged regions list
+    having no name for it."""
+    with pytest.raises(UnknownCode) as fifteen:
+        validate_region_code("R15 ")
+    assert ("R15", "Africa, NEC; Fernando Po; French Equatorial Africa; Other") in (
+        fifteen.value.closest
+    )

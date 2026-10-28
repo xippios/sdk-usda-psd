@@ -66,10 +66,12 @@ from xippios.usda.psd.models import (
 from xippios.usda.psd.params import (
     PACKAGE,
     attribute_names,
+    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
     validate_market_year,
+    validate_region_code,
 )
 
 __all__ = [
@@ -106,6 +108,14 @@ operations says "PSD Database has data for most commodities since year 1960"."""
 SERIES_MAX_YEARS = 100
 """Most market years one ``get_time_series`` call spans, a self-imposed sanity bound:
 1960 to the current forecast years is about 67 requests, 1960 to 9999 would be 8,040."""
+
+GROUPINGS: frozenset[str] = frozenset({"E4", "E2", "E3", "C1", "T3", "X8", "Z7", "ZZ"})
+"""PSD's aggregates in the packaged countries list, which ``get_top_countries`` leaves out
+with ``exclude_groupings=True``: ``E4`` European Union, ``E2`` EU-15, ``E3`` EU-25, ``C1``
+Caribbean Basin, ``T3`` Africa, NEC, ``X8`` Southern Asia NEC, ``Z7`` Other Pacific
+Islands, NEC and ``ZZ`` Other, named here from the packaged list (fetched 2026-10-23),
+never inferred from names at run time; ``tests/test_slices.py`` pins each code to its
+packaged name."""
 
 
 def _vintage(records: list[CommodityData]) -> str | None:
@@ -509,7 +519,12 @@ async def get_time_series_async(
 
 
 async def get_top_countries_async(
-    commodity_code: str, market_year: int, attribute_id: int, n: int = 10
+    commodity_code: str,
+    market_year: int,
+    attribute_id: int,
+    n: int = 10,
+    region_code: str | None = None,
+    exclude_groupings: bool = False,
 ) -> Result[list[CommodityData]]:
     """The n countries with the largest value of one PSD attribute for a commodity and year.
 
@@ -518,15 +533,19 @@ async def get_top_countries_async(
     each exactly as upstream sent it. Equal values keep upstream's order. Values are
     compared as sent, with no unit check: each record carries its own ``unit_id``, the
     unit of its ``value`` (in the recorded answers, wheat and corn 2023, every country
-    reports an attribute in the same unit). Nothing is excluded: PSD's country
+    reports an attribute in the same unit). By default nothing is excluded: PSD's country
     list holds groupings that rank alongside countries, above all the European Union
     (``"E4"``, second in wheat production for 2023), and residual aggregates such as
     ``"T3"`` (Africa, NEC), ``"X8"`` (Southern Asia NEC) and ``"Z7"`` (Other Pacific
-    Islands, NEC); filter with ``list_countries`` if only countries should count.
-    ``meta.vintage`` is the latest release among every record that was ranked, not only
-    the ``n`` returned, since each of them could have changed the order; for wheat 2023
-    that is ``"2026-10"``. ``meta.published_at`` stays empty. A market year without data
-    raises ``NotFoundError``.
+    Islands, NEC); ``exclude_groupings=True`` leaves those out, and ``region_code`` keeps
+    the countries of one PSD region. The data records carry no region, so each record's
+    country is looked up in the packaged country list; a country it lacks has no region
+    and is left out when ``region_code`` is given. ``meta.vintage`` is the latest release
+    among every record that was ranked, after ``region_code`` and ``exclude_groupings``
+    apply, not only the ``n`` returned, since each of them could have changed the order;
+    for wheat 2023 that is ``"2026-10"``, and ``None`` when nothing was ranked.
+    ``meta.published_at`` stays empty. Codes and arguments are checked before the call;
+    a market year without data raises ``NotFoundError``.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -537,6 +556,16 @@ async def get_top_countries_async(
             ``list_commodity_attributes`` lists them.
         n: How many records to keep, at least 1, e.g. ``5``, ``10`` (the default); more
             than the countries reporting the attribute returns them all.
+        region_code: Rank only the countries of this PSD region, as ``list_countries``
+            gives it, e.g. ``"R04"`` (South America), ``"R18"`` (East Asia), ``"R15"``
+            (Africa, NEC and three more, a region ``list_regions`` lacks). A code no
+            packaged country carries, ``"R00"`` (World) among them, is refused. Omit
+            (``None``) for every region.
+        exclude_groupings: ``True`` leaves PSD's aggregates out of the ranking: ``"E4"``
+            European Union, ``"E2"`` EU-15, ``"E3"`` EU-25, ``"C1"`` Caribbean Basin,
+            ``"T3"`` Africa, NEC, ``"X8"`` Southern Asia NEC, ``"Z7"`` Other Pacific
+            Islands, NEC and ``"ZZ"`` Other. ``False``, the default, ranks them like
+            countries.
     """
     validate_commodity_code(commodity_code)
     validate_market_year(market_year)
@@ -546,18 +575,34 @@ async def get_top_countries_async(
             f"n must be a whole number of at least 1, such as 5 or 10, got {n!r}.",
             source=SOURCE,
         )
-    request: dict[str, str | int] = {
+    if region_code is not None:
+        validate_region_code(region_code)
+    if not isinstance(exclude_groupings, bool):
+        raise InvalidRequestError(
+            f"exclude_groupings must be true or false, got {exclude_groupings!r}.",
+            source=SOURCE,
+        )
+    request: dict[str, str | int | bool | None] = {
         "commodity_code": commodity_code,
         "market_year": market_year,
         "attribute_id": attribute_id,
         "n": n,
+        "region_code": region_code,
+        "exclude_groupings": exclude_groupings,
     }
     try:
         records = await api.get_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "every country", market_year) from exc
+    regions = country_regions() if region_code is not None else {}
     ranked = sorted(
-        (record for record in records if record.attribute_id == attribute_id),
+        (
+            record
+            for record in records
+            if record.attribute_id == attribute_id
+            and (region_code is None or regions.get(record.country_code) == region_code)
+            and not (exclude_groupings and record.country_code in GROUPINGS)
+        ),
         key=lambda record: record.value,
         reverse=True,  # sorted() stays stable with reverse=True: ties keep upstream order
     )
