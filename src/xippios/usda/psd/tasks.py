@@ -6,7 +6,8 @@
 upstream names it: the latest ``calendarYear``-``month`` across the records, zero-padded
 (``"2026-07"``). Every record carries the release that last revised it; for one country
 all records share one, for every country and the world the latest is taken. In every
-case recorded with its release list (wheat 2023: US, all countries, world) this equals
+case recorded with its whole release list (wheat 2023: US, all countries, world, in the
+whole answers recorded on 2026-10-23, commit ``07b88ad``) this equals
 ``PSDData_GetDataReleaseInfo``'s record for the same commodity, market year and country
 (or the latest across countries), so no extra call is needed; the corn and soybeans
 recordings are internally consistent. ``meta.published_at`` stays ``None`` for every
@@ -218,7 +219,8 @@ async def get_world_data_async(
     which ``enums.AttributeId`` and ``enums.UnitId`` name; ``value`` is in that unit.
     ``meta.vintage`` is the PSD release that last revised the figures, as upstream names
     it (``"2026-10"``), the latest release of any country for this commodity and market
-    year; ``meta.published_at`` stays empty, since PSD gives no day. The code and the
+    year (in the whole answers recorded on 2026-10-23, commit ``07b88ad``);
+    ``meta.published_at`` stays empty, since PSD gives no day. The code and the
     year are checked before any call; a market year without data raises
     ``NotFoundError``.
 

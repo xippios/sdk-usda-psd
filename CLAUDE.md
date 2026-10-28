@@ -147,10 +147,9 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   carry none), checked before the call against the `regionCode` values the packaged
   countries carry, `R15` included (`params.validate_region_code`); `R00` (World), in the
   regions list but carried by no country, is refused with a hint that the world total
-  is `get_world_data`'s. `meta.vintage` is
-  the latest release among every record ranked, after both apply, not only the `n`
-  returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`;
-  South America, `R04`, `"2026-09"`).
+  is `get_world_data`'s. `meta.vintage` is the latest release among every record
+  ranked, after both apply, not only the `n` returned (wheat production 2023:
+  `"2026-10"`; the top five alone `"2026-09"`; South America, `R04`, `"2026-09"`).
 - `get_latest_release(commodity_code, since=None)`: one request; the release-list
   records of the newest (`release_year`, `release_month`), `meta.vintage` that release
   (wheat on 2026-10-23: `"2026-10"`, 146 records); `[]` and `None` for a commodity
