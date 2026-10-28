@@ -13,9 +13,9 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
 - BREAKING: requires xippios-core 0.3.x (`xippios-core~=0.3.0`), and the `mcp`, `http`
   and `testing` extras name `xippios-core[...]~=0.3.0` likewise, in place of `~=0.2.0`.
 - BREAKING: the `list_*` tasks' `meta` is built by core's `PackagedList` (ADR-0022, rule
-  1): `meta.retrieved_at` is when the packaged list was fetched (2026-10-23, the files'
-  bare date read as 00:00 UTC), no longer when the task answered, and `meta.vintage` is
-  `None`, no longer the fetch date.
+  1): `meta.retrieved_at` is when the packaged list was fetched (the file's `fetched`, a
+  UTC time to the second since the refresh of 2026-10-28), no longer when the task
+  answered, and `meta.vintage` is `None`, no longer the fetch date.
 - `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
   `get_release_dates` without its filters, and the `list_*` tasks without theirs.
 - BREAKING: `_client.policy` gives way to `_client.gateway`, core's
@@ -27,7 +27,7 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   that starts "api.data.gov quota of the key in DATA_GOV_API_KEY spent".
 - An unknown code or attribute id is refused with core's `UnknownCode`, an
   `InvalidRequestError` as before: its message reads "'0410001' is not a commodity_code
-  in the packaged commodities list (fetched 2026-10-23). Did you mean ...", ends "If
+  in the packaged commodities list (fetched 2026-10-28). Did you mean ...", ends "If
   upstream added it since, the packaged list needs a refresh (/refresh-reference-data).",
   its `fetched` is a datetime and its `closest` a tuple.
 - An MCP tool argument the schema refuses is answered
@@ -92,6 +92,14 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   1,845) and `get_data_release_info/wheat.json` (1,851 of 7,754, market years 1960 to
   1978, the list being ordered by market year); the tests assert what the cut answers
   hold.
+- The five packaged lists are refreshed from upstream on 2026-10-28
+  (`/refresh-reference-data`, five keyed calls), each file's `fetched` now the UTC time
+  of its fetch to the second (`countries.json`: `2026-10-28T21:42:03Z`), which the
+  `list_*` tasks give as `meta.retrieved_at` and `UnknownCode` names as "fetched
+  2026-10-28", as do `enums.py`'s class docstrings. Records unchanged, none changed,
+  added or gone: commodities 63, countries 251, regions 15, units of measure 42,
+  commodity attributes 85; `get_balance_sheet`'s keys and the `AttributeId` and `UnitId`
+  members stay as they were.
 
 ### Removed
 
