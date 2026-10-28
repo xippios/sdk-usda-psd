@@ -8,6 +8,7 @@ pivot and the newest-release filter, are also tested on in-memory records: those
 function inputs, not fixture files.
 """
 
+import dataclasses
 import json
 from collections.abc import Callable
 from decimal import Decimal
@@ -671,6 +672,36 @@ async def test_time_series_of_several_attributes_through_both_adapters(
     response = TestClient(app).post("/usda-psd/get_time_series", json=arguments)
     assert response.status_code == 200, response.text
     assert [row["value"] for row in response.json()["data"]][:2] == [44804.0, 21656.0]
+
+
+@pytest.mark.anyio
+async def test_a_cut_series_names_the_filters_that_narrow_it(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """The tool's own note (conventions §8, ADR-0016) on a server built for this test with
+    the package's cap for ``get_time_series``, its rows lowered to 20 so that three
+    recorded years of every attribute, 45 records, are cut. The real cap is 200 rows."""
+    from xippios.core.mcp import build_server
+
+    cap = tasks.MCP_CAPS["get_time_series"]
+    assert (cap.max_rows, cap.max_bytes) == (200, 65536)
+    lowered = build_server(
+        "usda-psd",
+        [tasks.get_time_series],
+        caps={"get_time_series": dataclasses.replace(cap, max_rows=20)},
+    )
+    for year in (2021, 2022, 2023):
+        replay_fixture(DATA, f"wheat_us_{year}")
+    payload = await mcp_call(
+        lowered,
+        "usda_psd_get_time_series",
+        {"commodity_code": WHEAT, "country_code": "US", "start_year": 2021, "end_year": 2023},
+    )
+    assert len(payload["data"]) == 20
+    assert payload["note"] == (
+        "showing 20 of 45 rows (cap: 20 rows or 65536 bytes); filter by attribute_id or "
+        "narrow start_year and end_year to see the rest"
+    )
 
 
 # get_top_countries

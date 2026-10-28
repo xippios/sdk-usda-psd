@@ -163,15 +163,23 @@ async def test_release_dates_since_through_the_tool(
 
 
 def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> None:
-    """``get_data`` and ``get_release_dates`` keep 200 rows or 64 KB, ``ResultCap``'s
-    defaults, and name their filters (conventions §8, ADR-0016)."""
+    """``get_data``, ``get_release_dates`` and ``get_time_series`` keep 200 rows or 64 KB,
+    ``ResultCap``'s defaults, and name their filters; ``list_countries`` has 300 rows;
+    every other tool has no entry, so core's default cap and note apply to it, the note
+    promising no filter the tool lacks (conventions §8, ADR-0016). It succeeds the
+    end-to-end test of core's default note: the recorded answers over 200 rows, wheat's
+    release list and every country's data, now come through tools with a note of their
+    own, so no recorded answer shows the default note any more."""
     default = ResultCap()
-    assert (default.max_rows, default.max_bytes) == (200, 65536)
-    for name in ("get_data", "get_release_dates"):
+    assert (default.max_rows, default.max_bytes, default.note) == (200, 65536, None)
+    noted = ("get_data", "get_release_dates", "get_time_series")
+    for name in noted:
         cap = tasks.MCP_CAPS[name]
         assert (cap.max_rows, cap.max_bytes) == (default.max_rows, default.max_bytes), name
         assert cap.note is not None, name
     assert tasks.MCP_CAPS["list_countries"].max_rows == 300
+    assert set(tasks.MCP_CAPS) == {"list_countries", *noted}
+    assert set(tasks.MCP_CAPS) < set(tasks.__all__)
 
 
 @pytest.mark.anyio

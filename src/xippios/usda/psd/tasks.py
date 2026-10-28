@@ -99,15 +99,19 @@ MCP_CAPS: Mapping[str, ResultCap] = {
     "get_release_dates": ResultCap(
         note="filter by market_year, country_code or since to see the rest"
     ),
+    "get_time_series": ResultCap(
+        note="filter by attribute_id or narrow start_year and end_year to see the rest"
+    ),
 }
 """MCP result caps of their own, by task function name (conventions §8, ADR-0016).
 
 ``list_countries`` is a reference list an agent needs whole: 251 countries when packaged,
 past the family's default of 200 rows, and 22,467 bytes of compact JSON, well within its
-64 KB. ``get_data`` and ``get_release_dates`` keep the family's limits, 200 rows or 64 KB
-(``ResultCap``'s defaults), with a note naming their filters, so a cut answer tells the
-agent how to narrow it: every country at once is up to about 1,900 rows, wheat's release
-list 7,754. Every other tool keeps the default with core's note.
+64 KB. ``get_data``, ``get_release_dates`` and ``get_time_series`` keep the family's
+limits, 200 rows or 64 KB (``ResultCap``'s defaults), with a note naming their filters, so
+a cut answer tells the agent how to narrow it: every country at once is up to about 1,900
+rows, wheat's release list 7,754, a series of every attribute 15 rows a year for wheat in
+the United States. Every other tool keeps the default with core's note.
 """
 
 
