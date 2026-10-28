@@ -119,7 +119,7 @@ async def test_the_wrapper_raises_auth_error_on_the_recorded_invalid_key(
 ) -> None:
     route = replay_fixture("PSDData_GetCommodities", "invalid_key")
     with pytest.raises(AuthError, match="API_KEY_INVALID") as info:
-        await api.PSDData_GetCommodities()
+        await api.get_commodities()
     assert placeholder_api_key not in str(info.value)
     assert route.call_count == 1, "a 403 is never retried"
 
@@ -269,7 +269,7 @@ async def test_the_policy_reads_the_recorded_429_through_core(
     the refusal is the policy's pause, which the plugin turns off."""
     route = replay_fixture("PSDData_GetCommodities", "over_rate_limit")
     with pytest.raises(RateLimitError) as info:
-        await api.PSDData_GetCommodities()
+        await api.get_commodities()
     assert info.value.retry_after is not None
     assert 3151 - SLACK <= info.value.retry_after <= 3151
     assert info.value.source == SOURCE
@@ -281,7 +281,7 @@ async def test_the_policy_reads_the_recorded_429_through_core(
     assert (snapshot.limit, snapshot.remaining) == (1000, 0)
     assert snapshot.resumes_at == snapshot.observed_at + timedelta(seconds=3151)
     with pytest.raises(RateLimitError, match="nothing was sent") as refused:
-        await api.PSDData_GetRegions()
+        await api.get_regions()
     assert refused.value.source == "api.data.gov", "the gateway's quota, not psd's"
     assert refused.value.message.startswith(f"api.data.gov quota of the key in {API_KEY_ENV} spent")
     assert refused.value.retry_after is not None

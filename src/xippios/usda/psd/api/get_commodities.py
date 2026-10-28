@@ -12,10 +12,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import Commodity
 
-__all__ = ["PSDData_GetCommodities"]
+__all__ = ["get_commodities"]
 
 
-async def PSDData_GetCommodities() -> list[Commodity]:
+async def get_commodities() -> list[Commodity]:
     """Call ``PSDData_GetCommodities``.
 
     Returns:

@@ -32,7 +32,7 @@ from xippios.usda.psd.models import (
 from xippios.usda.psd.params import PACKAGE
 
 LISTS: list[tuple[str, str, str, type[BaseModel]]] = [
-    # task, packaged list, operation it came from, record model
+    # task, packaged list, operation it came from (meta.endpoint, verbatim), record model
     ("list_commodities", "commodities", "PSDData_GetCommodities", Commodity),
     ("list_countries", "countries", "PSDData_GetCountries", Country),
     ("list_regions", "regions", "PSDData_GetRegions", Region),
@@ -45,6 +45,15 @@ LISTS: list[tuple[str, str, str, type[BaseModel]]] = [
     ),
 ]
 IDS = [task for task, *_ in LISTS]
+WRAPPERS = {
+    "PSDData_GetCommodities": "get_commodities",
+    "PSDData_GetCountries": "get_countries",
+    "PSDData_GetRegions": "get_regions",
+    "PSDData_GetUnitsOfMeasure": "get_units_of_measure",
+    "PSDData_GetCommodityAttributes": "get_commodity_attributes",
+}
+"""Each operation's wrapper in ``api/``, its name in snake case without ``PSDData_``
+(conventions §2), which also names its fixture directory (§10)."""
 CAP = 200
 """The family's default MCP result cap in rows (conventions §8); ``list_countries`` has a
 cap of its own, ``tasks.MCP_CAPS`` (ADR-0016)."""
@@ -102,7 +111,7 @@ async def test_list_answers_the_recorded_records_without_a_call(
     route = replay_fixture(endpoint, "all")
     result = await getattr(tasks, f"{task}_async")()
     assert not respx_mock.calls, f"{task} called upstream"
-    recorded = await getattr(api, endpoint)()
+    recorded = await getattr(api, WRAPPERS[endpoint])()
     assert route.call_count == 1, "the one call is the wrapper's"
     assert result.data == recorded, "same records, same values, upstream order"
     assert len(result.data) == len(_packaged(name).records)

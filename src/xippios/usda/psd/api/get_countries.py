@@ -12,10 +12,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import Country
 
-__all__ = ["PSDData_GetCountries"]
+__all__ = ["get_countries"]
 
 
-async def PSDData_GetCountries() -> list[Country]:
+async def get_countries() -> list[Country]:
     """Call ``PSDData_GetCountries``.
 
     Returns:

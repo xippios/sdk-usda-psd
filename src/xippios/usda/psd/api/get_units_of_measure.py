@@ -12,10 +12,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import UnitOfMeasure
 
-__all__ = ["PSDData_GetUnitsOfMeasure"]
+__all__ = ["get_units_of_measure"]
 
 
-async def PSDData_GetUnitsOfMeasure() -> list[UnitOfMeasure]:
+async def get_units_of_measure() -> list[UnitOfMeasure]:
     """Call ``PSDData_GetUnitsOfMeasure``.
 
     Returns:

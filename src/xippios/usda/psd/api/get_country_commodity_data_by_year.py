@@ -19,10 +19,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import CommodityData
 
-__all__ = ["PSDData_GetCountryCommodityDataByYear"]
+__all__ = ["get_country_commodity_data_by_year"]
 
 
-async def PSDData_GetCountryCommodityDataByYear(
+async def get_country_commodity_data_by_year(
     commodity_code: str, country_code: str, market_year: int
 ) -> list[CommodityData]:
     """Call ``PSDData_GetCountryCommodityDataByYear``.

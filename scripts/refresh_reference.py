@@ -59,47 +59,59 @@ REFERENCE = PACKAGE_DIR / "reference"
 ENUMS = PACKAGE_DIR / "enums.py"
 GENERATOR = "scripts/refresh_reference.py"
 
-Fetcher = Callable[[], Coroutine[Any, Any, Sequence[UpstreamModel]]]
-"""An endpoint wrapper in ``api/`` that returns a list's records, named after its operation."""
+Values = Callable[[], Coroutine[Any, Any, Sequence[str]]]
+"""An async fetcher of a list's values through ``api/``."""
 
-LISTS: dict[str, Callable[[], Coroutine[Any, Any, Sequence[str]]]] = {}
+Records = Callable[[], Coroutine[Any, Any, Sequence[UpstreamModel]]]
+"""An async fetcher of a list's records through ``api/``, e.g. the wrapper itself."""
+
+LISTS: dict[str, tuple[str, Values]] = {}
 """Value lists, one ``StrEnum`` each: PSD publishes none, its lists are records."""
 
-ID_LISTS: dict[str, tuple[str, str, Fetcher]] = {
-    "unitsOfMeasure": ("unitId", "unitDescription", api.PSDData_GetUnitsOfMeasure),
-    "commodityAttributes": ("attributeId", "attributeName", api.PSDData_GetCommodityAttributes),
+ID_LISTS: dict[str, tuple[str, Records, str, str]] = {
+    "unitsOfMeasure": (
+        "PSDData_GetUnitsOfMeasure",
+        api.get_units_of_measure,
+        "unitId",
+        "unitDescription",
+    ),
+    "commodityAttributes": (
+        "PSDData_GetCommodityAttributes",
+        api.get_commodity_attributes,
+        "attributeId",
+        "attributeName",
+    ),
 }
 """Lists of integer ids and names, one ``IntEnum`` each (conventions §3), in module order.
 
-List name, as the upstream path names it, to (id field, name field, wrapper), the fields
-as upstream names them. Each enum is keyed by its id field and named after it, so
-``unitId`` makes ``UnitId``, whose docstring reads "Values of ``unitId``".
+List name, as the upstream path names it, to (upstream operation, wrapper, id field, name
+field), the operation verbatim as the snapshot's ``operationId`` and the fields as
+upstream names them. Each enum is keyed by its id field and named after it, so ``unitId``
+makes ``UnitId``, whose docstring reads "Values of ``unitId``".
 """
 
-TABLES: dict[str, Fetcher] = {
-    "commodities": api.PSDData_GetCommodities,
-    "countries": api.PSDData_GetCountries,
-    "regions": api.PSDData_GetRegions,
+TABLES: dict[str, tuple[str, Records]] = {
+    "commodities": ("PSDData_GetCommodities", api.get_commodities),
+    "countries": ("PSDData_GetCountries", api.get_countries),
+    "regions": ("PSDData_GetRegions", api.get_regions),
 }
 """Record lists packaged as tables, with no enum: commodity, country and region codes.
 
-List name, as the upstream path names it, to its wrapper. Packaged like an id list, as
-upstream's records under upstream's field names, which ``params`` reads; the three lists
-together with ``ID_LISTS`` are ``params.PACKAGED_LISTS``.
+List name, as the upstream path names it, to (upstream operation, wrapper). Packaged like
+an id list, as upstream's records under upstream's field names, which ``params`` reads;
+the three lists together with ``ID_LISTS`` are ``params.PACKAGED_LISTS``.
 """
 
 
-def operation(fetch: Callable[[], object]) -> str:
-    """The upstream operation a wrapper calls: its name, as ``api/`` names every wrapper."""
-    return fetch.__name__
+def packaged(name: str, endpoint: str, records: Sequence[dict[str, Any]]) -> PackagedList:
+    """The list ``name`` as just fetched from ``endpoint``, for ``reference/<name>.json``.
 
-
-def packaged(
-    name: str, fetch: Callable[[], object], records: Sequence[dict[str, Any]]
-) -> PackagedList:
-    """The list ``name`` as just fetched through ``fetch``, for ``reference/<name>.json``."""
+    ``endpoint`` is the upstream operation verbatim, never the wrapper's name, which drops
+    the ``PSDData_`` prefix (conventions §2): it becomes the file's ``endpoint`` and so the
+    ``list_*`` tasks' ``meta.endpoint``.
+    """
     return PackagedList(
-        param=name, endpoint=operation(fetch), fetched=datetime.now(UTC), records=list(records)
+        param=name, endpoint=endpoint, fetched=datetime.now(UTC), records=list(records)
     )
 
 
@@ -116,14 +128,14 @@ def render() -> None:
     lists: dict[str, Sequence[str] | Sequence[tuple[int, str]]] = {}
     fetched: dict[str, str] = {}
     class_names: dict[str, str] = {}
-    keys = [*LISTS, *(id_field for id_field, _, _ in ID_LISTS.values())]
+    keys = [*LISTS, *(id_field for _, _, id_field, _ in ID_LISTS.values())]
     if len(set(keys)) < len(keys):
         raise SystemExit("an id field of ID_LISTS names a list of LISTS: one enum each")
     for name in LISTS:
         values = read(name)
         lists[name] = [record[name] for record in values.records]
         fetched[name] = f"{values.fetched:%Y-%m-%d}"
-    for name, (id_field, name_field, _) in ID_LISTS.items():
+    for name, (_, _, id_field, name_field) in ID_LISTS.items():
         ids = read(name)
         lists[id_field] = id_name_pairs(ids.records, id_field=id_field, name_field=name_field)
         fetched[id_field] = f"{ids.fetched:%Y-%m-%d}"
@@ -144,16 +156,16 @@ def refresh() -> None:
         raise SystemExit("LISTS, ID_LISTS and TABLES name other lists than params.PACKAGED_LISTS")
     lists = [
         *(
-            packaged(name, fetch, [{name: value} for value in sync(fetch)()])
-            for name, fetch in LISTS.items()
+            packaged(name, endpoint, [{name: value} for value in sync(fetch)()])
+            for name, (endpoint, fetch) in LISTS.items()
         ),
         *(
-            packaged(name, fetch, [record.dump_upstream() for record in sync(fetch)()])
-            for name, fetch in TABLES.items()
+            packaged(name, endpoint, [record.dump_upstream() for record in sync(fetch)()])
+            for name, (endpoint, fetch) in TABLES.items()
         ),
         *(
-            packaged(name, fetch, [record.dump_upstream() for record in sync(fetch)()])
-            for name, (_, _, fetch) in ID_LISTS.items()
+            packaged(name, endpoint, [record.dump_upstream() for record in sync(fetch)()])
+            for name, (endpoint, fetch, _, _) in ID_LISTS.items()
         ),
     ]
     REFERENCE.mkdir(exist_ok=True)
