@@ -560,7 +560,7 @@ async def get_latest_release_async(commodity_code: str) -> Result[list[DataRelea
     stored vintage older than it means the listed countries and market years have
     changed since. A commodity without any release gives an empty list and
     ``meta.vintage`` ``None``; ``meta.published_at`` stays empty, since PSD gives no
-    day. A release that adds a market year and revises earlier ones holds more records:
+    day. A release that adds a market year and revises earlier ones lists many records:
     the recorded wheat list has 146 records of 2026-10 and 130 more still carrying
     2026-09, so the September answer held between 130 and 276 rows.
     ``get_release_dates(commodity_code, market_year=..., country_code=...)`` returns any
