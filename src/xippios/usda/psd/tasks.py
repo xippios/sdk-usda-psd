@@ -93,12 +93,21 @@ __all__ = [
 # A task named here is Python-only: no tool, no route; the adapters skip it (ADR-0019 decision 4).
 BULK_TASKS: frozenset[str] = frozenset()
 
-MCP_CAPS: Mapping[str, ResultCap] = {"list_countries": ResultCap(max_rows=300)}
+MCP_CAPS: Mapping[str, ResultCap] = {
+    "list_countries": ResultCap(max_rows=300),
+    "get_data": ResultCap(note="filter by country_code to see the rest"),
+    "get_release_dates": ResultCap(
+        note="filter by market_year, country_code or since to see the rest"
+    ),
+}
 """MCP result caps of their own, by task function name (conventions §8, ADR-0016).
 
 ``list_countries`` is a reference list an agent needs whole: 251 countries when packaged,
 past the family's default of 200 rows, and 22,467 bytes of compact JSON, well within its
-64 KB. Every other tool keeps the default, 200 rows or 64 KB, with core's note.
+64 KB. ``get_data`` and ``get_release_dates`` keep the family's limits, 200 rows or 64 KB
+(``ResultCap``'s defaults), with a note naming their filters, so a cut answer tells the
+agent how to narrow it: every country at once is up to about 1,900 rows, wheat's release
+list 7,754. Every other tool keeps the default with core's note.
 """
 
 

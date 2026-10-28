@@ -208,6 +208,112 @@ def test_every_packaged_attribute_gets_its_own_key() -> None:
         assert list(alone.attributes) == [key], entry.attribute_id
 
 
+BALANCE_SHEET_KEYS: dict[int, str] = {
+    1: "Area Planted",
+    4: "Area Harvested",
+    5: "Catch For Reduction",
+    6: "Cows In Milk",
+    7: "Crush",
+    20: "Beginning Stocks",
+    22: "Sow Beginning Stocks",
+    23: "Dairy Cows Beg. Stocks",
+    25: "Beef Cows Beg. Stocks",
+    28: "Production",
+    29: "Arabica Production",
+    30: "Beet Sugar Production",
+    31: "Commercial Production",
+    32: "Cows Milk Production",
+    33: "Farm Sales Weight Prod",
+    34: "Filter Production",
+    43: "Cane Sugar Production",
+    47: "Non-Comm. Production",
+    48: "Non-Filter Production",
+    49: "Other Milk Production",
+    53: "Robusta Production",
+    54: "Rough Production",
+    56: "Other Production",
+    57: "Imports",
+    58: "Bean Imports",
+    62: "Intra-EU Imports",
+    63: "MY Imp. from U.S.",
+    64: "Raw Imports",
+    65: "U.S. Leaf Imports",
+    71: "Other Imports",
+    74: "Refined Imp.(Raw Val)",
+    75: "Roast & Ground Imports",
+    81: "TY Imports",
+    82: "Soluble Imports",
+    84: "TY Imp. from U.S.",
+    86: "Total Supply",
+    88: "Exports",
+    89: "Raw Exports",
+    90: "Bean Exports",
+    94: "Intra EU Exports",
+    99: "Refined Exp.(Raw Val)",
+    104: "Other Exports",
+    107: "Roast & Ground Exports",
+    113: "TY Exports",
+    114: "Soluble Exports",
+    117: "Total Slaughter",
+    118: "Cow Slaughter",
+    121: "Sow Slaughter",
+    122: "Calf Slaughter",
+    125: "Domestic Consumption",
+    126: "Total Disappearance (126)",
+    128: "Dom. Leaf Consumption",
+    130: "Feed Dom. Consumption",
+    131: "Fluid Use Dom. Consum.",
+    132: "For Processing",
+    133: "Fresh Dom. Consumption (133)",
+    135: "Fresh Dom. Consumption (135)",
+    139: "Human Dom. Consumption",
+    140: "Industrial Dom. Cons.",
+    141: "Rst,Ground Dom. Consum",
+    142: "Domestic Use",
+    147: "Factory Use Consum.",
+    149: "Food Use Dom. Cons.",
+    150: "Loss",
+    151: "Other Disappearance",
+    152: "Other Use, Losses",
+    154: "Soluble Dom. Cons.",
+    155: "U.S. Leaf Dom. Cons.",
+    158: "Feed Use Dom. Consum.",
+    161: "Feed Waste Dom. Cons.",
+    167: "Other Foreign Cons.",
+    169: "Withdrawal From Market",
+    172: "Loss and Residual",
+    173: "Total Disappearance (173)",
+    174: "Total Use",
+    175: "Total Utilization",
+    176: "Ending Stocks",
+    178: "Total Distribution",
+    181: "Extr. Rate, 999.9999",
+    182: "Milling Rate (.9999)",
+    183: "Seed to Lint Ratio",
+    184: "Yield",
+    192: "FSI Consumption",
+    194: "SME",
+    195: "Stocks-to-Use",
+}
+"""The ``BalanceSheet.attributes`` key of every packaged attribute id, written out: the
+public keys of ``get_balance_sheet`` in this package version (packaged list fetched
+2026-10-23)."""
+
+
+def test_balance_sheet_keys_of_every_packaged_attribute_are_pinned() -> None:
+    """The guard of a reference refresh: the key ``get_balance_sheet`` gives each packaged
+    id, derived from the packaged ``commodityAttributes``, equals the mapping written out
+    above. A refresh that renames an attribute, or adds an id under a name another id
+    has (which suffixes both with their ids), fails here, and the diff names the id and
+    both keys: a breaking change, which ``CHANGELOG.md`` records under Unreleased
+    (conventions §12) in the PR that updates this mapping. A new id under a name of its
+    own fails as well and only adds a key."""
+    names = attribute_names()
+    sheet = tasks._balance_sheet([_data(2023, attribute_id) for attribute_id in names])
+    derived = {entry.attribute_id: key for key, entry in sheet.attributes.items()}
+    assert derived == BALANCE_SHEET_KEYS
+
+
 def test_balance_sheet_refuses_what_one_entry_per_record_cannot_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

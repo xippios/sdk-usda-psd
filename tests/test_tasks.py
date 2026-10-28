@@ -9,7 +9,7 @@ from decimal import Decimal
 import httpx
 import pytest
 import respx
-from xippios.core import InvalidRequestError, NotFoundError, UnknownCode
+from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
 from xippios.core.testing import mcp_call
 
 from xippios.usda.psd import tasks
@@ -149,19 +149,47 @@ async def test_release_dates_since_through_the_tool(
         )
 
 
+def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> None:
+    """``get_data`` and ``get_release_dates`` keep 200 rows or 64 KB, ``ResultCap``'s
+    defaults, and name their filters (conventions §8, ADR-0016)."""
+    default = ResultCap()
+    assert (default.max_rows, default.max_bytes) == (200, 65536)
+    for name in ("get_data", "get_release_dates"):
+        cap = tasks.MCP_CAPS[name]
+        assert (cap.max_rows, cap.max_bytes) == (default.max_rows, default.max_bytes), name
+        assert cap.note is not None, name
+    assert tasks.MCP_CAPS["list_countries"].max_rows == 300
+
+
 @pytest.mark.anyio
-async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
+async def test_a_cut_release_list_names_the_filters_that_narrow_it(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Wheat's release list over MCP, every country and market year: cut at the family's
-    default cap with core's note, which promises no filter the tool lacks (ADR-0016)."""
+    """Wheat's release list over MCP, every country and market year: cut at 200 rows with
+    a note naming the tool's own filters, never one it lacks (ADR-0016)."""
     replay_fixture(RELEASES, "wheat")
     every = tasks.get_release_dates(WHEAT).data
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
     assert len(payload["data"]) == 200
     assert payload["note"] == (
-        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); narrow the query to "
-        "see the rest"
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
+        "market_year, country_code or since to see the rest"
+    )
+
+
+@pytest.mark.anyio
+async def test_a_cut_answer_for_every_country_names_country_code(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    replay_fixture(ALL, "wheat_all_2023")
+    every = tasks.get_data(WHEAT, 2023).data
+    payload = await mcp_call(
+        server, "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023}
+    )
+    assert len(payload["data"]) == 200
+    assert payload["note"] == (
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
+        "country_code to see the rest"
     )
 
 
