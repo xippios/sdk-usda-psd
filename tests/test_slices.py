@@ -635,9 +635,9 @@ def test_time_series_checks_every_attribute_id_before_any_request(
 async def test_time_series_of_several_attributes_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """A list of ids is a keyword argument of the tool, and makes the HTTP route a ``POST``
-    with a JSON body (conventions §9, ADR-0007); a value the tool's schema refuses comes
-    back as core's ``InvalidRequestError`` text."""
+    """A list of ids is a keyword argument of the tool; since ``attribute_id`` takes a list,
+    the HTTP route is a ``POST`` with a JSON body (conventions §9, ADR-0007). A value the
+    tool's schema refuses comes back as core's ``InvalidRequestError`` text."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
