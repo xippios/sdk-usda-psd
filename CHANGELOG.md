@@ -44,6 +44,13 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
   CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
   imports the family rules from `.claude/family.md`.
+- `docs/upstream/FETCHED.md` follows conventions §3: `Fetched` is the UTC time of the run
+  with `Z`, an Attribution section says the documentation is a work of the United States
+  Government (17 U.S.C. § 105) and that no page or document read states a copyright line,
+  licence or terms of use, the table's last column is Note, and the excerpt rows keep the
+  shared documents' size and sha256; `scripts/refresh_upstream.py` checks every page and
+  document for such a statement on every run. The snapshot was refreshed on 2026-10-28:
+  both Swagger documents are unchanged since 2026-10-23, byte for byte.
 
 ### Removed
 
