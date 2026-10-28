@@ -45,8 +45,15 @@ SOURCES = {
         CommodityAttribute,
     ),
 }
-FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
-"""The packaged lists' ``fetched``, a bare date in the files, read as 00:00 UTC (ADR-0022)."""
+FETCHED: dict[str, datetime] = {
+    "commodities": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
+    "countries": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
+    "regions": datetime(2026, 10, 28, 21, 42, 4, tzinfo=UTC),
+    "unitsOfMeasure": datetime(2026, 10, 28, 21, 42, 5, tzinfo=UTC),
+    "commodityAttributes": datetime(2026, 10, 28, 21, 42, 6, tzinfo=UTC),
+}
+"""Each packaged list's ``fetched``: the UTC time of its fetch in the refresh of 2026-10-28,
+to the second, as ``PackagedList.write`` wrote it (ADR-0022, amendment 2026-10-27)."""
 
 
 def test_every_packaged_list_loads_and_parses() -> None:
@@ -54,7 +61,7 @@ def test_every_packaged_list_loads_and_parses() -> None:
     for name, (endpoint, _, model) in SOURCES.items():
         packaged = PackagedList.load(PACKAGE, name)
         assert (packaged.param, packaged.endpoint) == (name, endpoint)
-        assert packaged.fetched == FETCHED
+        assert packaged.fetched == FETCHED[name]
         parsed = parse(list[model], packaged.records, source="usda-psd", endpoint=endpoint)  # type: ignore[valid-type]
         assert parsed, name
 
@@ -113,13 +120,13 @@ def test_unknown_commodity_code_names_the_closest() -> None:
         "0410001",
         "commodities",
     )
-    assert error.fetched == FETCHED
+    assert error.fetched == FETCHED["commodities"]
     assert error.source == "usda-psd"
     # difflib scores Rye (0451000) as close as Wheat (0410000); both are named
     assert ("0410000", "Wheat") in error.closest
     assert error.message.startswith(
         "'0410001' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-23). Did you mean "
+        "2026-10-28). Did you mean "
     )
     assert "0410000 (Wheat)" in error.message
     assert error.message.endswith(
@@ -204,7 +211,7 @@ def test_unknown_attribute_id_names_the_closest() -> None:
     assert error.source == "usda-psd"
     assert error.message.startswith(
         "999 is not an attribute_id in the packaged commodityAttributes list (fetched "
-        "2026-10-23). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
+        "2026-10-28). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
         "attribute"
     )
     assert "list_commodity_attributes lists the ids" in error.message
@@ -263,7 +270,7 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
     assert info.value.closest == ()
     assert info.value.message == (
         "'0000000x' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-23). PSD answers unknown codes with an empty result, so the package refuses "
+        "2026-10-28). PSD answers unknown codes with an empty result, so the package refuses "
         "them. If upstream added it since, the packaged list needs a refresh "
         "(/refresh-reference-data)."
     )
@@ -300,7 +307,7 @@ def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
     error = info.value
     assert status_for(error) == 422
     assert (error.param, error.value, error.list_name) == ("region_code", "R99", "countries")
-    assert error.fetched == FETCHED
+    assert error.fetched == FETCHED["countries"]
     assert error.closest == (("R09", "Middle East"),)
     assert "Did you mean R09 (Middle East)?" in error.message
     assert "list_regions and list_countries name the regions" in error.message
@@ -344,7 +351,7 @@ def test_the_world_region_is_refused_with_a_hint() -> None:
     assert error.closest == ()
     assert "Did you mean" not in error.message
     assert error.message.startswith(
-        "'R00' is not a region_code in the packaged countries list (fetched 2026-10-23). "
+        "'R00' is not a region_code in the packaged countries list (fetched 2026-10-28). "
         "R00 (World) is in list_regions, but no country belongs to it: the world total is "
         "get_world_data's, and region_code takes a region countries belong to, as "
         "list_countries gives it, e.g. R04 (South America); omit it to rank every country."

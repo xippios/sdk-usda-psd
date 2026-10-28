@@ -18,7 +18,7 @@ The ``list_*`` tasks answer from the five lists packaged under ``reference/`` an
 upstream call. Core's ``PackagedList`` reads the file and builds ``meta`` (ADR-0022, rule
 1): ``meta.endpoint`` is the operation the list was fetched from
 (``"PSDData_GetCountries"``), ``meta.retrieved_at`` is when the package fetched the list,
-the file's ``fetched`` (a bare date, ``2026-10-23``, reads as 00:00 UTC of that day), and
+the file's ``fetched``, a UTC time to the second (``2026-10-28T21:42:03Z``), and
 ``meta.vintage`` is ``None``: upstream gives these lists no release identifier, and a
 fetch date is not one. Their filters (``search``, ``region_code``) only select records of
 the packaged list, which keep upstream's order and values; ``meta.request`` carries those
@@ -127,7 +127,7 @@ GROUPINGS: frozenset[str] = frozenset({"E4", "E2", "E3", "C1", "T3", "X8", "Z7",
 """PSD's aggregates in the packaged countries list, which ``get_top_countries`` leaves out
 with ``exclude_groupings=True``: ``E4`` European Union, ``E2`` EU-15, ``E3`` EU-25, ``C1``
 Caribbean Basin, ``T3`` Africa, NEC, ``X8`` Southern Asia NEC, ``Z7`` Other Pacific
-Islands, NEC and ``ZZ`` Other, named here from the packaged list (fetched 2026-10-23),
+Islands, NEC and ``ZZ`` Other, named here from the packaged list (fetched 2026-10-28),
 never inferred from names at run time; ``tests/test_slices.py`` pins each code to its
 packaged name."""
 
@@ -711,7 +711,7 @@ async def list_commodities_async(search: str | None = None) -> Result[list[Commo
     (``reference/commodities.json``), without an upstream call: 63 commodities when
     packaged, in upstream order, e.g. ``"0410000"`` Wheat, ``"0440000"`` Corn,
     ``"2222000"`` Oilseed, Soybean. ``meta.retrieved_at`` is when the package fetched the
-    list (2026-10-23, UTC); ``meta.vintage`` is empty, as upstream gives the list no
+    list (2026-10-28, UTC); ``meta.vintage`` is empty, as upstream gives the list no
     release identifier.
 
     Args:
@@ -736,7 +736,7 @@ async def list_countries_async(
     code where upstream has one. Codes are PSD's own, not ISO: ``"US"`` United States,
     ``"BR"`` Brazil, ``"CH"`` China, ``"E4"`` European Union; aggregates such as ``"T3"``
     Africa, NEC have no GENC code. ``meta.retrieved_at`` is when the package fetched the
-    list (2026-10-23, UTC); ``meta.vintage`` is empty, as upstream gives the list no
+    list (2026-10-28, UTC); ``meta.vintage`` is empty, as upstream gives the list no
     release identifier.
 
     Args:
@@ -771,7 +771,7 @@ async def list_regions_async() -> Result[list[Region]]:
     upstream order, from ``"R00"`` World and ``"R01"`` North America to ``"R18"`` East
     Asia. Upstream's list lacks ``"R15"``, the region of four countries in
     ``list_countries`` (Africa, NEC and three more); it is kept as upstream sends it.
-    ``meta.retrieved_at`` is when the package fetched the list (2026-10-23, UTC);
+    ``meta.retrieved_at`` is when the package fetched the list (2026-10-28, UTC);
     ``meta.vintage`` is empty, as upstream gives the list no release identifier.
     """
     packaged = PackagedList.load(PACKAGE, "regions")
@@ -786,7 +786,7 @@ async def list_units_of_measure_async() -> Result[list[UnitOfMeasure]]:
     packaged, in upstream order, e.g. ``8`` (1000 MT), ``4`` (1000 HA), ``26`` (MT/HA).
     Descriptions are upstream's, padded with spaces to 20 characters
     (``"(1000 MT)           "``). ``enums.UnitId`` names the same ids.
-    ``meta.retrieved_at`` is when the package fetched the list (2026-10-23, UTC);
+    ``meta.retrieved_at`` is when the package fetched the list (2026-10-28, UTC);
     ``meta.vintage`` is empty, as upstream gives the list no release identifier.
     """
     packaged = PackagedList.load(PACKAGE, "unitsOfMeasure")
@@ -804,7 +804,7 @@ async def list_commodity_attributes_async(
     Exports, ``176`` Ending Stocks. Names are not unique: ``"Total Disappearance"`` is
     126 and 173, ``"Fresh Dom. Consumption"`` 133 and 135; the id tells them apart.
     ``enums.AttributeId`` names the same ids. ``meta.retrieved_at`` is when the package
-    fetched the list (2026-10-23, UTC); ``meta.vintage`` is empty, as upstream gives the
+    fetched the list (2026-10-28, UTC); ``meta.vintage`` is empty, as upstream gives the
     list no release identifier.
 
     Args:

@@ -1,8 +1,9 @@
 """The five list tasks answer from the packaged lists and never call upstream.
 
-The packaged files were written from the answers recorded in
-``tests/fixtures/<wrapper>/all.json``, so a task returning exactly what the endpoint
-wrapper parses from that recording proves the package answers what upstream answered.
+The packaged files hold the records of the answers recorded in
+``tests/fixtures/<wrapper>/all.json`` (the refresh of 2026-10-28 fetched the same records),
+so a task returning exactly what the endpoint wrapper parses from that recording proves
+the package answers what upstream answered.
 Every test here runs with ``respx`` active: a request no route matches fails loudly, and
 each test checks that the tasks sent none. ``meta`` is core's ``PackagedList.meta``
 (ADR-0022, rule 1): ``retrieved_at`` the list's fetch time, ``vintage`` ``None``, and
@@ -57,8 +58,15 @@ WRAPPERS = {
 CAP = 200
 """The family's default MCP result cap in rows (conventions §8); ``list_countries`` has a
 cap of its own, ``tasks.MCP_CAPS`` (ADR-0016)."""
-FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
-"""The packaged lists' ``fetched``, a bare date in the files, read as 00:00 UTC (ADR-0022)."""
+FETCHED: dict[str, datetime] = {
+    "commodities": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
+    "countries": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
+    "regions": datetime(2026, 10, 28, 21, 42, 4, tzinfo=UTC),
+    "unitsOfMeasure": datetime(2026, 10, 28, 21, 42, 5, tzinfo=UTC),
+    "commodityAttributes": datetime(2026, 10, 28, 21, 42, 6, tzinfo=UTC),
+}
+"""Each packaged list's ``fetched``: the UTC time of its fetch in the refresh of 2026-10-28,
+to the second, as ``PackagedList.write`` wrote it (ADR-0022, amendment 2026-10-27)."""
 
 
 def _packaged(name: str) -> PackagedList:
@@ -118,8 +126,8 @@ async def test_list_answers_the_recorded_records_without_a_call(
     assert all(type(record) is model for record in result.data)
     assert result.meta.source == "usda-psd"
     assert result.meta.endpoint == endpoint
-    assert result.meta.retrieved_at == _packaged(name).fetched == FETCHED, (
-        "retrieved_at is when the package fetched the list, its bare date read as 00:00 UTC"
+    assert result.meta.retrieved_at == _packaged(name).fetched == FETCHED[name], (
+        "retrieved_at is when the package fetched the list, the file's UTC time to the second"
     )
     assert result.meta.vintage is None, "a fetch date is not a release identifier"
     assert result.meta.published_at is None
@@ -210,7 +218,7 @@ def test_an_unknown_region_is_an_empty_list(respx_mock: respx.MockRouter) -> Non
     unknown = tasks.list_countries(region_code="R99")
     assert unknown.data == []
     assert unknown.meta.request == {"region_code": "R99"}
-    assert unknown.meta.retrieved_at == FETCHED
+    assert unknown.meta.retrieved_at == FETCHED["countries"]
     assert unknown.meta.vintage is None
     assert tasks.list_countries(region_code="r01").data == [], "exact, as list_regions spells it"
     assert not respx_mock.calls
@@ -332,7 +340,7 @@ def test_list_routes_are_whole_over_http(respx_mock: respx.MockRouter) -> None:
     assert "note" not in countries.json()
     r15 = http.get("/usda-psd/list_countries", params={"region_code": "R15"}).json()
     assert [row["country_code"] for row in r15["data"]] == ["T3", "T8", "T4", "ZZ"]
-    assert datetime.fromisoformat(r15["meta"]["retrieved_at"]) == FETCHED
+    assert datetime.fromisoformat(r15["meta"]["retrieved_at"]) == FETCHED["countries"]
     assert r15["meta"]["vintage"] is None
     regions = http.get("/usda-psd/list_regions").json()
     assert len(regions["data"]) == len(_packaged("regions").records)

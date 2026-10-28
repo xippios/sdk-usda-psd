@@ -298,7 +298,7 @@ BALANCE_SHEET_KEYS: dict[int, str] = {
 }
 """The ``BalanceSheet.attributes`` key of every packaged attribute id, written out: the
 public keys of ``get_balance_sheet`` in this package version (packaged list fetched
-2026-10-23)."""
+2026-10-28)."""
 
 
 def test_balance_sheet_keys_of_every_packaged_attribute_are_pinned() -> None:
