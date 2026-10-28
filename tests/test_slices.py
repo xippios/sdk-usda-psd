@@ -17,12 +17,18 @@ from typing import Any
 import httpx
 import pytest
 import respx
-from xippios.core import InvalidRequestError, NotFoundError, ValidationError, parse
-from xippios.core.testing import assert_projection, fixture_path, load_fixture, mcp_call
+from xippios.core import InvalidRequestError, NotFoundError, UnknownCode, ValidationError, parse
+from xippios.core.testing import (
+    ReplayFixture,
+    assert_projection,
+    fixture_path,
+    load_fixture,
+    mcp_call,
+)
 
 from xippios.usda.psd import tasks
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import NoDataForYear, UnknownCode
+from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import BalanceSheetEntry, CommodityData, DataReleaseInfo
 from xippios.usda.psd.params import attribute_names
@@ -76,21 +82,6 @@ def _data(market_year: int, attribute_id: int, *, country_code: str = "US") -> C
 
 def _path(market_year: int, country_code: str = "US", commodity_code: str = WHEAT) -> str:
     return f"/api/psd/commodity/{commodity_code}/country/{country_code}/year/{market_year}"
-
-
-def _mount_recorded_404(respx_mock: respx.MockRouter, market_year: int) -> respx.Route:
-    """Serve PSD's recorded empty 404 for wheat US 1900 (``unknown_year``: status 404,
-    empty ``text/plain`` body) at the path of ``market_year``: a recorded answer moved,
-    not a hand-written one, standing in for a year without data inside a range."""
-    absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
-    assert (absent.response.status, absent.response.content) == (404, b"")
-    return respx_mock.get(f"https://api.fas.usda.gov{_path(market_year)}").mock(
-        return_value=httpx.Response(
-            absent.response.status,
-            headers=absent.response.headers,
-            content=absent.response.content,
-        )
-    )
 
 
 def test_every_slice_is_exported_as_a_tool() -> None:
@@ -321,14 +312,17 @@ def test_get_time_series_one_request_per_year_in_order(
 
 
 def test_time_series_leaves_a_year_without_data_out(
-    replay_fixture: Callable[[str, str], respx.Route],
+    replay_fixture: ReplayFixture,
     respx_mock: respx.MockRouter,
 ) -> None:
     """2022 answers PSD's 404 for a year without data: the recorded 1900 answer (empty
-    body, ``text/plain``), served at the 2022 path. The year is absent, nothing filled."""
+    body, ``text/plain``), served at the 2022 path, a recorded answer moved, not a
+    hand-written one. The year is absent, nothing filled."""
+    absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
+    assert (absent.response.status, absent.response.content) == (404, b""), "PSD's empty 404"
     replay_fixture(DATA, "wheat_us_2021")
     replay_fixture(DATA, "wheat_us_2023")
-    missing = _mount_recorded_404(respx_mock, 2022)
+    missing = replay_fixture(DATA, "unknown_year", url=f"https://api.fas.usda.gov{_path(2022)}")
     result = tasks.get_time_series(WHEAT, "US", AttributeId.EXPORTS, 2021, 2023)
     assert missing.call_count == 1
     assert len(respx_mock.calls) == 3
@@ -339,12 +333,12 @@ def test_time_series_leaves_a_year_without_data_out(
     assert result.meta.vintage == "2026-07"
 
 
-def test_a_series_without_any_record_is_empty_not_an_error(
-    respx_mock: respx.MockRouter,
-) -> None:
+def test_a_series_without_any_record_is_empty_not_an_error(replay_fixture: ReplayFixture) -> None:
     """The recorded empty 404 for 1900 at the 1960 path: the first year a series may ask
     for is accepted, it is absent, and the series is a valid empty list."""
-    route = _mount_recorded_404(respx_mock, 1960)
+    absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
+    assert (absent.response.status, absent.response.content) == (404, b""), "PSD's empty 404"
+    route = replay_fixture(DATA, "unknown_year", url=f"https://api.fas.usda.gov{_path(1960)}")
     result = tasks.get_time_series(WHEAT, "US", AttributeId.PRODUCTION, 1960, 1960)
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
@@ -639,7 +633,7 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
 
     with pytest.raises(UnknownCode, match="999 is not an attribute_id") as unknown:
         tasks.get_time_series(WHEAT, "US", 999, 2021, 2023)
-    assert unknown.value.closest == [("99", "Refined Exp.(Raw Val)")]
+    assert unknown.value.closest == (("99", "Refined Exp.(Raw Val)"),)
     with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
         tasks.get_time_series(WHEAT, "US", True, 2021, 2023)
     with pytest.raises(InvalidRequestError, match="start_year 2023 is after end_year 2021"):

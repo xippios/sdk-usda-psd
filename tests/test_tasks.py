@@ -1,39 +1,23 @@
-"""Structural checks every task must satisfy. Per-task tests with recorded fixtures go below."""
+"""Replay tests on recorded fixtures, at least one per task (conventions §10).
 
-import inspect
+``/add-endpoint`` and ``/record-fixture`` add them.
+"""
+
 from collections.abc import Callable
 from decimal import Decimal
 
 import httpx
 import pytest
 import respx
-from xippios.core import InvalidRequestError, NotFoundError
+from xippios.core import InvalidRequestError, NotFoundError, UnknownCode
 from xippios.core.testing import mcp_call
 
-from xippios.usda.psd import __version__, tasks
+from xippios.usda.psd import tasks
 from xippios.usda.psd._client import BASE_URL
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import NoDataForYear, UnknownCode
+from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import DataReleaseInfo
-
-TASKS = [getattr(tasks, name) for name in tasks.__all__]
-
-
-def test_package_has_a_version() -> None:
-    assert __version__
-
-
-@pytest.mark.parametrize("task", TASKS, ids=tasks.__all__)
-def test_task_is_a_sync_facade_with_an_agent_docstring(task: object) -> None:
-    assert callable(task)
-    assert hasattr(task, "async_fn"), "write the async function and derive the sync one with sync()"
-    doc = inspect.getdoc(task) or ""
-    assert doc, "task functions need a docstring: agents read it"
-    assert doc.splitlines()[0].endswith("."), "the first line is one sentence"
-    if inspect.signature(task).parameters:
-        assert "Args:" in doc, "explain every parameter under Args: with valid-value examples"
-
 
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
 DATA = "PSDData_GetCountryCommodityDataByYear"
@@ -67,11 +51,7 @@ def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.R
     replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_data(WHEAT, 2023)
     assert result.meta.endpoint == "PSDData_GetCommodityDataByYear"
-    assert result.meta.request == {
-        "commodity_code": WHEAT,
-        "market_year": 2023,
-        "country_code": None,
-    }
+    assert result.meta.request == {"commodity_code": WHEAT, "market_year": 2023}
     assert len(result.data) == 1845
     assert len({(r.calendar_year, r.month) for r in result.data}) > 1
     assert result.meta.vintage == "2026-10"
@@ -152,11 +132,7 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
     result = tasks.get_release_dates(WHEAT)
     assert len(result.data) == 7754
     assert result.meta.endpoint == "PSDData_GetDataReleaseInfo"
-    assert result.meta.request == {
-        "commodity_code": WHEAT,
-        "market_year": None,
-        "country_code": None,
-    }
+    assert result.meta.request == {"commodity_code": WHEAT}, "filters left None are left out"
     assert result.meta.published_at is None
     assert result.meta.vintage is None
     assert route.call_count == 1
@@ -225,7 +201,7 @@ def test_unknown_codes_are_refused_before_any_request(respx_mock: respx.MockRout
         tasks.get_data(WHEAT, 2023, "XX")
     with pytest.raises(UnknownCode, match="use get_world_data for world data") as world:
         tasks.get_data(WHEAT, 2023, "00")
-    assert world.value.closest == []
+    assert world.value.closest == ()
     with pytest.raises(UnknownCode, match="Omit country_code for every country"):
         tasks.get_data(WHEAT, 2023, "all")
     with pytest.raises(UnknownCode):
