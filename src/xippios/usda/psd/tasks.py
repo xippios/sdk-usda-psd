@@ -34,7 +34,8 @@ costs.
 """
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from xippios.core import (
     InvalidRequestError,
@@ -385,47 +386,77 @@ async def get_balance_sheet_async(
     return Result(data=_balance_sheet(records), meta=meta)
 
 
+def _attribute_ids(attribute_id: object) -> frozenset[int] | None:
+    """The ids ``get_time_series`` keeps, each checked; ``None`` keeps every attribute.
+
+    An id or a sequence of ids; text is no sequence of ids here, so ``"28"`` is refused
+    as not an integer, like any other value ``validate_attribute_id`` refuses.
+
+    Raises:
+        InvalidRequestError: An empty sequence, or a value that is not an integer id.
+        UnknownCode: An id the packaged list lacks, naming the closest.
+    """
+    if attribute_id is None:
+        return None
+    ids: list[Any]
+    if isinstance(attribute_id, Sequence) and not isinstance(attribute_id, str | bytes):
+        if not attribute_id:
+            raise InvalidRequestError(
+                "attribute_id must name at least one id, such as [28, 88] (Production, "
+                "Exports), or be omitted for every attribute; got an empty list.",
+                source=SOURCE,
+            )
+        ids = list(attribute_id)
+    else:
+        ids = [attribute_id]
+    return frozenset(validate_attribute_id(each) for each in ids)
+
+
 async def get_time_series_async(
     commodity_code: str,
     country_code: str,
-    attribute_id: int,
     start_year: int,
     end_year: int,
+    attribute_id: int | Sequence[int] | None = None,
 ) -> Result[list[CommodityData]]:
-    """One attribute of one country's PSD figures for a commodity over a range of market years.
+    """One country's PSD figures for a commodity over a range of market years.
 
     One request to ``PSDData_GetCountryCommodityDataByYear`` per market year, oldest
     first, at the client's pace of one request per second, and each counts against
     api.data.gov's quota of 1,000 requests per hour per key: 2021 to 2023 is three
     requests and about three seconds, 1960 to 2026 sixty-seven, so ask for the years you
-    need; a range of more than 100 market years is refused. Of each answer the record
-    with ``attribute_id`` is kept exactly as upstream sent it, ordered by market year:
-    ``value`` is in its ``unit_id``, and ``calendar_year`` and ``month`` name the
-    release that last revised that year, which may differ from year to year. A market
-    year PSD has no data for (its empty HTTP 404, recorded for 1900), or whose answer
-    has no record for the attribute, is absent from the list: no gap is filled, nothing
-    interpolated, no error raised; a range without any record is an empty list. A year
-    beyond PSD's forecasts is expected to answer the same 404 (not recorded) and still
-    costs its request. Any other error, the gateway's own 404 included, is raised.
-    ``meta.vintage`` is the latest release across the records (``"2026-07"``);
-    ``meta.published_at`` stays empty. Codes, the attribute, both years and the range
-    are checked before the first request.
+    need; a range of more than 100 market years is refused. Of each answer the records
+    of the attributes asked for, or all of them when ``attribute_id`` is omitted, are
+    kept exactly as upstream sent them, ordered by market year and within a year in
+    upstream's order: ``value`` is in its ``unit_id``, and ``calendar_year`` and
+    ``month`` name the release that last revised that year, which may differ from year
+    to year. A market year PSD has no data for (its empty HTTP 404, recorded for 1900),
+    or whose answer has no record for the attributes, is absent from the list: no gap is
+    filled, nothing interpolated, no error raised; a range without any record is an
+    empty list. A year beyond PSD's forecasts is expected to answer the same 404 (not
+    recorded) and still costs its request. Any other error, the gateway's own 404
+    included, is raised. ``meta.vintage`` is the latest release across the records
+    (``"2026-07"``); ``meta.published_at`` stays empty. Codes, every attribute id, both
+    years and the range are checked before the first request.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
             ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
         country_code: PSD country code (not ISO), e.g. ``"US"`` (United States), ``"BR"``
             (Brazil), ``"E4"`` (European Union).
-        attribute_id: PSD attribute id, e.g. ``28`` (Production), ``88`` (Exports),
-            ``176`` (Ending Stocks); ``list_commodity_attributes`` lists them.
         start_year: First PSD market year, 1960 or later (PSD: "PSD Database has data
             for most commodities since year 1960"), e.g. ``2021``.
         end_year: Last PSD market year, included, e.g. ``2023``; not before
             ``start_year`` and at most 99 years after it. No other bound.
+        attribute_id: PSD attribute id, or a list of them, e.g. ``28`` (Production),
+            ``[28, 88]`` (Production and Exports), ``176`` (Ending Stocks);
+            ``list_commodity_attributes`` lists them. Omit it (``None``) for every
+            attribute of each answer, 15 a year for wheat in the United States. An empty
+            list is refused.
     """
     validate_commodity_code(commodity_code)
     validate_country_code(country_code)
-    validate_attribute_id(attribute_id)
+    attribute_ids = _attribute_ids(attribute_id)
     validate_market_year(start_year)
     validate_market_year(end_year)
     if start_year < SERIES_START:
@@ -448,12 +479,12 @@ async def get_time_series_async(
             "1960 and reaches the current forecast year, so narrow the range.",
             source=SOURCE,
         )
-    request: dict[str, str | int] = {
+    request: dict[str, Any] = {
         "commodity_code": commodity_code,
         "country_code": country_code,
-        "attribute_id": attribute_id,
         "start_year": start_year,
         "end_year": end_year,
+        "attribute_id": list(attribute_id) if isinstance(attribute_id, Sequence) else attribute_id,
     }
     series: list[CommodityData] = []
     for market_year in range(start_year, end_year + 1):
@@ -463,7 +494,11 @@ async def get_time_series_async(
             )
         except NoDataForYear:
             continue  # PSD's empty 404: no data for this market year, the year is absent
-        series.extend(record for record in records if record.attribute_id == attribute_id)
+        series.extend(
+            record
+            for record in records
+            if attribute_ids is None or record.attribute_id in attribute_ids
+        )
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetCountryCommodityDataByYear",

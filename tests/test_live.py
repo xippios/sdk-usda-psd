@@ -1,9 +1,10 @@
 """Live smoke tests, one per task, skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-``/add-endpoint`` adds them. Twelve in all, fourteen keyed calls: one each, except the
+``/add-endpoint`` adds them. Thirteen in all, fifteen keyed calls: one each, except the
 time series, which spends one per market year (corn, United States, 2021 to 2023,
-three). The data tasks ask for wheat, United States, market year 2023, all checked
-against the packaged lists; the slices for wheat (balance sheet, latest release), corn
+three); a second time series asks for two attributes of one market year. The data
+tasks ask for wheat, United States, market year 2023, all checked against the packaged
+lists; the slices for wheat (balance sheet, latest release), corn
 (time series) and soybeans (top producers, 2023). The slices record what
 they answered as test properties (``--junitxml`` shows them), never a key. The list
 tasks answer from the package without a call, so their test fetches the list through
@@ -89,13 +90,26 @@ async def test_get_balance_sheet_live(record_property: Callable[[str, object], N
 
 
 async def test_get_time_series_live(record_property: Callable[[str, object], None]) -> None:
-    result = await tasks.get_time_series_async(CORN, "US", AttributeId.PRODUCTION, 2021, 2023)
+    result = await tasks.get_time_series_async(
+        CORN, "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION
+    )
     assert [r.market_year for r in result.data] == [2021, 2022, 2023]
     assert {(r.country_code, r.attribute_id) for r in result.data} == {("US", 28)}
     assert result.meta.vintage is not None
     assert VINTAGE.match(result.meta.vintage)
     record_property("series", [(r.market_year, str(r.value), r.unit_id) for r in result.data])
     record_property("vintage", result.meta.vintage)
+
+
+async def test_get_time_series_of_several_attributes_live() -> None:
+    """``attribute_id`` as a list, one market year: one keyed call."""
+    ids = [AttributeId.PRODUCTION, AttributeId.EXPORTS]
+    result = await tasks.get_time_series_async(CORN, "US", 2023, 2023, attribute_id=ids)
+    assert {(r.country_code, r.market_year) for r in result.data} == {("US", 2023)}
+    assert {r.attribute_id for r in result.data} == {28, 88}
+    assert result.meta.request["attribute_id"] == [28, 88]
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
 
 
 async def test_get_top_countries_live(record_property: Callable[[str, object], None]) -> None:
