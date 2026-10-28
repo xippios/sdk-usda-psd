@@ -142,9 +142,11 @@ The slices: task-shaped functions over the operations above, no new endpoint.
 | `PSDData_GetCommodityDataByYear`, one request | `get_top_countries(commodity_code, market_year, attribute_id, n=10, region_code=None, exclude_groupings=False)` | `usda_psd_get_top_countries` | `get_top_countries("2222000", 2023, 28, n=5)`: the five largest soybean producers | alpha |
 | `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code, since=None)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised; MCP returns at most 200 rows, a release adding a market year can exceed that (wheat 2026-10: 146), `get_release_dates(commodity_code, market_year=..., country_code=..., since=...)` returns any part in full | alpha |
 
-0.2.0 covers the same twelve tasks as 0.1.0 and requires xippios-core 0.2.x
-(`~=0.2.0`); 0.1.0 does not work with core 0.2.0. Alpha until 1.0: the public surface
-may change in a minor version (conventions §12); `CHANGELOG.md` lists every change.
+0.3.0 covers the same twelve tasks as 0.2.0, four of them with new or changed parameters
+(`get_time_series`, `get_top_countries`, `get_release_dates`, `get_latest_release`), and
+requires xippios-core 0.3.x (`~=0.3.0`); 0.2.0 does not work with core 0.3.0. Alpha until
+1.0: the public surface may change in a minor version (conventions §12); `CHANGELOG.md`
+lists every change.
 
 Every request counts against api.data.gov's quota of 1,000 requests per hour per key,
 shared by every package using the same `DATA_GOV_API_KEY`; the `list_*` tasks spend none.

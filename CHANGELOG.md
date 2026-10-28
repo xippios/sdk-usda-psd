@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
+This release requires xippios-core 0.3.0 and sdk-template v0.3.0 as its floor
+(`xippios-core~=0.3.0`, the extras likewise); 0.2.0 does not work on core 0.3.0: it is
+bound to core 0.2.x (`~=0.2.0`), and while core is 0.x a minor keeps no compatibility
+with the one before it (conventions §12, ADR-0018).
+
 Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (conventions §15).
 
 ### Changed
@@ -16,8 +23,6 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   1): `meta.retrieved_at` is when the packaged list was fetched (the file's `fetched`, a
   UTC time to the second since the refresh of 2026-10-28), no longer when the task
   answered, and `meta.vintage` is `None`, no longer the fetch date.
-- `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
-  `get_release_dates` without its filters, and the `list_*` tasks without theirs.
 - BREAKING: `_client.policy` gives way to `_client.gateway`, core's
   `xippios.core.data_gov.Gateway`, whose `Gateway.policy` is the one quota policy per
   process for `DATA_GOV_API_KEY`. The gateway's `API_KEY_*` refusals, its 429 and its
@@ -25,25 +30,6 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   retried"; a request into a spent quota waits within the policy's `pause_cap` (30 s by
   default) or is refused with `source` `"api.data.gov"`, not `"usda-psd"`, and a message
   that starts "api.data.gov quota of the key in DATA_GOV_API_KEY spent".
-- An unknown code or attribute id is refused with core's `UnknownCode`, an
-  `InvalidRequestError` as before: its message reads "'0410001' is not a commodity_code
-  in the packaged commodities list (fetched 2026-10-28). Did you mean ...", ends "If
-  upstream added it since, the packaged list needs a refresh (/refresh-reference-data).",
-  its `fetched` is a datetime and its `closest` a tuple.
-- An MCP tool argument the schema refuses is answered
-  `error: InvalidRequestError: <argument>: <message>` (core 0.3.0).
-- `enums.py` is rendered by core's `render_enums` and formatted by ruff;
-  `AttributeId`, `UnitId`, their members and values are unchanged.
-  `scripts/refresh_reference.py` writes the packaged lists with core's
-  `PackagedList.write` and `dump_upstream`, `fetched` as a UTC time to the second.
-- `scripts/check-siblings.sh` is replaced by the template's
-  `.github/scripts/check-siblings.sh`, which `siblings.yml` runs and which finds the
-  siblings under `xippios.usda` itself.
-- From sdk-template v0.2.1 to v0.3.0: `tests/test_family.py`, core's family check,
-  replaces `tests/test_layout.py`, `tests/test_adapters.py` and two structural tests of
-  `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
-  CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
-  imports the family rules from `.claude/family.md`.
 - BREAKING: the nine endpoint wrappers take conventions 1.22 §2's names, module and
   function alike: the upstream operation in snake case without the `PSDData_` prefix
   every operation shares, so `PSDData_GetCommodityDataByYear` is
@@ -66,6 +52,27 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   `attribute_id` as given or leaves it out. Since the parameter takes a list, the HTTP
   route is `POST /usda-psd/get_time_series` with a JSON body, no longer `GET` with query
   parameters (conventions §9). MCP calls name their arguments and are unaffected.
+- `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
+  `get_release_dates` without its filters, and the `list_*` tasks without theirs.
+- An unknown code or attribute id is refused with core's `UnknownCode`, an
+  `InvalidRequestError` as before: its message reads "'0410001' is not a commodity_code
+  in the packaged commodities list (fetched 2026-10-28). Did you mean ...", ends "If
+  upstream added it since, the packaged list needs a refresh (/refresh-reference-data).",
+  its `fetched` is a datetime and its `closest` a tuple.
+- An MCP tool argument the schema refuses is answered
+  `error: InvalidRequestError: <argument>: <message>` (core 0.3.0).
+- `enums.py` is rendered by core's `render_enums` and formatted by ruff;
+  `AttributeId`, `UnitId`, their members and values are unchanged.
+  `scripts/refresh_reference.py` writes the packaged lists with core's
+  `PackagedList.write` and `dump_upstream`, `fetched` as a UTC time to the second.
+- `scripts/check-siblings.sh` is replaced by the template's
+  `.github/scripts/check-siblings.sh`, which `siblings.yml` runs and which finds the
+  siblings under `xippios.usda` itself.
+- From sdk-template v0.2.1 to v0.3.0: `tests/test_family.py`, core's family check,
+  replaces `tests/test_layout.py`, `tests/test_adapters.py` and two structural tests of
+  `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
+  CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
+  imports the family rules from `.claude/family.md`.
 - `get_top_countries` gains `region_code` (rank one PSD region's countries, mapped
   through the packaged countries list, checked before the call against the regions
   the packaged countries carry, `R15` included; an unknown one is `UnknownCode` naming
