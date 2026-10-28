@@ -6,6 +6,51 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (conventions §15).
+
+### Changed
+
+- BREAKING: requires xippios-core 0.3.x (`xippios-core~=0.3.0`), and the `mcp`, `http`
+  and `testing` extras name `xippios-core[...]~=0.3.0` likewise, in place of `~=0.2.0`.
+- BREAKING: the `list_*` tasks' `meta` is built by core's `PackagedList` (ADR-0022, rule
+  1): `meta.retrieved_at` is when the packaged list was fetched (2026-10-23, the files'
+  bare date read as 00:00 UTC), no longer when the task answered, and `meta.vintage` is
+  `None`, no longer the fetch date.
+- `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
+  `get_release_dates` without its filters, and the `list_*` tasks without theirs.
+- BREAKING: `_client.policy` gives way to `_client.gateway`, core's
+  `xippios.core.data_gov.Gateway`, whose `Gateway.policy` is the one quota policy per
+  process for `DATA_GOV_API_KEY`. The gateway's `API_KEY_*` refusals, its 429 and its
+  `NOT_FOUND` keep their error classes; a 429's message no longer says "Nothing was
+  retried"; a request into a spent quota waits within the policy's `pause_cap` (30 s by
+  default) or is refused with `source` `"api.data.gov"`, not `"usda-psd"`, and a message
+  that starts "api.data.gov quota of the key in DATA_GOV_API_KEY spent".
+- An unknown code or attribute id is refused with core's `UnknownCode`, an
+  `InvalidRequestError` as before: its message reads "'0410001' is not a commodity_code
+  in the packaged commodities list (fetched 2026-10-23). Did you mean ...", ends "If
+  upstream added it since, the packaged list needs a refresh (/refresh-reference-data).",
+  its `fetched` is a datetime and its `closest` a tuple.
+- An MCP tool argument the schema refuses is answered
+  `error: InvalidRequestError: <argument>: <message>` (core 0.3.0).
+- `enums.py` is rendered by core's `render_enums` and formatted by ruff;
+  `AttributeId`, `UnitId`, their members and values are unchanged.
+  `scripts/refresh_reference.py` writes the packaged lists with core's
+  `PackagedList.write` and `dump_upstream`, `fetched` as a UTC time to the second.
+- `scripts/check-siblings.sh` is replaced by the template's
+  `.github/scripts/check-siblings.sh`, which `siblings.yml` runs and which finds the
+  siblings under `xippios.usda` itself.
+- From sdk-template v0.2.1 to v0.3.0: `tests/test_family.py`, core's family check,
+  replaces `tests/test_layout.py`, `tests/test_adapters.py` and two structural tests of
+  `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
+  CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
+  imports the family rules from `.claude/family.md`.
+
+### Removed
+
+- `xippios.usda.psd.errors.UnknownCode`, replaced by `xippios.core.UnknownCode`.
+- `params.PackagedList` and `params.packaged_values`: core's
+  `PackagedList.load(params.PACKAGE, name)` reads a packaged list.
+
 ## [0.2.0] - 2026-10-26
 
 ### Changed
