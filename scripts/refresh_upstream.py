@@ -30,15 +30,16 @@ those the kept paths reference, written with ``json.dumps(indent=2, ensure_ascii
 
 Everything is fetched before anything is written, one request at a time, each URL retried
 at most once. Every page and document the script reads is checked for a copyright line, a
-licence or terms of use, and each document's ``info`` for a ``license``,
-``termsOfService`` or ``contact``: the run stops, before writing, on one that
-``ATTRIBUTION`` does not record. Files under ``openapi/`` that the run does not produce
-are removed; ``FETCHED.md`` is rewritten; nothing else under ``docs/upstream/`` is
-touched. ``Fetched`` is the UTC time the run started, with an explicit ``Z``, so two runs
-against the same upstream write the same files under ``openapi/`` and a ``FETCHED.md``
-that differs in its ``Fetched`` column only: the refused page's body carries a
-per-request reference, so its row records no size, sha256 or validators. No key is
-needed or read. Run from the repository root::
+licence or terms of use, and the run stops, before writing, on one that ``ATTRIBUTION``
+does not record; each document's ``info`` is checked for a ``license``,
+``termsOfService`` or ``contact``, and the run stops on any of them, whatever
+``ATTRIBUTION`` holds. Files under ``openapi/`` that the run does not produce are
+removed; ``FETCHED.md`` is rewritten; nothing else under ``docs/upstream/`` is touched.
+``Fetched`` is the UTC time the run started, with an explicit ``Z``, so two runs against
+the same upstream write the same files under ``openapi/`` and a ``FETCHED.md`` that
+differs in its ``Fetched`` column only: the refused page's body carries a per-request
+reference, so its row records no size, sha256 or validators. No key is needed or read.
+Run from the repository root::
 
     uv run scripts/refresh_upstream.py
 """
@@ -93,7 +94,11 @@ Empty: no page or document this script reads states one. ``FETCHED.md`` quotes t
 Attribution, and every run stops when a page or document states one that is not here.
 """
 INFO_TERMS = ("license", "termsOfService", "contact")
-"""The fields of a Swagger document's ``info`` that would state terms; neither names one."""
+"""The ``info`` fields that would state a licence, terms, or a contact to ask about them.
+
+Neither Swagger document names one; the run stops on any of them, whatever ``ATTRIBUTION``
+holds.
+"""
 
 USER_AGENT = "xippios-usda-psd refresh_upstream (+https://github.com/xippios)"
 TIMEOUT = 60.0
@@ -133,7 +138,10 @@ class Row:
     path: str | None = None
     content: bytes | None = None
     stable: bool = True
-    """False for a body that differs on every request: no size or sha256 is recorded."""
+    """False for a body that differs on every request: no size, sha256 or validators.
+
+    Its row records neither the body's size and sha256 nor its ETag and Last-Modified.
+    """
 
 
 @dataclass(frozen=True)
@@ -212,7 +220,9 @@ def check_attribution(response: Response) -> None:
     """Stop when ``response`` states a copyright, licence or terms ``ATTRIBUTION`` lacks.
 
     The check reads the whole body with its entities decoded, markup and scripts included,
-    since the shells' visible text is drawn by scripts this script does not read.
+    since the shells' visible text is drawn by scripts this script does not read. Where a
+    matched word states nothing (a ``license`` class in markup, a word in a script), the
+    check is narrowed here and ``FETCHED.md`` says so.
     """
     body = html.unescape(response.body.decode("utf-8", "replace"))
     for statement in ATTRIBUTION:
@@ -223,8 +233,10 @@ def check_attribution(response: Response) -> None:
         raise SystemExit(
             f"GET {response.url}: the page states {match.group(0)!r} ({around!r}), a "
             "copyright, licence or terms of use that ATTRIBUTION does not record.\nRead it by "
-            "hand, record it in ATTRIBUTION, say so in render_fetched's Attribution and update "
-            "scripts/refresh_upstream.py. Nothing was written."
+            "hand. Where it states one, record it in ATTRIBUTION and say so in render_fetched's "
+            "Attribution; where the word states nothing (markup, a script), narrow the check "
+            "in scripts/refresh_upstream.py and say so in FETCHED.md through render_fetched. "
+            "Nothing was written."
         )
 
 
