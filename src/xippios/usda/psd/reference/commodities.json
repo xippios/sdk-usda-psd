@@ -1,7 +1,7 @@
 {
   "param": "commodities",
   "endpoint": "PSDData_GetCommodities",
-  "fetched": "2026-10-23",
+  "fetched": "2026-10-28T21:42:03Z",
   "records": [
     {
       "commodityCode": "0577400",
