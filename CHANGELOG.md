@@ -69,7 +69,8 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
 - `get_top_countries` gains `region_code` (rank one PSD region's countries, mapped
   through the packaged countries list, checked before the call against the regions
   the packaged countries carry, `R15` included; an unknown one is `UnknownCode` naming
-  the closest) and `exclude_groupings` (`True` leaves out `tasks.GROUPINGS`, PSD's eight
+  the closest, and `R00`, World, a hint that the world total is `get_world_data`'s) and
+  `exclude_groupings` (`True` leaves out `tasks.GROUPINGS`, PSD's eight
   aggregates: `E4`, `E2`, `E3`, `C1`, `T3`, `X8`, `Z7`, `ZZ`); by default nothing is
   excluded, as before. `meta.vintage` is the latest release among the records ranked
   after both apply, and `meta.request` now carries `exclude_groupings`.
@@ -77,9 +78,11 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   `"YYYY-MM"` as `meta.vintage` writes it, checked before the call: `get_release_dates`
   keeps the records of releases strictly after it, `get_latest_release` answers an empty
   list when the newest release is not later, `meta.vintage` still naming that release.
-- Over MCP, `get_data` and `get_release_dates` keep the 200 rows or 64 KB, and a cut
-  answer's note names their filters: "filter by country_code to see the rest", "filter
-  by market_year, country_code or since to see the rest" (conventions §8, ADR-0016).
+- Over MCP, `get_data`, `get_release_dates` and `get_time_series` keep the 200 rows or
+  64 KB, and a cut answer's note names their filters: "filter by country_code to see the
+  rest", "filter by market_year, country_code or since to see the rest", "filter by
+  attribute_id or narrow start_year and end_year to see the rest" (conventions §8,
+  ADR-0016).
 - `tests/test_slices.py` pins the key `get_balance_sheet` gives each of the 85 packaged
   attribute ids, so a reference refresh that renames an attribute or adds an id under an
   existing name fails a test and is recorded here as a breaking change (conventions §12).

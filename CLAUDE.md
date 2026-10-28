@@ -132,7 +132,9 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   8,040), no upper bound on `end_year` itself. A future year is expected to answer 404
   like 1900 (not recorded) and costs its request. A year that raises `NoDataForYear`,
   or has no record for the attributes, is absent (no gap filling); an empty series is a
-  valid result. Every other error, the gateway's `NOT_FOUND` included, is raised.
+  valid result. Every other error, the gateway's `NOT_FOUND` included, is raised. Over
+  MCP a cut series' note names `attribute_id`, `start_year` and `end_year`
+  (`tasks.MCP_CAPS`).
 - `get_top_countries(commodity_code, market_year, attribute_id, n=10, region_code=None,
   exclude_groupings=False)`: one `country/all` request; the attribute's records sorted
   by `value`, largest first, stable, first `n` kept; no unit check, each record carries
@@ -143,7 +145,9 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   Other), named by hand, never inferred from names. `region_code` keeps the records
   whose country the packaged countries list puts in that region (the data records
   carry none), checked before the call against the `regionCode` values the packaged
-  countries carry, `R15` included (`params.validate_region_code`). `meta.vintage` is
+  countries carry, `R15` included (`params.validate_region_code`); `R00` (World), in the
+  regions list but carried by no country, is refused with a hint that the world total
+  is `get_world_data`'s. `meta.vintage` is
   the latest release among every record ranked, after both apply, not only the `n`
   returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`;
   South America, `R04`, `"2026-09"`).
@@ -192,9 +196,10 @@ next refresh writes the full time), `meta.vintage` `None` (upstream gives the li
 version). Their filters select records client-side, codes and names unchanged, upstream
 order kept. Over MCP `list_countries` has a
 cap of its own, 300 rows (`tasks.MCP_CAPS`, ADR-0016), so its 251 countries arrive whole;
-`get_data` and `get_release_dates` keep the family's limits, 200 rows or 64 KB, with a
-note naming their filters (`country_code`; `market_year`, `country_code`, `since`);
-every other tool keeps the family default with core's note. The live tests compare each
+`get_data`, `get_release_dates` and `get_time_series` keep the family's limits, 200 rows
+or 64 KB, with a note naming their filters (`country_code`; `market_year`,
+`country_code`, `since`; `attribute_id`, `start_year`, `end_year`); every other tool
+keeps the family default with core's note. The live tests compare each
 packaged list with the live one, the freshness check.
 
 `enums.AttributeId` and `enums.UnitId` are `IntEnum`s, as conventions §3 has it for integer
