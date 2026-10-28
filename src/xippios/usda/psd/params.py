@@ -13,6 +13,7 @@ a validation failure names a code the package lacks.
 """
 
 import functools
+import re
 from datetime import datetime
 
 from xippios.core import InvalidRequestError, PackagedList, UnknownCode, closest
@@ -29,6 +30,7 @@ __all__ = [
     "validate_country_code",
     "validate_market_year",
     "validate_region_code",
+    "validate_since",
 ]
 
 PACKAGE = "xippios.usda.psd"
@@ -263,3 +265,34 @@ def validate_region_code(region_code: str) -> str:
         "and the package refuses it. list_regions and list_countries name the regions.",
         source=SOURCE,
     )
+
+
+RELEASE_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
+"""A PSD release month as ``meta.vintage`` writes it: ``"YYYY-MM"``, the month zero-padded."""
+
+
+def validate_since(since: str) -> tuple[int, int]:
+    """Check a release month ``"YYYY-MM"`` and return it as ``(year, month)``.
+
+    The form ``meta.vintage`` of the data tasks and of ``get_latest_release`` takes, so a
+    stored vintage passes as it is. Nothing else is read as a month: no day, no other
+    separator, no unpadded month.
+
+    Args:
+        since: A PSD release month, e.g. ``"2026-09"``, ``"2024-02"``.
+
+    Returns:
+        ``(year, month)``, e.g. ``(2026, 9)``, comparable with a release record's
+        ``(release_year, release_month)``.
+
+    Raises:
+        InvalidRequestError: When ``since`` is not four digits, a hyphen and a month from
+            ``01`` to ``12``.
+    """
+    if not isinstance(since, str) or not RELEASE_MONTH.fullmatch(since):
+        raise InvalidRequestError(
+            f"since must be a PSD release month 'YYYY-MM' such as '2026-09', the form "
+            f"meta.vintage takes, got {since!r}.",
+            source=SOURCE,
+        )
+    return int(since[:4]), int(since[5:])

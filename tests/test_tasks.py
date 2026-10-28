@@ -97,6 +97,58 @@ def test_get_release_dates_filters_after_the_one_call(
     assert route.call_count == 4
 
 
+def test_get_release_dates_since_keeps_later_releases_only(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Strictly after ``since``: the cut list's two newest releases are 2022-09 (Syria's
+    revision of 1960 to 1977) and 2024-02 (Pakistan's)."""
+    route = replay_fixture(RELEASES, "wheat")
+    every = tasks.get_release_dates(WHEAT).data
+    later = tasks.get_release_dates(WHEAT, since="2022-08")
+    assert later.data == [r for r in every if (r.release_year, r.release_month) > (2022, 8)]
+    assert {(r.country_code, r.release_year, r.release_month) for r in later.data} == {
+        ("SY", 2022, 9),
+        ("PK", 2024, 2),
+    }
+    strictly = tasks.get_release_dates(WHEAT, since="2022-09")
+    assert {(r.country_code, r.release_year, r.release_month) for r in strictly.data} == {
+        ("PK", 2024, 2)
+    }, "the release since names is not kept"
+    assert strictly.meta.request == {"commodity_code": WHEAT, "since": "2022-09"}
+    one_year = tasks.get_release_dates(WHEAT, market_year=1975, since="2022-08")
+    assert [(r.country_code, r.market_year) for r in one_year.data] == [("PK", 1975), ("SY", 1975)]
+    assert one_year.meta.request == {
+        "commodity_code": WHEAT,
+        "market_year": 1975,
+        "since": "2022-08",
+    }
+    assert tasks.get_release_dates(WHEAT, since="2024-02").data == []
+    assert route.call_count == 5
+
+
+@pytest.mark.anyio
+async def test_release_dates_since_through_the_tool(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    replay_fixture(RELEASES, "wheat")
+    payload = await mcp_call(
+        server,
+        "usda_psd_get_release_dates",
+        {"commodity_code": WHEAT, "country_code": "PK", "since": "2022-09"},
+    )
+    assert {(row["release_year"], row["release_month"]) for row in payload["data"]} == {(2024, 2)}
+    assert "note" not in payload
+    assert payload["meta"]["request"] == {
+        "commodity_code": WHEAT,
+        "country_code": "PK",
+        "since": "2022-09",
+    }
+    with pytest.raises(AssertionError, match="InvalidRequestError: since must be a PSD release"):
+        await mcp_call(
+            server, "usda_psd_get_release_dates", {"commodity_code": WHEAT, "since": "2026-13"}
+        )
+
+
 @pytest.mark.anyio
 async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
     replay_fixture: Callable[[str, str], respx.Route],
@@ -120,6 +172,11 @@ def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -
         tasks.get_release_dates(WHEAT, country_code="00")
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_release_dates(WHEAT, market_year=23)
+    for since in ("2026-13", "2026-00", "2026-9", "2026/09", "26-09", "2026-09-15", "", " 2026-09"):
+        with pytest.raises(InvalidRequestError, match="since must be a PSD release month"):
+            tasks.get_release_dates(WHEAT, since=since)
+    with pytest.raises(InvalidRequestError, match="got 202609"):
+        tasks.get_release_dates(WHEAT, since=202609)  # type: ignore[arg-type]
     assert not respx_mock.calls
 
 

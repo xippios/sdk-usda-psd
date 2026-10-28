@@ -72,6 +72,7 @@ from xippios.usda.psd.params import (
     validate_country_code,
     validate_market_year,
     validate_region_code,
+    validate_since,
 )
 
 __all__ = [
@@ -233,16 +234,25 @@ async def get_world_data_async(
     return Result(data=records, meta=meta)
 
 
+def _release(record: DataReleaseInfo) -> tuple[int, int]:
+    """A release record's ``(release_year, release_month)``, comparable with ``since``."""
+    return record.release_year, record.release_month
+
+
 async def get_release_dates_async(
-    commodity_code: str, market_year: int | None = None, country_code: str | None = None
+    commodity_code: str,
+    market_year: int | None = None,
+    country_code: str | None = None,
+    since: str | None = None,
 ) -> Result[list[DataReleaseInfo]]:
     """When PSD last revised each country and market year of a commodity: poll for releases.
 
     One record per country and market year: ``release_year`` and ``release_month`` name
     the PSD release, a month without a day. Compare them with a stored ``meta.vintage``
-    of ``get_data`` to fetch only what changed. Upstream answers every country and every
-    market year since 1960 at once (7,754 records for wheat); ``market_year`` and
-    ``country_code`` keep only the matching records, after the one call.
+    of ``get_data``, or pass that vintage as ``since``, to fetch only what changed.
+    Upstream answers every country and every market year since 1960 at once (7,754
+    records for wheat), ordered by market year; ``market_year``, ``country_code`` and
+    ``since`` keep only the matching records, after the one call, in upstream's order.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -250,18 +260,24 @@ async def get_release_dates_async(
         market_year: Keep only this PSD market year, e.g. ``2023``; ``None`` keeps all.
         country_code: Keep only this PSD country code (not ISO), e.g. ``"US"``, ``"BR"``;
             ``None`` keeps all.
+        since: Keep only the records revised in a release later than this month,
+            ``"YYYY-MM"``, e.g. ``"2026-09"``; the form ``meta.vintage`` takes, so a
+            stored vintage passes as it is, and that release itself is not kept (strictly
+            after). ``None`` keeps all.
     """
     validate_commodity_code(commodity_code)
     if market_year is not None:
         validate_market_year(market_year)
     if country_code is not None:
         validate_country_code(country_code)
+    after = None if since is None else validate_since(since)
     releases = await api.get_data_release_info(commodity_code)
     selected = [
         release
         for release in releases
         if (market_year is None or release.market_year == market_year)
         and (country_code is None or release.country_code == country_code)
+        and (after is None or _release(release) > after)
     ]
     meta = ResultMeta(
         source=SOURCE,
@@ -270,6 +286,7 @@ async def get_release_dates_async(
             "commodity_code": commodity_code,
             "market_year": market_year,
             "country_code": country_code,
+            "since": since,
         },
     )
     return Result(data=selected, meta=meta)
@@ -620,44 +637,56 @@ def _latest(releases: list[DataReleaseInfo]) -> tuple[list[DataReleaseInfo], str
 
     Records keep upstream's order; an empty list gives ``([], None)``.
     """
-    newest = max(((r.release_year, r.release_month) for r in releases), default=None)
+    newest = max((_release(r) for r in releases), default=None)
     if newest is None:
         return [], None
     year, month = newest
-    latest = [r for r in releases if (r.release_year, r.release_month) == newest]
+    latest = [r for r in releases if _release(r) == newest]
     return latest, f"{year:04d}-{month:02d}"
 
 
-async def get_latest_release_async(commodity_code: str) -> Result[list[DataReleaseInfo]]:
+async def get_latest_release_async(
+    commodity_code: str, since: str | None = None
+) -> Result[list[DataReleaseInfo]]:
     """Which countries and market years PSD's newest release of a commodity revised.
 
     One request to ``PSDData_GetDataReleaseInfo``, which lists the last release of every
     country and market year (7,754 records for wheat); the records of the newest
-    ``release_year`` and ``release_month`` are kept, unchanged and in upstream order.
-    For wheat as recorded that is release 2026-10, 146 records: 123 countries for
-    market year 2026 and a few revisions of earlier years. ``meta.vintage`` names the
-    release (``"2026-10"``) in the form ``meta.vintage`` of ``get_data`` takes, so a
-    stored vintage older than it means the listed countries and market years have
-    changed since. A commodity without any release gives an empty list and
-    ``meta.vintage`` ``None``; ``meta.published_at`` stays empty, since PSD gives no
-    day. A release that adds a market year and revises earlier ones lists many records:
-    the recorded wheat list has 146 records of 2026-10 and 130 more still carrying
-    2026-09, so the September answer held between 130 and 276 rows.
-    ``get_release_dates(commodity_code, market_year=..., country_code=...)`` returns any
-    part of the list.
+    ``release_year`` and ``release_month`` are kept, unchanged and in upstream's order.
+    For wheat as recorded on 2026-10-23 that was release 2026-10, 146 records: 123
+    countries for market year 2026 and a few revisions of earlier years.
+    ``meta.vintage`` names the release (``"2026-10"``) in the form ``meta.vintage`` of
+    ``get_data`` takes, so a stored vintage older than it means the listed countries and
+    market years have changed since. To poll, pass your stored vintage as ``since``: the
+    answer is the newest release's records when that release is later than ``since``,
+    and an empty list when it is not, with ``meta.vintage`` still naming the newest
+    release, so an empty list says nothing newer exists. A commodity without any release
+    gives an empty list and ``meta.vintage`` ``None``; ``meta.published_at`` stays empty,
+    since PSD gives no day. A release that adds a market year and revises earlier ones
+    lists many records: the wheat list recorded on 2026-10-23 had 146 records of 2026-10
+    and 130 more still carrying 2026-09, so the September answer held between 130 and 276
+    rows. ``get_release_dates(commodity_code, market_year=..., country_code=...,
+    since=...)`` returns any part of the list.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
             ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
+        since: A release month ``"YYYY-MM"``, e.g. ``"2026-09"``, typically the
+            ``meta.vintage`` you stored last time: the newest release's records come back
+            only when that release is later (strictly after), else an empty list.
+            ``None`` always returns the newest release's records.
     """
     validate_commodity_code(commodity_code)
+    after = None if since is None else validate_since(since)
     releases = await api.get_data_release_info(commodity_code)
     latest, vintage = _latest(releases)
+    if after is not None and latest and _release(latest[0]) <= after:
+        latest = []  # nothing newer than since; meta.vintage still names the newest release
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
         vintage=vintage,
-        request={"commodity_code": commodity_code},
+        request={"commodity_code": commodity_code, "since": since},
     )
     return Result(data=latest, meta=meta)
 

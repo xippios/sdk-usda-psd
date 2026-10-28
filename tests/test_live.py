@@ -1,9 +1,10 @@
 """Live smoke tests, one per task, skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-``/add-endpoint`` adds them. Fourteen in all, sixteen keyed calls: one each, except the
+``/add-endpoint`` adds them. Sixteen in all, eighteen keyed calls: one each, except the
 time series, which spends one per market year (corn, United States, 2021 to 2023,
 three); a second time series asks for two attributes of one market year, a second
-ranking for one region without PSD's groupings. The data tasks ask for wheat, United
+ranking for one region without PSD's groupings, and the release list and the latest
+release are asked once more each with ``since``. The data tasks ask for wheat, United
 States, market year 2023, all checked against the packaged lists; the slices for wheat
 (balance sheet, latest release), corn (time series) and soybeans (top producers,
 2023). The slices record what they answered as test properties (``--junitxml`` shows
@@ -149,6 +150,25 @@ async def test_get_latest_release_live(record_property: Callable[[str, object], 
     assert result.meta.published_at is None
     record_property("vintage", result.meta.vintage)
     record_property("records", len(result.data))
+
+
+async def test_get_release_dates_since_live() -> None:
+    """``since``: one keyed call, the whole wheat list filtered after it."""
+    result = await tasks.get_release_dates_async(WHEAT, since="2020-01")
+    assert result.data
+    assert all((r.release_year, r.release_month) > (2020, 1) for r in result.data)
+    assert result.meta.request == {"commodity_code": WHEAT, "since": "2020-01"}
+
+
+async def test_get_latest_release_since_live() -> None:
+    """``since`` far back: the newest release comes back whole; one keyed call."""
+    result = await tasks.get_latest_release_async(WHEAT, since="2000-01")
+    releases = {(r.release_year, r.release_month) for r in result.data}
+    assert len(releases) == 1
+    ((year, month),) = releases
+    assert (year, month) > (2000, 1)
+    assert result.meta.vintage == f"{year:04d}-{month:02d}"
+    assert result.meta.request == {"commodity_code": WHEAT, "since": "2000-01"}
 
 
 LISTS = [

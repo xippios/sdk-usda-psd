@@ -809,6 +809,27 @@ def test_get_latest_release_is_the_newest_month_of_the_list(
     assert result.meta.published_at is None
 
 
+def test_latest_release_since_a_stored_vintage(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Polling: a vintage older than the newest release returns that release's records, the
+    stored vintage itself an empty list with ``meta.vintage`` still naming the newest
+    release (2024-02 in the cut list)."""
+    route = replay_fixture(RELEASES, "wheat")
+    first = tasks.get_latest_release(WHEAT)
+    newer = tasks.get_latest_release(WHEAT, since="2024-01")
+    assert newer.data == first.data
+    assert newer.meta.vintage == "2024-02"
+    assert newer.meta.request == {"commodity_code": WHEAT, "since": "2024-01"}
+    assert first.meta.vintage is not None
+    again = tasks.get_latest_release(WHEAT, since=first.meta.vintage)
+    assert again.data == [], "nothing newer than the stored vintage"
+    assert again.meta.vintage == "2024-02"
+    later = tasks.get_latest_release(WHEAT, since="2030-01")
+    assert (later.data, later.meta.vintage) == ([], "2024-02")
+    assert route.call_count == 4
+
+
 def test_latest_of_no_releases_is_empty() -> None:
     """Pure: a commodity without releases gives no records and no vintage."""
     assert tasks._latest([]) == ([], None)
@@ -832,6 +853,12 @@ async def test_latest_release_tool_end_to_end(
     assert "note" not in payload
     assert {(row["release_year"], row["release_month"]) for row in payload["data"]} == {(2024, 2)}
     assert payload["meta"]["vintage"] == "2024-02"
+    polled = await mcp_call(
+        server, "usda_psd_get_latest_release", {"commodity_code": WHEAT, "since": "2024-02"}
+    )
+    assert polled["data"] == []
+    assert polled["meta"]["vintage"] == "2024-02"
+    assert polled["meta"]["request"] == {"commodity_code": WHEAT, "since": "2024-02"}
 
 
 # validation, before any request
@@ -889,4 +916,6 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     with pytest.raises(UnknownCode) as by_name:
         tasks.get_latest_release("wheat")
     assert ("0410000", "Wheat") in by_name.value.closest
+    with pytest.raises(InvalidRequestError, match="since must be a PSD release month"):
+        tasks.get_latest_release(WHEAT, since="2026-10-01")
     assert not respx_mock.calls

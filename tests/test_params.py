@@ -28,6 +28,7 @@ from xippios.usda.psd.params import (
     validate_country_code,
     validate_market_year,
     validate_region_code,
+    validate_since,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -318,3 +319,18 @@ def test_a_region_the_regions_list_lacks_is_named_by_its_countries() -> None:
     assert ("R15", "Africa, NEC; Fernando Po; French Equatorial Africa; Other") in (
         fifteen.value.closest
     )
+
+
+@pytest.mark.parametrize(
+    ("since", "month"), [("2026-09", (2026, 9)), ("2024-12", (2024, 12)), ("1960-01", (1960, 1))]
+)
+def test_a_release_month_reads_as_year_and_month(since: str, month: tuple[int, int]) -> None:
+    assert validate_since(since) == month
+
+
+@pytest.mark.parametrize(
+    "since", ["2026-13", "2026-00", "2026-9", "2026-09-01", "\uff12\uff10\uff12\uff16-09", ""]
+)
+def test_other_release_months_are_refused(since: str) -> None:
+    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'"):
+        validate_since(since)
