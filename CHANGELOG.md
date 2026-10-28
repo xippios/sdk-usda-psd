@@ -44,6 +44,19 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
   CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
   imports the family rules from `.claude/family.md`.
+- BREAKING: the nine endpoint wrappers take conventions 1.22 §2's names, module and
+  function alike: the upstream operation in snake case without the `PSDData_` prefix
+  every operation shares, so `PSDData_GetCommodityDataByYear` is
+  `get_commodity_data_by_year` in `api/get_commodity_data_by_year.py`, and likewise
+  `get_commodities`, `get_commodity_attributes`, `get_countries`,
+  `get_country_commodity_data_by_year`, `get_data_release_info`, `get_regions`,
+  `get_units_of_measure` and `get_world_commodity_data_by_year`. The old names are no
+  longer importable from `xippios.usda.psd.api`. The fixture directories follow
+  (`tests/fixtures/get_commodities/`, conventions §10), except the three fixtures over
+  the 256 KiB cap, which stay under their old directories until they are re-recorded,
+  cut, under the new names. `meta.endpoint` and the packaged lists' `endpoint` keep the
+  verbatim operation id (`"PSDData_GetCommodityDataByYear"`), and the tasks, MCP tools
+  and HTTP routes are unchanged.
 
 ### Removed
 

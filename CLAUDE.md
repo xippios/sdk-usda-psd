@@ -51,7 +51,7 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
 - Quota: every keyed answer carries `x-ratelimit-limit: 1000` and
   `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. Spent on purpose on
   2026-10-23 (987 calls at the client's pace; its own gate then refused to send) and
-  recorded from a fresh process (`PSDData_GetCommodities/over_rate_limit.json`): HTTP 429,
+  recorded from a fresh process (`get_commodities/over_rate_limit.json`): HTTP 429,
   `{"error": {"code": "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit.
   Try again later or contact us for assistance: https://api.fas.usda.gov:443"}}`,
   `Retry-After: 3151`, `x-ratelimit-limit: 1000`, `x-ratelimit-remaining: 0`. The client
@@ -145,7 +145,9 @@ regenerates it from the packaged files without a request. The two id lists,
 `unitsOfMeasure` and `commodityAttributes`, are the script's `ID_LISTS`; the three
 tables, `commodities`, `countries` and `regions`, are its `TABLES`, packaged as JSON
 records under upstream's field names like an id list and rendered to no enum; `LISTS`,
-the template's value lists, stays empty. Every packaged
+the template's value lists, stays empty. Each entry names its upstream operation
+verbatim beside its wrapper (`"PSDData_GetCommodities"`, `api.get_commodities`), and
+the file's `endpoint` is that operation, never the wrapper's name. Every packaged
 list, of either mapping, is in `params.PACKAGED_LISTS`, which the script checks before a
 refresh. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
@@ -181,7 +183,8 @@ src/xippios/usda/psd/
   _client.py       the configured client (base URL, key, rate limit, classify), on core's
                    api.data.gov Gateway (its key, its answers, its quota)
   models.py        pydantic models mirroring upstream payloads (UpstreamModel)
-  api/             endpoint wrappers, one module per upstream operation
+  api/             endpoint wrappers, one module per upstream operation, named after it
+                   in snake case without PSDData_ (conventions §2): get_commodities.py
   tasks.py         task functions; __all__ is what the adapters register, but BULK_TASKS,
                    the Python-only ones (none); MCP_CAPS any per-tool result caps
   mcp.py           xippios-usda-psd-mcp entry point
@@ -197,7 +200,9 @@ scripts/
                          --render-only renders it without a call
 tests/
   conftest.py      enables xippios.core.testing.plugin, which keeps the run offline
-  fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
+  fixtures/        recorded responses, <wrapper>/<case>.json, never hand-written; the
+                   three over the 256 KiB cap stay under their PSDData_ directories
+                   until re-recorded, cut (ADR-0019)
   test_family.py   core's family check, one line: namespace levels, py.typed, __version__,
                    the adapters serving exactly the tasks, task shapes and docstrings, the
                    README status table, the template tag, the core bound

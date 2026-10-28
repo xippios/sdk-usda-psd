@@ -30,7 +30,7 @@ those that are new: the signal to run `/refresh-reference-data`.
 | `commodityAttributes.json` | `GET https://api.fas.usda.gov/api/psd/commodityAttributes` (`PSDData_GetCommodityAttributes`) | 2026-10-23 | 85 |
 
 The 2026-10-23 files were written by `scripts/refresh_reference.py` from the answers
-recorded the same morning in `tests/fixtures/<operation>/all.json` (07:56 UTC), served to
+recorded the same morning, now in `tests/fixtures/<wrapper>/all.json` (07:56 UTC), served to
 the script's wrappers through `respx` so that the refresh spent no second round of keyed
 calls; the records are byte-for-byte the recorded ones.
 Their `fetched` is the bare date the script then wrote, which `PackagedList.load` reads
