@@ -60,6 +60,19 @@ def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.R
     assert result.meta.published_at is None
 
 
+def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> None:
+    world = replay_fixture(WORLD, "wheat_world_2023")
+    result = tasks.get_world_data(WHEAT, 2023)
+    assert world.call_count == 1
+    assert result.meta.endpoint == "PSDData_GetWorldCommodityDataByYear"
+    assert result.meta.request == {"commodity_code": WHEAT, "market_year": 2023}
+    assert len(result.data) == 15
+    assert {r.country_code for r in result.data} == {"00"}
+    assert {(r.calendar_year, r.month) for r in result.data} == {(2026, 10)}
+    assert result.meta.vintage == "2026-10"
+    assert result.meta.published_at is None
+
+
 def test_vintage_is_none_for_an_empty_answer() -> None:
     assert tasks._vintage([]) is None
 
