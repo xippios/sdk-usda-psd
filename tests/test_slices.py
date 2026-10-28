@@ -62,10 +62,20 @@ WHEAT_US_2023_KEYS = [
 """The attribute names of ``wheat_us_2023``, in the order upstream sent the records."""
 
 
-def _recorded[T](endpoint: str, case: str, kind: type[list[T]]) -> list[T]:
-    """The recorded answer parsed as the wrapper parses it, without a request."""
-    body = json.loads(load_fixture(fixture_path(FIXTURES, endpoint, case)).response.body)
-    return parse(kind, body, source="usda-psd", endpoint=endpoint)
+OPERATIONS = {
+    DATA: "PSDData_GetCountryCommodityDataByYear",
+    ALL_OVER_CAP: "PSDData_GetCommodityDataByYear",
+    RELEASES_OVER_CAP: "PSDData_GetDataReleaseInfo",
+}
+"""The upstream operation behind each fixture directory ``_recorded`` reads, verbatim, as
+the wrapper passes it to ``parse`` and as ``meta.endpoint`` carries it."""
+
+
+def _recorded[T](directory: str, case: str, kind: type[list[T]]) -> list[T]:
+    """The recorded answer parsed as the wrapper parses it, without a request: under the
+    verbatim operation id, so a parse failure names upstream's operation."""
+    body = json.loads(load_fixture(fixture_path(FIXTURES, directory, case)).response.body)
+    return parse(kind, body, source="usda-psd", endpoint=OPERATIONS[directory])
 
 
 def _data(market_year: int, attribute_id: int, *, country_code: str = "US") -> CommodityData:

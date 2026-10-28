@@ -83,7 +83,7 @@ def _release_vintage(releases: list[DataReleaseInfo], country_code: str | None) 
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "case", "country_code", "vintage"),
+    ("wrapper", "case", "country_code", "vintage"),
     [
         (DATA, "wheat_us_2023", "US", "2026-07"),
         (ALL_OVER_CAP, "wheat_all_2023", None, "2026-10"),
@@ -92,7 +92,7 @@ def _release_vintage(releases: list[DataReleaseInfo], country_code: str | None) 
 )
 def test_vintage_equals_the_release_list(
     replay_fixture: Callable[[str, str], respx.Route],
-    endpoint: str,
+    wrapper: str,
     case: str,
     country_code: str | None,
     vintage: str,
@@ -100,9 +100,9 @@ def test_vintage_equals_the_release_list(
     """Established by fixtures: the records' latest release is the release list's record
     for the same commodity, market year and country (the latest across countries for
     every country and the world), so ``vintage`` needs no second call."""
-    replay_fixture(endpoint, case)
+    replay_fixture(wrapper, case)
     replay_fixture(RELEASES_OVER_CAP, "wheat")
-    if endpoint == WORLD:
+    if wrapper == WORLD:
         result = tasks.get_world_data(WHEAT, 2023)
     else:
         result = tasks.get_data(WHEAT, 2023, country_code)

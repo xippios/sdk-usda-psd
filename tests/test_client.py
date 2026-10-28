@@ -156,7 +156,7 @@ async def test_a_year_without_data_answers_404_with_an_empty_body(
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "case"),
+    ("wrapper", "case"),
     [
         ("get_country_commodity_data_by_year", "unknown_year"),
         ("get_commodity_data_by_year", "year_1900"),
@@ -164,9 +164,9 @@ async def test_a_year_without_data_answers_404_with_an_empty_body(
     ],
 )
 def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
-    endpoint: str, case: str
+    wrapper: str, case: str
 ) -> None:
-    response = response_from_fixture(load_fixture(FIXTURES / endpoint / f"{case}.json"))
+    response = response_from_fixture(load_fixture(FIXTURES / wrapper / f"{case}.json"))
     assert (response.status_code, response.content) == (404, b"")
     assert response.headers["content-type"].startswith("text/plain")
     error = classify(response)
