@@ -1,8 +1,6 @@
-"""Typed client, MCP tools and HTTP routes for USDA FAS PSD Online.
+"""Public API: ``__version__`` and the task functions re-exported here (conventions §2).
 
-Distribution ``xippios-usda-psd``. Public API: ``__version__`` and the task
-functions re-exported here. Endpoint wrappers under ``api/`` and the configured client
-in ``_client`` are internal.
+Upstream: USDA FAS PSD Online.
 """
 
 from xippios.usda.psd._version import __version__
