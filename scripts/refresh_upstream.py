@@ -20,25 +20,32 @@ ESR, GATS and PSD; this package wraps PSD only. It writes:
 
 - ``openapi/portal-document.json``: the PSD part of the portal's document;
 - ``openapi/backend-docs-v1.json``: the PSD part of the API's own document;
-- ``FETCHED.md``: regenerated entirely, one row per file and per page recorded without
-  a file (client-rendered shells and a page the CDN refuses to headless clients).
+- ``FETCHED.md``: regenerated entirely, its Attribution and one row per file and per
+  page recorded without a file (client-rendered shells and a page the CDN refuses to
+  headless clients).
 
 The PSD part of a document is every top-level field verbatim and in upstream order, with
 ``paths`` reduced to the keys starting with ``/api/psd/`` and ``definitions`` reduced to
 those the kept paths reference, written with ``json.dumps(indent=2, ensure_ascii=False)``.
 
 Everything is fetched before anything is written, one request at a time, each URL retried
-at most once. Files under ``openapi/`` that the run does not produce are removed;
-``FETCHED.md`` is rewritten; nothing else under ``docs/upstream/`` is touched. The same
-upstream on the same UTC day gives the same bytes on disk, ``FETCHED.md`` included: the
-refused page's body carries a per-request reference, so its row records neither size nor
-sha256. No key is needed or read. Run from the repository root::
+at most once. Every page and document the script reads is checked for a copyright line, a
+licence or terms of use, and each document's ``info`` for a ``license``,
+``termsOfService`` or ``contact``: the run stops, before writing, on one that
+``ATTRIBUTION`` does not record. Files under ``openapi/`` that the run does not produce
+are removed; ``FETCHED.md`` is rewritten; nothing else under ``docs/upstream/`` is
+touched. ``Fetched`` is the UTC time the run started, with an explicit ``Z``, so two runs
+against the same upstream write the same files under ``openapi/`` and a ``FETCHED.md``
+that differs in its ``Fetched`` column only: the refused page's body carries a
+per-request reference, so its row records no size, sha256 or validators. No key is
+needed or read. Run from the repository root::
 
     uv run scripts/refresh_upstream.py
 """
 
 import argparse
 import hashlib
+import html
 import http.client
 import json
 import re
@@ -79,6 +86,15 @@ REFUSED_NOTE = "403 Access Denied at the CDN edge"
 MAX_SHELL_BYTES = 16_384
 """A page recorded as a shell must stay this small; a larger one needs a look by hand."""
 
+ATTRIBUTION: tuple[str, ...] = ()
+"""Every copyright line, licence or terms of use the documentation states, as printed.
+
+Empty: no page or document this script reads states one. ``FETCHED.md`` quotes them under
+Attribution, and every run stops when a page or document states one that is not here.
+"""
+INFO_TERMS = ("license", "termsOfService", "contact")
+"""The fields of a Swagger document's ``info`` that would state terms; neither names one."""
+
 USER_AGENT = "xippios-usda-psd refresh_upstream (+https://github.com/xippios)"
 TIMEOUT = 60.0
 PAUSE = 2.0
@@ -90,6 +106,10 @@ _BUNDLE = re.compile(r"""<script\s+src=["'](main\.[0-9a-f]+\.js)["']""")
 _ROOT_URL = re.compile(r"rootUrl:\s*'([^']+)'")
 _DISCOVERY = re.compile(r"discoveryPaths:\s*arrayFrom\('([^']*)'\)")
 _PREFIX = re.compile(r"/api/[^/]+/")
+_STATEMENT = re.compile(
+    r"\N{COPYRIGHT SIGN}|copyright|licen[cs]e|terms of (?:use|service)|public domain",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -188,8 +208,31 @@ def _get(url: str, expect: int) -> Response:
     )
 
 
+def check_attribution(response: Response) -> None:
+    """Stop when ``response`` states a copyright, licence or terms ``ATTRIBUTION`` lacks.
+
+    The check reads the whole body with its entities decoded, markup and scripts included,
+    since the shells' visible text is drawn by scripts this script does not read.
+    """
+    body = html.unescape(response.body.decode("utf-8", "replace"))
+    for statement in ATTRIBUTION:
+        body = body.replace(statement, "")
+    match = _STATEMENT.search(body)
+    if match:
+        around = " ".join(body[max(match.start() - 60, 0) : match.end() + 60].split())
+        raise SystemExit(
+            f"GET {response.url}: the page states {match.group(0)!r} ({around!r}), a "
+            "copyright, licence or terms of use that ATTRIBUTION does not record.\nRead it by "
+            "hand, record it in ATTRIBUTION, say so in render_fetched's Attribution and update "
+            "scripts/refresh_upstream.py. Nothing was written."
+        )
+
+
 def fetch(url: str, expect: int = 200) -> Response:
-    """GET ``url`` after a polite pause; retry once on a network error or a 5xx."""
+    """GET ``url`` after a polite pause, retried once on a network error or a 5xx.
+
+    Every response is checked with ``check_attribution`` before it is returned.
+    """
     time.sleep(PAUSE)
     try:
         response = _get(url, expect)
@@ -206,6 +249,7 @@ def fetch(url: str, expect: int = 200) -> Response:
         f"  {url}: HTTP {response.status}{hops}, {len(response.body)} bytes, sha256 {digest}, "
         f"Last-Modified {response.last_modified or '-'}, ETag {response.etag or '-'}"
     )
+    check_attribution(response)
     return response
 
 
@@ -277,8 +321,8 @@ def fas_data() -> Row:
     if b"Access Denied" not in response.body:
         raise _page_changed(FAS_DATA_URL, "HTTP 403 without 'Access Denied' in the body")
     note = (
-        f"{_redirect_note(response)}{REFUSED_NOTE}; the body is not stable (it carries a "
-        "per-request reference), so neither its size nor its sha256 is recorded"
+        f"{_redirect_note(response)}{REFUSED_NOTE}; the body changes on every request (it "
+        "carries a per-request reference), so no size, sha256 or validators are recorded"
     )
     return Row(response, note, stable=False)
 
@@ -302,6 +346,16 @@ def _document(response: Response) -> dict[str, Any]:
         raise SystemExit(f"GET {response.url}: no paths object")
     if not isinstance(document.get("definitions", {}), dict):
         raise SystemExit(f"GET {response.url}: definitions is not an object")
+    info = document.get("info")
+    if not isinstance(info, dict):
+        raise SystemExit(f"GET {response.url}: no info object")
+    stated = [key for key in INFO_TERMS if key in info]
+    if stated:
+        raise SystemExit(
+            f"GET {response.url}: info now names {stated}, which FETCHED.md's Attribution "
+            "says neither document does.\nLook at the document by hand and update "
+            "scripts/refresh_upstream.py. Nothing was written."
+        )
     return document
 
 
@@ -377,9 +431,11 @@ def document_row(path: str, response: Response) -> tuple[Row, PsdPart]:
     content = (json.dumps(psd.part, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     dropped = ", ".join(f"{count} `{prefix}`" for prefix, count in psd.dropped.items())
     note = (
-        f"{_redirect_note(response)}PSD part; Bytes and sha256 are the full document's. "
-        f"Kept {psd.kept} `{KEEP_PREFIX}` paths; dropped {dropped or 'none'} (out of scope "
-        f"here); kept {psd.definitions_kept} of {psd.definitions_total} definitions"
+        f"{_redirect_note(response)}excerpt of a shared document, its PSD part; Bytes and "
+        f"sha256 are the whole document's. Kept {psd.kept} `{KEEP_PREFIX}` paths; dropped "
+        f"{dropped or 'none'} (out of scope here); kept {psd.definitions_kept} of "
+        f"{psd.definitions_total} definitions; `info` names no licence, terms of service or "
+        "contact"
     )
     _log(f"  {path}: {len(content)} bytes written from {len(response.body)} fetched")
     return Row(response, note, path, content), psd
@@ -424,9 +480,18 @@ def _comparison(portal: PsdPart, backend: PsdPart) -> str:
 
 
 def render_fetched(
-    rows: list[Row], portal: PsdPart, backend: PsdPart, bundle: str, backend_url: str, day: str
+    rows: list[Row], portal: PsdPart, backend: PsdPart, bundle: str, backend_url: str, fetched: str
 ) -> str:
-    """The whole of ``FETCHED.md``."""
+    """The whole of ``FETCHED.md``, ``fetched`` being the UTC time the run started."""
+    if ATTRIBUTION:
+        stated = "The documentation states " + "; ".join(f"`{s}`" for s in ATTRIBUTION) + "."
+    else:
+        stated = (
+            "No page or document this script reads states a copyright line, a licence or "
+            "terms of use: neither Swagger document's `info` names a licence, terms of service "
+            "or contact, neither document's text states one, and the markup of the portal "
+            "page, the classic Swagger UI page and the PSD Online page states none."
+        )
     lines = [
         "# Upstream documentation snapshot \N{EM DASH} USDA FAS PSD Online",
         "",
@@ -436,6 +501,23 @@ def render_fetched(
             "from the documents in the table below and refreshed deliberately by PR, so that",
             "changes show up as diffs. This file is generated by the same script. Nothing",
             "here was edited by hand.",
+        ),
+        "## Attribution",
+        "",
+        *_paragraph(
+            "The documentation is a work of the United States Government (USDA, Foreign",
+            "Agricultural Service), in the public domain in the United States under 17",
+            "U.S.C. \N{SECTION SIGN} 105.",
+            stated,
+            "The visible text of the portal and of PSD Online, their footers included, is",
+            "drawn by scripts that this script does not read (the portal's bundle embeds a",
+            "key), so what the rendered pages state is not read here. FAS's data page,",
+            f"{FAS_DATA_URL}, answers 403 Access Denied at the CDN edge to this script, so",
+            "what it states is not read here either. The script stops if a page or document",
+            "it reads starts to state one that it does not record. The documentation's text",
+            "is reproduced here as this package's reference (ADR-0003); an objection from the",
+            "publisher is met by replacing it with a summary that keeps the names and",
+            "semantics the wrappers rely on.",
         ),
         "## How this is captured",
         "",
@@ -475,31 +557,33 @@ def render_fetched(
         *_paragraph(
             "Pages that are client-rendered shells or that refuse headless clients get no",
             "file, only a row with their HTTP status and the size and sha256 of the body.",
-            "The 403 body carries a per-request reference number and so is not stable; its",
-            "row records neither size nor sha256, so that two runs on the same UTC day give",
-            "the same file.",
+            "The 403 body carries a per-request reference number and so changes on every",
+            "request; its row records no size, sha256 or validators.",
         ),
         *_paragraph(
-            "Fetched is the UTC calendar date of the run, Last-Modified the HTTP header in",
-            "UTC, ETag as sent. Requests go one at a time, identified as",
-            f"`{USER_AGENT}`; no API key is sent or read.",
+            "Fetched is the UTC time the run started, in ISO 8601 with an explicit Z, the",
+            "same for every row. Two runs against the same upstream write byte-identical",
+            "files under `openapi/`, and this file differs between them in its Fetched",
+            "column only. Last-Modified is the HTTP header in UTC, ETag as sent, `-` where",
+            f"none is sent. Requests go one at a time, {PAUSE:g} s apart, each retried at most",
+            f"once, identified as `{USER_AGENT}`; no API key is sent or read.",
         ),
         "## Files and pages",
         "",
-        "| File | URL | Fetched (UTC) | HTTP | Bytes | sha256 | ETag | Last-Modified | Notes |",
+        "| File | URL | Fetched | HTTP | Bytes | sha256 | ETag | Last-Modified | Note |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
-        response = row.response
+        response, kept = row.response, row.stable
         cells = [
             row.path or "(no file)",
             response.url,
-            day,
+            fetched,
             str(response.status),
-            str(len(response.body)) if row.stable else "-",
-            hashlib.sha256(response.body).hexdigest() if row.stable else "-",
-            response.etag or "-",
-            _iso_http_date(response.last_modified),
+            str(len(response.body)) if kept else "-",
+            hashlib.sha256(response.body).hexdigest() if kept else "-",
+            (response.etag or "-") if kept else "-",
+            _iso_http_date(response.last_modified) if kept else "-",
             row.note,
         ]
         lines.append("| " + " | ".join(_cell(cell) for cell in cells) + " |")
@@ -532,7 +616,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Refresh docs/upstream/ from USDA FAS.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="snapshot directory")
     out: Path = parser.parse_args().out
-    day = datetime.now(UTC).date().isoformat()
+    fetched = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     _log(f"Portal: {PORTAL_URL}")
     portal_page, bundle = portal_shell()
@@ -544,10 +628,10 @@ def main() -> None:
     pages = [psdonline(), fas_data()]
 
     rows = [portal_row, backend_row, portal_page, ui_page, *pages]
-    fetched_md = render_fetched(rows, portal, backend, bundle, backend_url, day)
+    fetched_md = render_fetched(rows, portal, backend, bundle, backend_url, fetched)
     write_snapshot(out, rows, fetched_md)
     written = sum(1 for row in rows if row.path)
-    _log(f"Wrote {written} files and FETCHED.md under {out}")
+    _log(f"Wrote {written} files and FETCHED.md under {out} (Fetched {fetched})")
 
 
 if __name__ == "__main__":
