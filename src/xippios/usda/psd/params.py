@@ -230,7 +230,8 @@ def validate_region_code(region_code: str) -> str:
     each record through the packaged ``countries`` list after the call, so a code no
     country carries would select nothing. The check runs before any upstream call.
     ``"R15"`` passes, carried by four countries although ``PSDData_GetRegions`` lacks
-    it; ``"R00"`` (World) is carried by none.
+    it; ``"R00"`` (World), a region of the packaged ``regions`` list that no country
+    belongs to, is refused with a hint instead of close codes.
 
     Args:
         region_code: A region code as ``list_countries`` gives it, e.g. ``"R01"`` (North
@@ -241,7 +242,10 @@ def validate_region_code(region_code: str) -> str:
 
     Raises:
         UnknownCode: Naming up to three close codes with their names in the packaged
-            ``regions`` list, or for ``"R15"`` its countries' names.
+            ``regions`` list, or for ``"R15"`` its countries' names; for a region of
+            that list no country belongs to (``"R00"``, World) saying that the world is
+            ``get_world_data``'s and that ``region_code`` takes a region countries
+            belong to.
     """
     fetched, regions = _codes("countries", "countryCode", "regionCode")
     carried = set(regions.values())
@@ -254,12 +258,21 @@ def validate_region_code(region_code: str) -> str:
         or "; ".join(countries[country] for country, region in regions.items() if region == code)
         for code in sorted(carried)
     }
+    hint = (
+        f"{region_code} ({names[region_code]}) is in list_regions, but no country belongs "
+        "to it: the world total is get_world_data's, and region_code takes a region "
+        "countries belong to, as list_countries gives it, e.g. R04 (South America); omit "
+        "it to rank every country."
+        if region_code in names
+        else None
+    )
     raise UnknownCode(
         "region_code",
         region_code,
         list_name="countries",
         fetched=fetched,
-        closest=closest(region_code, known),
+        closest=() if hint else closest(region_code, known),
+        hint=hint,
         reason="The data operations take no region; the task keeps the countries whose "
         "packaged regionCode equals it, so a code no country carries would rank nothing, "
         "and the package refuses it. list_regions and list_countries name the regions.",

@@ -304,8 +304,6 @@ def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
     assert error.closest == (("R09", "Middle East"),)
     assert "Did you mean R09 (Middle East)?" in error.message
     assert "list_regions and list_countries name the regions" in error.message
-    with pytest.raises(UnknownCode, match="'R00' is not a region_code"):
-        validate_region_code("R00")
     with pytest.raises(UnknownCode) as by_name:
         validate_region_code("South America")
     assert ("R04", "South America") in by_name.value.closest
@@ -334,3 +332,20 @@ def test_a_release_month_reads_as_year_and_month(since: str, month: tuple[int, i
 def test_other_release_months_are_refused(since: str) -> None:
     with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'"):
         validate_since(since)
+
+
+def test_the_world_region_is_refused_with_a_hint() -> None:
+    """``R00`` (World) is in the packaged regions list, but no packaged country belongs to
+    it: the refusal says where the world total is, and what ``region_code`` takes."""
+    with pytest.raises(UnknownCode) as info:
+        validate_region_code("R00")
+    error = info.value
+    assert (error.param, error.value, error.list_name) == ("region_code", "R00", "countries")
+    assert error.closest == ()
+    assert "Did you mean" not in error.message
+    assert error.message.startswith(
+        "'R00' is not a region_code in the packaged countries list (fetched 2026-10-23). "
+        "R00 (World) is in list_regions, but no country belongs to it: the world total is "
+        "get_world_data's, and region_code takes a region countries belong to, as "
+        "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
+    )

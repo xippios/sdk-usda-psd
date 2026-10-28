@@ -1047,6 +1047,8 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     with pytest.raises(UnknownCode, match="'R99' is not a region_code") as region:
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R99")
     assert region.value.closest == (("R09", "Middle East"),)
+    with pytest.raises(UnknownCode, match="the world total is get_world_data's"):
+        tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R00")
     with pytest.raises(InvalidRequestError, match="exclude_groupings must be true or false"):
         tasks.get_top_countries(SOYBEANS, 2023, 28, exclude_groupings=1)  # type: ignore[arg-type]
 

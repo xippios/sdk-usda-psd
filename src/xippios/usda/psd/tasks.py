@@ -589,8 +589,8 @@ async def get_top_countries_async(
         region_code: Rank only the countries of this PSD region, as ``list_countries``
             gives it, e.g. ``"R04"`` (South America), ``"R18"`` (East Asia), ``"R15"``
             (Africa, NEC and three more, a region ``list_regions`` lacks). A code no
-            packaged country carries, ``"R00"`` (World) among them, is refused. Omit
-            (``None``) for every region.
+            packaged country carries is refused; ``"R00"`` (World) is one, and the world
+            total is ``get_world_data``'s. Omit (``None``) for every region.
         exclude_groupings: ``True`` leaves PSD's aggregates out of the ranking: ``"E4"``
             European Union, ``"E2"`` EU-15, ``"E3"`` EU-25, ``"C1"`` Caribbean Basin,
             ``"T3"`` Africa, NEC, ``"X8"`` Southern Asia NEC, ``"Z7"`` Other Pacific
