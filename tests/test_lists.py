@@ -4,56 +4,79 @@ The packaged files were written from the answers recorded in
 ``tests/fixtures/<operation>/all.json``, so a task returning exactly what the endpoint
 wrapper parses from that recording proves the package answers what upstream answered.
 Every test here runs with ``respx`` active: a request no route matches fails loudly, and
-each test checks that the tasks sent none.
+each test checks that the tasks sent none. ``meta`` is core's ``PackagedList.meta``
+(ADR-0022, rule 1): ``retrieved_at`` the list's fetch time, ``vintage`` ``None``, and
+``request`` without the filters left ``None``. Counts are read from the packaged files,
+never pinned: a refresh changes them.
 """
 
-import json
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
-from importlib import resources
-from typing import Any
 
 import pytest
 import respx
+from pydantic import BaseModel
+from xippios.core import PackagedList
 from xippios.core.testing import mcp_call
 
 from xippios.usda.psd import api, tasks
 from xippios.usda.psd.mcp import server
-from xippios.usda.psd.models import Commodity, UnitOfMeasure
+from xippios.usda.psd.models import (
+    Commodity,
+    CommodityAttribute,
+    Country,
+    Region,
+    UnitOfMeasure,
+)
+from xippios.usda.psd.params import PACKAGE
 
-LISTS: list[tuple[str, str, str, int, dict[str, Any]]] = [
-    # task, packaged list, operation it came from, records, meta.request without filters
-    ("list_commodities", "commodities", "PSDData_GetCommodities", 63, {"search": None}),
-    (
-        "list_countries",
-        "countries",
-        "PSDData_GetCountries",
-        251,
-        {"region_code": None, "search": None},
-    ),
-    ("list_regions", "regions", "PSDData_GetRegions", 15, {}),
-    ("list_units_of_measure", "unitsOfMeasure", "PSDData_GetUnitsOfMeasure", 42, {}),
+LISTS: list[tuple[str, str, str, type[BaseModel]]] = [
+    # task, packaged list, operation it came from, record model
+    ("list_commodities", "commodities", "PSDData_GetCommodities", Commodity),
+    ("list_countries", "countries", "PSDData_GetCountries", Country),
+    ("list_regions", "regions", "PSDData_GetRegions", Region),
+    ("list_units_of_measure", "unitsOfMeasure", "PSDData_GetUnitsOfMeasure", UnitOfMeasure),
     (
         "list_commodity_attributes",
         "commodityAttributes",
         "PSDData_GetCommodityAttributes",
-        85,
-        {"search": None},
+        CommodityAttribute,
     ),
 ]
 IDS = [task for task, *_ in LISTS]
 CAP = 200
 """The family's default MCP result cap in rows (conventions §8); ``list_countries`` has a
 cap of its own, ``tasks.MCP_CAPS`` (ADR-0016)."""
+FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
+"""The packaged lists' ``fetched``, a bare date in the files, read as 00:00 UTC (ADR-0022)."""
 
 
-def _fetched(name: str) -> str:
-    """``fetched`` as the packaged file stores it, read from the file itself."""
-    path = resources.files("xippios.usda.psd").joinpath("reference", f"{name}.json")
-    fetched = json.loads(path.read_text(encoding="utf-8"))["fetched"]
-    assert isinstance(fetched, str)
-    return fetched
+def _packaged(name: str) -> PackagedList:
+    """The packaged list, read from its file by core's ``PackagedList``."""
+    return PackagedList.load(PACKAGE, name)
+
+
+def _upstream_fields(model: type[BaseModel]) -> set[str]:
+    """The model's fields as upstream names them, the keys of a packaged record."""
+    return {
+        info.validation_alias if isinstance(info.validation_alias, str) else name
+        for name, info in model.model_fields.items()
+    }
+
+
+@pytest.mark.parametrize(("task", "name", "endpoint", "model"), LISTS, ids=IDS)
+def test_every_packaged_list_is_upstreams_records_with_their_provenance(
+    task: str, name: str, endpoint: str, model: type[BaseModel]
+) -> None:
+    """Structure, not counts: each record carries the list's fields under upstream's
+    names, and the file names its operation and its fetch time."""
+    packaged = _packaged(name)
+    assert (packaged.param, packaged.endpoint) == (name, endpoint)
+    assert packaged.fetched.tzinfo is UTC
+    assert packaged.records, name
+    fields = _upstream_fields(model)
+    assert all(set(record) == fields for record in packaged.records), name
 
 
 def test_every_list_task_is_exported() -> None:
@@ -66,46 +89,42 @@ def test_every_list_task_is_exported() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("task", "name", "endpoint", "count", "request_"), LISTS, ids=IDS)
+@pytest.mark.parametrize(("task", "name", "endpoint", "model"), LISTS, ids=IDS)
 async def test_list_answers_the_recorded_records_without_a_call(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
     task: str,
     name: str,
     endpoint: str,
-    count: int,
-    request_: dict[str, Any],
+    model: type[BaseModel],
 ) -> None:
     """The recording is mounted, so a call would succeed silently; none is made."""
     route = replay_fixture(endpoint, "all")
-    before = datetime.now(UTC)
     result = await getattr(tasks, f"{task}_async")()
-    after = datetime.now(UTC)
     assert not respx_mock.calls, f"{task} called upstream"
     recorded = await getattr(api, endpoint)()
     assert route.call_count == 1, "the one call is the wrapper's"
     assert result.data == recorded, "same records, same values, upstream order"
-    assert len(result.data) == count
+    assert len(result.data) == len(_packaged(name).records)
+    assert all(type(record) is model for record in result.data)
     assert result.meta.source == "usda-psd"
     assert result.meta.endpoint == endpoint
-    assert result.meta.vintage == _fetched(name) == "2026-10-23"
+    assert result.meta.retrieved_at == _packaged(name).fetched == FETCHED, (
+        "retrieved_at is when the package fetched the list, its bare date read as 00:00 UTC"
+    )
+    assert result.meta.vintage is None, "a fetch date is not a release identifier"
     assert result.meta.published_at is None
-    assert result.meta.request == request_
-    assert before <= result.meta.retrieved_at <= after, "retrieved_at is when the task answered"
+    assert result.meta.request == {}, "a filter left None is left out"
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("task", "name", "endpoint", "request_"),
-    [(task, name, endpoint, request_) for task, name, endpoint, _, request_ in LISTS],
+    ("task", "name", "endpoint"),
+    [(task, name, endpoint) for task, name, endpoint, _ in LISTS],
     ids=IDS,
 )
 async def test_list_tool_end_to_end(
-    respx_mock: respx.MockRouter,
-    task: str,
-    name: str,
-    endpoint: str,
-    request_: dict[str, Any],
+    respx_mock: respx.MockRouter, task: str, name: str, endpoint: str
 ) -> None:
     """Every list reaches an agent whole: ``list_countries`` through its own cap."""
     payload = await mcp_call(server, f"usda_psd_{task}", {})
@@ -114,9 +133,10 @@ async def test_list_tool_end_to_end(
     assert "note" not in payload
     assert payload["meta"]["source"] == "usda-psd"
     assert payload["meta"]["endpoint"] == endpoint
-    assert payload["meta"]["vintage"] == _fetched(name)
+    assert datetime.fromisoformat(payload["meta"]["retrieved_at"]) == _packaged(name).fetched
+    assert payload["meta"]["vintage"] is None
     assert payload["meta"]["published_at"] is None
-    assert payload["meta"]["request"] == request_
+    assert payload["meta"]["request"] == {}
     assert not respx_mock.calls
 
 
@@ -138,7 +158,7 @@ async def test_countries_over_mcp_are_whole_without_a_filter_and_with_one(
         payload = await mcp_call(server, "usda_psd_list_countries", {"region_code": region_code})
         assert len(payload["data"]) == count, region_code
         assert "note" not in payload, region_code
-        assert payload["meta"]["request"] == {"region_code": region_code, "search": None}
+        assert payload["meta"]["request"] == {"region_code": region_code}
     united = await mcp_call(server, "usda_psd_list_countries", {"search": "united"})
     assert [row["country_code"] for row in united["data"]] == ["TC", "UK", "US"]
     assert "note" not in united
@@ -150,11 +170,11 @@ def test_list_countries_by_region(respx_mock: respx.MockRouter) -> None:
     north_america = tasks.list_countries(region_code="R01")
     assert [c.country_code for c in north_america.data] == ["CA", "GL", "MX", "SB", "US"]
     assert north_america.data == [c for c in every if c.region_code == "R01"], "upstream order"
-    assert north_america.meta.request == {"region_code": "R01", "search": None}
+    assert north_america.meta.request == {"region_code": "R01"}
     by_region = {
         code: tasks.list_countries(region_code=code).data for code in {c.region_code for c in every}
     }
-    assert sum(len(countries) for countries in by_region.values()) == 251
+    assert sum(len(countries) for countries in by_region.values()) == len(every)
     assert not respx_mock.calls
 
 
@@ -172,7 +192,7 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     ]
     assert {c.genc_code for c in r15.data} == {None}
     assert "R15" not in {r.region_code for r in tasks.list_regions().data}
-    assert r15.meta.request == {"region_code": "R15", "search": None}
+    assert r15.meta.request == {"region_code": "R15"}
     assert not respx_mock.calls
 
 
@@ -180,8 +200,9 @@ def test_an_unknown_region_is_an_empty_list(respx_mock: respx.MockRouter) -> Non
     """No validation: a region no country carries has no countries, a correct answer."""
     unknown = tasks.list_countries(region_code="R99")
     assert unknown.data == []
-    assert unknown.meta.request == {"region_code": "R99", "search": None}
-    assert unknown.meta.vintage == "2026-10-23"
+    assert unknown.meta.request == {"region_code": "R99"}
+    assert unknown.meta.retrieved_at == FETCHED
+    assert unknown.meta.vintage is None
     assert tasks.list_countries(region_code="r01").data == [], "exact, as list_regions spells it"
     assert not respx_mock.calls
 
@@ -191,7 +212,7 @@ def test_list_countries_search_matches_code_or_name_ignoring_case(
 ) -> None:
     united = tasks.list_countries(search="united")
     assert [c.country_code for c in united.data] == ["TC", "UK", "US"]
-    assert united.meta.request == {"region_code": None, "search": "united"}
+    assert united.meta.request == {"search": "united"}
     assert tasks.list_countries(search="UNITED").data == united.data
     assert [c.country_name for c in tasks.list_countries(search="e4").data] == ["European Union"]
     assert [c.country_code for c in tasks.list_countries(search="us").data] == [
@@ -218,7 +239,7 @@ def test_list_countries_search_matches_the_genc_code(respx_mock: respx.MockRoute
     assert [(c.country_code, c.country_name, c.genc_code) for c in usa.data] == [
         ("US", "United States", "USA")
     ]
-    assert usa.meta.request == {"region_code": None, "search": "usa"}
+    assert usa.meta.request == {"search": "usa"}
     assert tasks.list_countries(search="USA").data == usa.data
     assert [c.country_code for c in tasks.list_countries(search="gbr").data] == ["UK"]
     assert [c.country_code for c in tasks.list_countries(search="deu").data] == ["GM"]
@@ -298,12 +319,13 @@ def test_list_routes_are_whole_over_http(respx_mock: respx.MockRouter) -> None:
     http = TestClient(app)
     countries = http.get("/usda-psd/list_countries")
     assert countries.status_code == 200, countries.text
-    assert len(countries.json()["data"]) == 251
+    assert len(countries.json()["data"]) == len(_packaged("countries").records)
     assert "note" not in countries.json()
     r15 = http.get("/usda-psd/list_countries", params={"region_code": "R15"}).json()
     assert [row["country_code"] for row in r15["data"]] == ["T3", "T8", "T4", "ZZ"]
-    assert r15["meta"]["vintage"] == "2026-10-23"
+    assert datetime.fromisoformat(r15["meta"]["retrieved_at"]) == FETCHED
+    assert r15["meta"]["vintage"] is None
     regions = http.get("/usda-psd/list_regions").json()
-    assert len(regions["data"]) == 15
+    assert len(regions["data"]) == len(_packaged("regions").records)
     assert regions["meta"]["request"] == {}
     assert not respx_mock.calls

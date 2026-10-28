@@ -46,14 +46,14 @@ from xippios.usda.psd import list_commodities, list_countries
 
 result = list_countries(region_code="R01")  # PSD's region North America (list_regions)
 [c.country_code for c in result.data]  # ["CA", "GL", "MX", "SB", "US"], upstream order
-result.meta.endpoint, result.meta.vintage  # "PSDData_GetCountries", "2026-10-23" (fetched)
+result.meta.endpoint, result.meta.retrieved_at  # "PSDData_GetCountries", 2026-10-23 (fetched)
 list_countries(search="united").data  # TC, UK, US: code, name or GENC code, ignoring case
 list_countries(search="usa").data  # US United States, by its GENC code "USA"
 list_commodities(search="soybean").data  # meal, oil and oilseed, each also "(Local)"
 ```
 
-`meta.vintage` of a list is the day the package fetched it (upstream gives these lists no
-version), `meta.retrieved_at` when the task answered. Over MCP `usda_psd_list_countries`
+`meta.retrieved_at` of a list is when the package fetched it, and its `meta.vintage` is
+`None`, since upstream gives these lists no version. Over MCP `usda_psd_list_countries`
 returns all 251 countries through a cap of its own.
 
 The slices answer the common questions from the same operations. They select, order or

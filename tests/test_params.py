@@ -1,15 +1,15 @@
 """Packaged reference lists, their enums and the argument checks built on them."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from xippios.core import InvalidRequestError, parse
+from xippios.core import InvalidRequestError, PackagedList, UnknownCode, parse
 from xippios.core.http import status_for
 from xippios.core.testing import load_fixture
 
 from xippios.usda.psd import enums
-from xippios.usda.psd.errors import UnknownCode
 from xippios.usda.psd.models import (
     Commodity,
     CommodityAttribute,
@@ -19,9 +19,9 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    PACKAGE,
     PACKAGED_LISTS,
     attribute_names,
-    packaged_values,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
@@ -36,35 +36,28 @@ SOURCES = {
     "unitsOfMeasure": ("PSDData_GetUnitsOfMeasure", UnitOfMeasure),
     "commodityAttributes": ("PSDData_GetCommodityAttributes", CommodityAttribute),
 }
+FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
+"""The packaged lists' ``fetched``, a bare date in the files, read as 00:00 UTC (ADR-0022)."""
 
 
 def test_every_packaged_list_loads_and_parses() -> None:
     assert set(PACKAGED_LISTS) == set(SOURCES)
     for name, (endpoint, model) in SOURCES.items():
-        packaged = packaged_values(name)
-        assert packaged is not None, name
+        packaged = PackagedList.load(PACKAGE, name)
         assert (packaged.param, packaged.endpoint) == (name, endpoint)
-        assert packaged.fetched.isoformat() == "2026-10-23"
+        assert packaged.fetched == FETCHED
         parsed = parse(list[model], packaged.records, source="usda-psd", endpoint=endpoint)  # type: ignore[valid-type]
         assert parsed, name
 
 
 def test_packaged_lists_are_the_recorded_answers_verbatim() -> None:
     for name, (endpoint, _) in SOURCES.items():
-        packaged = packaged_values(name)
-        assert packaged is not None
         recorded = json.loads(load_fixture(FIXTURES / endpoint / "all.json").response.body)
-        assert packaged.records == recorded, name
-
-
-def test_unknown_list_is_none() -> None:
-    assert packaged_values("not_a_list") is None
+        assert _records(name) == recorded, name
 
 
 def _records(name: str) -> list[dict[str, object]]:
-    packaged = packaged_values(name)
-    assert packaged is not None
-    return packaged.records
+    return PackagedList.load(PACKAGE, name).records
 
 
 def test_enums_match_the_packaged_id_lists() -> None:
@@ -73,8 +66,6 @@ def test_enums_match_the_packaged_id_lists() -> None:
     units = _records("unitsOfMeasure")
     assert [member.value for member in enums.AttributeId] == [r["attributeId"] for r in attributes]
     assert [member.value for member in enums.UnitId] == [r["unitId"] for r in units]
-    assert len(enums.AttributeId) == 85
-    assert len(enums.UnitId) == 42
 
 
 def test_enum_members_are_named_after_upstream_names() -> None:
@@ -113,11 +104,19 @@ def test_unknown_commodity_code_names_the_closest() -> None:
         "0410001",
         "commodities",
     )
+    assert error.fetched == FETCHED
+    assert error.source == "usda-psd"
     # difflib scores Rye (0451000) as close as Wheat (0410000); both are named
     assert ("0410000", "Wheat") in error.closest
+    assert error.message.startswith(
+        "'0410001' is not a commodity_code in the packaged commodities list (fetched "
+        "2026-10-23). Did you mean "
+    )
     assert "0410000 (Wheat)" in error.message
-    assert "Did you mean " in error.message
-    assert "fetched 2026-10-23" in error.message
+    assert error.message.endswith(
+        " PSD answers unknown codes with an empty result, so the package refuses them. If "
+        "upstream added it since, the packaged list needs a refresh (/refresh-reference-data)."
+    )
 
 
 def test_a_commodity_name_leads_to_its_code() -> None:
@@ -144,7 +143,9 @@ def test_unknown_country_code_names_the_closest() -> None:
 
 
 def test_the_recorded_unknown_country_is_refused() -> None:
-    with pytest.raises(UnknownCode, match="'XX' is not a country_code in PSD's countries list"):
+    with pytest.raises(
+        UnknownCode, match="'XX' is not a country_code in the packaged countries list"
+    ):
         validate_country_code("XX")
 
 
@@ -167,10 +168,9 @@ def test_other_market_years_are_refused(year: int) -> None:
 
 def test_attribute_names_are_the_packaged_list() -> None:
     names = attribute_names()
-    packaged = packaged_values("commodityAttributes")
-    assert packaged is not None
-    assert names == {r["attributeId"]: r["attributeName"] for r in packaged.records}
-    assert list(names) == [r["attributeId"] for r in packaged.records], "upstream order"
+    records = _records("commodityAttributes")
+    assert names == {r["attributeId"]: r["attributeName"] for r in records}
+    assert list(names) == [r["attributeId"] for r in records], "upstream order"
     assert names[28] == "Production"
     assert names[126] == names[173] == "Total Disappearance"
     assert names[133] == names[135] == "Fresh Dom. Consumption"
@@ -191,8 +191,13 @@ def test_unknown_attribute_id_names_the_closest() -> None:
         999,
         "commodityAttributes",
     )
-    assert error.closest == [("99", "Refined Exp.(Raw Val)")]
-    assert error.message.startswith("999 is not an attribute_id in PSD's commodityAttributes")
+    assert error.closest == (("99", "Refined Exp.(Raw Val)"),)
+    assert error.source == "usda-psd"
+    assert error.message.startswith(
+        "999 is not an attribute_id in the packaged commodityAttributes list (fetched "
+        "2026-10-23). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
+        "attribute"
+    )
     assert "list_commodity_attributes lists the ids" in error.message
     assert "PSD answers unknown codes" not in error.message, "its own reason"
 
@@ -246,8 +251,13 @@ def test_an_id_the_lists_lack_still_parses() -> None:
 def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> None:
     with pytest.raises(UnknownCode) as info:
         validate_commodity_code("0000000x")
-    assert info.value.closest == []
-    assert "(packaged, fetched 2026-10-23). PSD answers unknown codes" in info.value.message
+    assert info.value.closest == ()
+    assert info.value.message == (
+        "'0000000x' is not a commodity_code in the packaged commodities list (fetched "
+        "2026-10-23). PSD answers unknown codes with an empty result, so the package refuses "
+        "them. If upstream added it since, the packaged list needs a refresh "
+        "(/refresh-reference-data)."
+    )
 
 
 @pytest.mark.parametrize(
@@ -258,5 +268,5 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
 def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -> None:
     with pytest.raises(UnknownCode, match=hint) as info:
         validate_country_code(value)
-    assert info.value.closest == []
+    assert info.value.closest == ()
     assert "Did you mean" not in info.value.message

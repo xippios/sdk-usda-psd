@@ -4,6 +4,8 @@
 and FastAPI routes, built on `xippios-core`. This file is the contract for every session
 that works here; the family rules it points to apply as well.
 
+@.claude/family.md
+
 ## What this package wraps
 
 | | |
@@ -11,13 +13,11 @@ that works here; the family rules it points to apply as well.
 | Upstream | USDA FAS PSD Online, https://apps.fas.usda.gov/psdonline/ |
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
-| Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header. ADR-0009: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
-| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, burst 1 (`RateLimit(per_minute=60, burst=1)` in `_client.py`, enforced client-side): a self-imposed pace, upstream documents none (the snapshot names no limit). Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` (the hourly quota, not a pace) and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. Core's `QuotaPolicy` (`_client.policy`, ADR-0015) keeps the snapshot from every answer from the wire, never a cache hit's, and gates: once the quota is spent the next request waits it out inside the call, logged, when that is within `RetryPolicy.backoff_max` (30 s by default), and otherwise raises `RateLimitError` with `retry_after` without sending. The wait counts from the last answer: a 429's `Retry-After`, else the policy's `window` of one hour (the gateway sends no reset header, and the 200 that leaves `remaining` at 0 no `Retry-After`). `classify` maps the 429 to `RateLimitError` with `retry_after` from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s, and core shapes its retries from that: a wait beyond `backoff_max` is raised after one request. In offline tests core's pytest plugin bypasses the limiter and the quota policy and forgets the snapshot around each test; a test that asserts a wait or a refusal is marked `rate_limited` |
+| Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header by `xippios.core.data_gov`'s `Gateway` (`_client.auth` is `gateway.auth`); the key is api.data.gov's, shared by every package that reads it. ADR-0009: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
+| Rate limit | ADR-0010, decisions 1–5. Pace: 60 requests per minute, burst 1 (`RateLimit(per_minute=60, burst=1)` in `_client.py`, enforced client-side): a self-imposed pace, upstream documents none (the snapshot names no limit). Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` (the hourly quota, not a pace) and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. The quota is the gateway's: `Gateway.policy` of `xippios.core.data_gov`, one `QuotaPolicy` per process for the key, which `_client.py` installs with `gateway.install` (ADR-0009, ADR-0015), keeps the snapshot from every answer from the wire, never a cache hit's, and gates: once the quota is spent the next request waits it out inside the call, logged, when that is within the policy's `pause_cap` (30 s by default), and otherwise raises `RateLimitError` with `retry_after` without sending, a refusal that speaks for `api.data.gov` (its `source`). The wait counts from the last answer: a 429's `Retry-After`, else the policy's `window` of one hour (the gateway sends no reset header, and the 200 that leaves `remaining` at 0 no `Retry-After`). `gateway.classify`, which `classify` asks first, maps the 429 to `RateLimitError` with `retry_after` the wait the policy keeps the quota spent for, from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s, and core shapes its retries from that: a wait beyond `RetryPolicy.backoff_max` is raised after one request. In offline tests core's pytest plugin bypasses the limiter and the quota policy and forgets the snapshot around each test; a test that asserts a wait or a refusal is marked `rate_limited` |
 | Write tools | no, this package is read-only |
 
 The snapshot in `docs/upstream/` is the reference for names, parameters and semantics.
-If it is empty or stale, run `/refresh-upstream` first and review the diff. Never write a
-wrapper from memory of the API.
 
 ## Upstream behaviour established by fixtures
 
@@ -139,12 +139,13 @@ Attribute ids are checked against the packaged list before any call
 
 `scripts/refresh_reference.py` packages the five lists (`commodities`, `countries`,
 `regions`, `unitsOfMeasure`, `commodityAttributes`) under `reference/` with provenance
-in `reference/README.md`, and regenerates `enums.py` through core's `render_int_enums`,
-committed as rendered; `--render-only` regenerates it from the packaged files without a
-request. The two id lists, `unitsOfMeasure` and `commodityAttributes`, are the script's
-`ID_LISTS`; the three tables, `commodities`, `countries` and `regions`, are its own
-`TABLES`, packaged as JSON records under upstream's field names like an id list and
-rendered to no enum; `LISTS`, the template's value lists, stays empty. Every packaged
+in `reference/README.md`, and regenerates `enums.py` through core's `render_enums`,
+committed as the script's `ruff format` and `ruff check --fix` leave it; `--render-only`
+regenerates it from the packaged files without a request. The two id lists,
+`unitsOfMeasure` and `commodityAttributes`, are the script's `ID_LISTS`; the three
+tables, `commodities`, `countries` and `regions`, are its `TABLES`, packaged as JSON
+records under upstream's field names like an id list and rendered to no enum; `LISTS`,
+the template's value lists, stays empty. Every packaged
 list, of either mapping, is in `params.PACKAGED_LISTS`, which the script checks before a
 refresh. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
@@ -152,10 +153,12 @@ names a code the package lacks. A refresh that renames an attribute, or adds an 
 an existing name, in `commodityAttributes` changes `get_balance_sheet`'s public keys:
 record it in `CHANGELOG.md` as a breaking change (conventions §12).
 
-The `list_*` tasks answer from these files and never call upstream: `meta.endpoint` is
-the file's `endpoint`, `meta.vintage` its `fetched` date (upstream gives the lists no
-version), `meta.retrieved_at` when the task answered. Their filters select records
-client-side, codes and names unchanged, upstream order kept. Over MCP `list_countries` has a
+The `list_*` tasks answer from these files and never call upstream: core's `PackagedList`
+builds `meta` (ADR-0022, rule 1), `meta.endpoint` the file's `endpoint`,
+`meta.retrieved_at` its `fetched` (the bare date `2026-10-23` reads as 00:00 UTC until the
+next refresh writes the full time), `meta.vintage` `None` (upstream gives the lists no
+version). Their filters select records client-side, codes and names unchanged, upstream
+order kept. Over MCP `list_countries` has a
 cap of its own, 300 rows (`tasks.MCP_CAPS`, ADR-0016), so its 251 countries arrive whole;
 every other tool keeps the family default, 200 rows or 64 KB. The live tests compare each
 packaged list with the live one, the freshness check.
@@ -168,27 +171,6 @@ upstream gives two ids the same name, both members carry the id (`TOTAL_DISAPPEA
 The enums are for lookups and for the wave 2 slice parameters; the models keep the ids
 as plain `int` (the NASS pattern), and members compare equal to them.
 
-## Read first, in this order
-
-1. `docs/upstream/FETCHED.md` and the files it lists: what the upstream actually offers
-2. The family conventions: `../sdk-core/docs/conventions.md` and `../sdk-core/docs/adr/`
-   (also at https://github.com/xippios/sdk-core/tree/main/docs)
-3. `../sdk-core/docs/definition-of-done.md`: what a PR must satisfy
-4. The family file `../CLAUDE.md`
-5. When a new core minor or template release comes: conventions §15, the adoption
-   checklist, which `/adopt-release` walks
-
-## The one rule: three layers (ADR-0001)
-
-```
-api/<operation>.py   one async function per upstream operation, upstream names, returns models
-tasks.py             the public API: composes wrappers, returns Result[T], sync facade via sync()
-mcp.py  http.py      adapters: register tasks.__all__, nothing else. Never edited to add an endpoint.
-```
-
-Adapters call only task functions. Tasks call only endpoint wrappers and reference
-data. If logic appears in `mcp.py` or `http.py`, it belongs in `tasks.py`.
-
 ## Layout
 
 ```
@@ -196,157 +178,80 @@ src/xippios/usda/psd/
   __init__.py      public surface: __version__ and re-exported task functions
   py.typed         PEP 561 marker; consumers' mypy --strict needs it
   _version.py      __version__ from distribution metadata
-  _client.py       the configured client (base URL, key, rate limit, classify, quota)
+  _client.py       the configured client (base URL, key, rate limit, classify), on core's
+                   api.data.gov Gateway (its key, its answers, its quota)
   models.py        pydantic models mirroring upstream payloads (UpstreamModel)
   api/             endpoint wrappers, one module per upstream operation
-  tasks.py         task functions; __all__ is what the adapters register, MCP_CAPS any
-                   per-tool result caps
+  tasks.py         task functions; __all__ is what the adapters register, but BULK_TASKS,
+                   the Python-only ones (none); MCP_CAPS any per-tool result caps
   mcp.py           xippios-usda-psd-mcp entry point
   http.py          FastAPI router
-  errors.py        UnknownCode (a code or attribute id the packaged lists lack), NoDataForYear
-  params.py        packaged lists (PACKAGED_LISTS, packaged_values(), attribute_names()) and checks
+  errors.py        NoDataForYear, PSD's empty 404 for a market year (UnknownCode is core's)
+  params.py        packaged lists (PACKAGED_LISTS, read with PackagedList.load;
+                   attribute_names()) and the code, year and attribute checks
   enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
   reference/       packaged code lists (CSV/JSON) plus README with provenance
 scripts/
   refresh_upstream.py    regenerates the docs/upstream/ snapshot, stdlib only, no key
-  refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py
-  check-siblings.sh      this wheel and xippios-usda-nass share xippios.usda (workflow siblings.yml)
+  refresh_reference.py   fetches the packaged lists through api/ and regenerates enums.py;
+                         --render-only renders it without a call
 tests/
   conftest.py      enables xippios.core.testing.plugin, which keeps the run offline
   fixtures/        recorded responses, <endpoint>/<case>.json, never hand-written
-  test_tasks.py    structural checks on every task plus per-task replay tests
+  test_family.py   core's family check, one line: namespace levels, py.typed, __version__,
+                   the adapters serving exactly the tasks, task shapes and docstrings, the
+                   README status table, the template tag, the core bound
+  test_tasks.py    per-task replay tests of the data tasks, MCP and HTTP
   test_lists.py    the list_* tasks: the recorded lists, no call, filters, MCP cap
   test_slices.py   the wave 2 slices: pivot, series, ranking, newest release, checks first
   test_api.py      replay tests for the endpoint wrappers
   test_client.py   classify on recorded error bodies; core's quota policy on the recorded 429
   test_params.py   packaged lists, enums and the code checks
-  test_adapters.py the adapters expose exactly tasks.__all__
-  test_layout.py   namespace levels stay empty; py.typed ships
   test_live.py     @pytest.mark.live smoke tests, one per task (14 keyed calls in all), and
                    the template's keyless reachability check
 docs/upstream/     documentation snapshot and FETCHED.md
-.github/workflows/ ci.yml (the required ci check), publish.yml (tag to PyPI), live.yml (nightly live tests),
-                   siblings.yml (scripts/check-siblings.sh, this package's own)
+.github/workflows/ ci.yml (the required ci check, with the CHANGELOG and fixture-size steps),
+                   publish.yml (the release train: tag, build, PyPI), live.yml (nightly live
+                   tests), gates.yml (the merge gates as jobs, off until GATES_CALLER is 1),
+                   siblings.yml (the sibling proof of ADR-0006: this wheel beside the
+                   siblings under xippios.usda, a visible check the ruleset does not require)
+.github/scripts/   check-siblings.sh, which siblings.yml runs; the template's, as is the workflow
+.claude/family.md  the family rules, the template's, imported above
 .claude/commands/  add-endpoint, record-fixture, refresh-upstream, refresh-reference-data, release-prep,
                    adopt-release
 ```
 
 `src/xippios/` has **no** `__init__.py`: it is a PEP 420 namespace package shared with
 `xippios-core` and every other source package, and so is every level
-between it and the package (`src/xippios/usda/`).
-Never add one; `tests/test_layout.py` fails if it appears. The import path is
+between it and the package (`src/xippios/usda/`). The import path is
 `xippios.usda.psd` (ADR-0006).
-
-## How to add an endpoint
-
-Run `/add-endpoint <upstream operation>`. In short:
-
-1. Read the operation in `docs/upstream/`. Names, parameters and semantics come from
-   there, snake_cased, nothing renamed, nothing normalised across sources.
-2. `models.py`: an `UpstreamModel` per payload object; dates, numbers and enums typed.
-3. `api/<operation>.py`: one async wrapper that calls `_client.client` and returns
-   models through `xippios.core.parse`.
-4. `tasks.py`: an async task that composes wrappers and returns `Result[T]` with full
-   `ResultMeta` (source, endpoint, request parameters, `published_at`/`vintage` when the
-   upstream gives them). Derive the sync one with `sync()`, add its name to `__all__`,
-   re-export it from `__init__.py`. What it returns leaves out documented personal
-   identifiers (`ssn`, `iban` and their like) unless it fetches them deliberately and
-   says so, and a write task does not echo one in `meta.request` (ADR-0017).
-5. Docstring for agents: one sentence, then `Args:` with examples of valid values for
-   every parameter. The MCP tool description and the OpenAPI summary come from it.
-6. `/record-fixture` for at least one case, a replay test in the matching test module
-   (`test_tasks.py` for the data tasks, `test_lists.py` for the `list_*` tasks,
-   `test_slices.py` for the slices) that also calls the tool end to end with
-   `xippios.core.testing.mcp_call` (and compares what was sent through
-   `sent_urls(route)`, never a request from `route.calls`), a live smoke test in
-   `test_live.py`.
-7. `CHANGELOG.md` under Unreleased, README status table, then the full check suite.
-
-Reference lookups (commodities, countries, attributes) are tasks too, named
-`list_<thing>`, so agents can form valid calls; one whose whole list an agent needs and
-the default result cap (200 rows or 64 KB) would cut gets a cap of its own in `MCP_CAPS`
-in `tasks.py`, which `mcp.py` passes through (ADR-0016). A task-shaped function that returns a
-subset of an upstream record builds its model with `UpstreamModel.project`; nothing is
-renamed or computed, parsing a value (`parse_decimal`) is the only override. Upstream's
-documented error shapes go into `ClientConfig.classify` in `_client.py`, once; wrappers
-use `client.get_json` and never inspect status codes. An upstream that reports an hourly
-or daily quota gets one `QuotaPolicy` installed on `config` there, as `_client.py` does:
-`policy = QuotaPolicy(...)` installed on `config` with `policy.install(...)`, and
-`classify` maps its answer to a spent quota to `RateLimitError` with `retry_after`
-(ADR-0010, ADR-0015).
-
-## How to record a fixture
-
-Run `/record-fixture <endpoint> <case> <parameters>`. It performs one live request
-through the real client with `xippios.core.testing.record_sync` and writes
-`tests/fixtures/<endpoint>/<case>.json` with credentials scrubbed. Grep the file for
-key patterns, and for the personal identifiers the package keeps out of its projections
-(ADR-0017), before committing. Fixtures are never typed in by hand.
 
 ## Commands
 
 ```bash
-uv sync --all-extras
-uv run pytest                      # offline, replays fixtures
-uv run pytest -m live              # needs XIPPIOS_LIVE_TESTS=1 and DATA_GOV_API_KEY
-uv run ruff check . && uv run ruff format --check .
-uv run mypy
-uv run pre-commit run --all-files
+uv run pytest -m live --tb=short   # needs XIPPIOS_LIVE_TESTS=1 and DATA_GOV_API_KEY
+
 uv run xippios-usda-psd-mcp   # stdio; add --http for streamable HTTP
 ```
 
-The offline run is core's plugin's (ADR-0013): in every test not marked `live` it refuses
-the network and skips the rate limiter's waits, and the key sent is its placeholder,
-with `DATA_GOV_API_KEY` set to it because `pyproject.toml` names that variable under
-`xippios_placeholder_key_envs`; the package keeps no placeholder fixture of its own.
-A test that asserts a limiter wait or a quota pause is marked `rate_limited`, one that
-must reach the network `network`.
+The offline run sends core's placeholder key, with `DATA_GOV_API_KEY` set to it because
+`pyproject.toml` names that variable under `xippios_placeholder_key_envs`; the package
+keeps no placeholder fixture of its own.
 
-`.github/workflows/live.yml` runs `uv run pytest -m live` with `XIPPIOS_LIVE_TESTS=1`
-nightly at 01:25 UTC, a time derived from the slug so that sources sharing a key never
-start together, and on demand from the Actions tab; pull requests never run live tests.
-Only its `uv run pytest -m live` step sees the key, from the org secret `DATA_GOV_API_KEY`.
+`.github/workflows/live.yml` runs `uv run pytest -m live --tb=short` with
+`XIPPIOS_LIVE_TESTS=1` nightly at 01:25 UTC, a time derived from the slug so that sources
+sharing a key never start together, and on demand from the Actions tab; pull requests
+never run live tests. Only its `uv run pytest -m live --tb=short` step sees the key, from
+the org secret `DATA_GOV_API_KEY`.
 
-## Workflow rules
+## USDA FAS PSD Online specifics
 
-- Branch from `main` as `feature/<topic>`, `fix/<topic>`, `chore/<topic>` or `docs/<topic>`.
-  Never commit to `main`.
-- Commit small, with Conventional Commits messages (`feat(tasks): add get_balance_sheet`).
-- Open the PR with `gh pr create`; the body is the definition-of-done checklist from
-  `.github/PULL_REQUEST_TEMPLATE.md`, ticked honestly, with assumptions listed.
-- `ruff` leaves `docs/` alone; never reformat the upstream snapshot.
-- Template and core updates: a new sdk-template release, and the core minor it carries,
-  arrive in one adoption PR, `chore/template-update-<tag>`, before the next release
-  (conventions §15); `/adopt-release <tag>` walks it, and it auto-merges after the
-  reviewer's `ready`. `uvx copier update` re-renders the files the template owns
-  (`tests/conftest.py`, `tests/test_layout.py` and `tests/test_adapters.py` among them;
-  answers are in `.copier-answers.yml`) and never overwrites the files this package fills:
-  `__init__.py`, `_client.py`, `models.py`, `api/`, `tasks.py`, `tasks_write.py`,
-  `params.py`, `enums.py`, `reference/`, `scripts/`, `tests/test_tasks.py`,
-  `tests/test_tasks_write.py`, `tests/test_live.py`, `tests/fixtures/`, `docs/upstream/`,
-  `README.md` and `CHANGELOG.md`. Template changes to those are listed per release under
-  "Hand-apply" in sdk-template's
-  [CHANGELOG](https://github.com/xippios/sdk-template/blob/main/CHANGELOG.md); port them
-  by hand in the same PR.
-- If a convention seems wrong, say so in the PR and follow it anyway; changing it is a
-  PR against `sdk-core/docs/conventions.md` plus an ADR.
-
-## Never
-
-- Never hand-write a fixture, and never commit one without grepping for key patterns.
-- Never read or print `.envrc`, `.env`, or any variable ending in `_API_KEY`.
-- Never write a key into a file or a commit.
-- Never put logic in `mcp.py` or `http.py`; never add a route or tool by hand.
-- Never rename or re-map an upstream concept to another source's (ADR-0003).
-- Never return a documented personal identifier in a task's projection, echo one in
-  `meta.request`, or commit one in a fixture (ADR-0017).
-- Never edit `docs/upstream/` by hand; `/refresh-upstream` fetches, a PR reviews.
-- Never add `src/xippios/__init__.py` or `src/xippios/usda/__init__.py`, the provider level.
-- Never tag, merge, release, force-push, or touch `gh secret`. Those are human actions;
-  the one exception is enabling auto-merge on a `chore/template-update*` or
-  `chore/release-*` PR after the reviewer's `ready` (ADR-0018).
-
-## When something is unclear
-
-Prefer the smallest change that satisfies the documents above, state the assumption in
-the PR description, and stop rather than guess at upstream semantics or public API shape.
+- Tests: a replay test goes into the module of its kind, `test_tasks.py` for the data
+  tasks, `test_lists.py` for the `list_*` tasks, `test_slices.py` for the slices
+  (`/add-endpoint` step 6).
+- The quota is the gateway's, not this package's: `_client.py` puts `Gateway.policy`,
+  core's one `QuotaPolicy` per process for the shared key, on `config` with
+  `gateway.install(...)`, and `classify` asks `gateway.classify` first, which maps a spent
+  quota's 429 to `RateLimitError` with `retry_after` (ADR-0009, ADR-0010, ADR-0015). An
+  endpoint added here installs no policy of its own; only PSD's own error shapes go into
+  `classify`, after the gateway's.

@@ -6,28 +6,23 @@ lookups and argument checks need no network call. ``scripts/refresh_reference.py
 writes them through the ``api/`` wrappers, never by hand, and regenerates the
 ``AttributeId`` and ``UnitId`` enums in ``enums.py``; ``reference/README.md`` carries
 the provenance of every file. Each file keeps upstream's records verbatim, under
-upstream's field names.
+upstream's field names; core's ``PackagedList.load(PACKAGE, name)`` reads one.
 
 Refresh policy: ``/refresh-reference-data`` runs inside ``/release-prep``, and whenever
 a validation failure names a code the package lacks.
 """
 
-import difflib
 import functools
-from datetime import date
-from typing import Any
+from datetime import datetime
 
-from xippios.core import InvalidRequestError, UpstreamModel, load_json
+from xippios.core import InvalidRequestError, PackagedList, UnknownCode, closest
 
 from xippios.usda.psd._client import SOURCE
-from xippios.usda.psd.errors import UnknownCode
 
 __all__ = [
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
-    "PackagedList",
     "attribute_names",
-    "packaged_values",
     "validate_attribute_id",
     "validate_commodity_code",
     "validate_country_code",
@@ -50,55 +45,12 @@ checks it before a refresh.
 """
 
 
-class PackagedList(UpstreamModel):
-    """One packaged list: ``reference/<name>.json``.
-
-    Attributes:
-        param: The list, as the upstream path names it, e.g. ``"commodities"``.
-        endpoint: The upstream operation it was fetched from, e.g.
-            ``"PSDData_GetCommodities"``.
-        fetched: Day the list was fetched (UTC).
-        records: Upstream's records verbatim, under upstream's field names, in upstream
-            order, e.g. ``{"commodityCode": "0410000", "commodityName": "Wheat"}``.
-    """
-
-    param: str
-    endpoint: str
-    fetched: date
-    records: list[dict[str, Any]]
-
-
-def packaged_values(name: str) -> PackagedList | None:
-    """The packaged list ``name``, or ``None`` when it is not packaged."""
-    if name not in PACKAGED_LISTS:
-        return None
-    return PackagedList.model_validate(load_json(PACKAGE, f"{name}.json"))
-
-
 @functools.cache
-def _codes(name: str, code_field: str, name_field: str) -> tuple[str, dict[str, str]]:
-    """Fetch date and ``{code: upstream name}`` of a packaged list, in upstream order."""
-    packaged = packaged_values(name)
-    if packaged is None:  # pragma: no cover - only the lists above are asked for
-        raise KeyError(name)
+def _codes(name: str, code_field: str, name_field: str) -> tuple[datetime, dict[str, str]]:
+    """Fetch time and ``{code: upstream name}`` of a packaged list, in upstream order."""
+    packaged = PackagedList.load(PACKAGE, name)
     codes = {str(record[code_field]): str(record[name_field]) for record in packaged.records}
-    return packaged.fetched.isoformat(), codes
-
-
-def _closest(value: str, codes: dict[str, str]) -> list[tuple[str, str]]:
-    """Up to three known codes close to ``value``, by code first, then by upstream name.
-
-    An agent may pass ``"us"`` for ``"US"`` or ``"wheat"`` for ``"0410000"``; both
-    lead to the code.
-    """
-    matches = difflib.get_close_matches(value.upper(), list(codes), n=3)
-    by_name = {name.lower(): code for code, name in codes.items()}
-    matches += [
-        by_name[name]
-        for name in difflib.get_close_matches(value.lower(), list(by_name), n=3)
-        if by_name[name] not in matches
-    ]
-    return [(code, codes[code]) for code in matches[:3]]
+    return packaged.fetched, codes
 
 
 COUNTRY_HINTS: dict[str, str] = {
@@ -122,9 +74,15 @@ def _validate_code(
     if value in codes:
         return value
     hint = (hints or {}).get(value.strip().lower())
-    closest = [] if hint else _closest(value, codes)
     raise UnknownCode(
-        param, value, list_name=list_name, fetched=fetched, closest=closest, hint=hint
+        param,
+        value,
+        list_name=list_name,
+        fetched=fetched,
+        closest=() if hint else closest(value, codes),
+        hint=hint,
+        reason="PSD answers unknown codes with an empty result, so the package refuses them.",
+        source=SOURCE,
     )
 
 
@@ -242,8 +200,9 @@ def validate_attribute_id(attribute_id: int) -> int:
         attribute_id,
         list_name="commodityAttributes",
         fetched=fetched,
-        closest=_closest(str(attribute_id), codes),
+        closest=closest(str(attribute_id), codes),
         reason="The data operations take no attribute; the task keeps this id's records "
         "after the call, so an id the packaged list lacks would give an empty result, and "
         "the package refuses it. list_commodity_attributes lists the ids.",
+        source=SOURCE,
     )

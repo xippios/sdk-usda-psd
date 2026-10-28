@@ -1,17 +1,17 @@
-"""Live smoke tests: skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
+"""Live smoke tests, one per task, skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-One live smoke test per task function, twelve in all, fourteen keyed calls: one each,
-except the time series, which spends one per market year (corn, United States, 2021 to
-2023, three). The data tasks ask for wheat, United States, market year 2023, all
-checked against the packaged lists; the slices for wheat (balance sheet, latest
-release), corn (time series) and soybeans (top producers, 2023). The slices record what
+``/add-endpoint`` adds them. Twelve in all, fourteen keyed calls: one each, except the
+time series, which spends one per market year (corn, United States, 2021 to 2023,
+three). The data tasks ask for wheat, United States, market year 2023, all checked
+against the packaged lists; the slices for wheat (balance sheet, latest release), corn
+(time series) and soybeans (top producers, 2023). The slices record what
 they answered as test properties (``--junitxml`` shows them), never a key. The list
 tasks answer from the package without a call, so their test fetches the list through
 its endpoint wrapper and checks that the packaged records equal it: the
 freshness check ``reference/README.md`` promises. A difference fails the test naming
 what is gone and what is new; ``/refresh-reference-data`` then refreshes the package.
 Next to them, the template's reachability check, ``test_upstream_answers``, sends no
-key: a plain request to ``BASE_URL`` that spends no quota call.
+key: a plain request to ``BASE_URL`` that spends no keyed call.
 """
 
 import re
@@ -20,9 +20,10 @@ from typing import Any
 
 import httpx
 import pytest
+from xippios.core.data_gov import Gateway
 
 from xippios.usda.psd import api, tasks
-from xippios.usda.psd._client import BASE_URL, config, policy
+from xippios.usda.psd._client import BASE_URL, config
 from xippios.usda.psd.enums import AttributeId
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
@@ -34,9 +35,8 @@ VINTAGE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 async def test_upstream_answers() -> None:
     """The base URL answers without a server error (sdk-template's reachability check).
 
-    A plain request, not the package's client, so no key goes out and no call counts
-    against the key's quota; a keyed gateway's answer to it (a 403 or a 404, say) still
-    shows the host is up.
+    A plain request, not the package's client, so no key goes out and it spends no keyed
+    call; a keyed gateway's answer to it (a 403 or a 404, say) still shows the host is up.
     """
     async with httpx.AsyncClient(
         headers={"User-Agent": config.user_agent},
@@ -55,7 +55,7 @@ async def test_get_data_live() -> None:
     assert result.meta.vintage is not None
     assert VINTAGE.match(result.meta.vintage)
     assert result.meta.published_at is None
-    snapshot = policy.snapshot()
+    snapshot = Gateway.policy.snapshot()
     assert snapshot is not None
     assert snapshot.limit == 1000
 
@@ -138,8 +138,9 @@ async def test_packaged_list_equals_the_live_list(task: str, endpoint: str) -> N
     new = [record for record in live if record not in packaged.data]
     behind = bool(stale or new)
     assert not behind, (
-        f"{task} is behind upstream (packaged {packaged.meta.vintage}): {len(stale)} packaged "
-        f"records upstream no longer sends, {len(new)} upstream records the package lacks; "
+        f"{task} is behind upstream (fetched {packaged.meta.retrieved_at:%Y-%m-%d}): "
+        f"{len(stale)} packaged records upstream no longer sends, {len(new)} upstream "
+        "records the package lacks; "
         f"first of each: {stale[:5]}, {new[:5]}. Refresh with /refresh-reference-data."
     )
     assert packaged.data == live, f"{task}: the same records in another order"
