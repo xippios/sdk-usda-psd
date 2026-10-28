@@ -1,7 +1,7 @@
 """The five list tasks answer from the packaged lists and never call upstream.
 
 The packaged files were written from the answers recorded in
-``tests/fixtures/<operation>/all.json``, so a task returning exactly what the endpoint
+``tests/fixtures/<wrapper>/all.json``, so a task returning exactly what the endpoint
 wrapper parses from that recording proves the package answers what upstream answered.
 Every test here runs with ``respx`` active: a request no route matches fails loudly, and
 each test checks that the tasks sent none. ``meta`` is core's ``PackagedList.meta``
@@ -108,7 +108,7 @@ async def test_list_answers_the_recorded_records_without_a_call(
     model: type[BaseModel],
 ) -> None:
     """The recording is mounted, so a call would succeed silently; none is made."""
-    route = replay_fixture(endpoint, "all")
+    route = replay_fixture(WRAPPERS[endpoint], "all")
     result = await getattr(tasks, f"{task}_async")()
     assert not respx_mock.calls, f"{task} called upstream"
     recorded = await getattr(api, WRAPPERS[endpoint])()

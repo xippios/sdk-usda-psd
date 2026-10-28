@@ -59,20 +59,20 @@ def classify(response: httpx.Response) -> XippiosError | None:
 
     The gateway's answers come first, mapped by ``gateway.classify``: its ``API_KEY_*``
     refusals as ``AuthError`` naming the code and the variable, never the key (recorded:
-    ``API_KEY_INVALID``, ``PSDData_GetCommodities/invalid_key.json``); its 429
+    ``API_KEY_INVALID``, ``get_commodities/invalid_key.json``); its 429
     (``OVER_RATE_LIMIT``) as ``RateLimitError`` whose ``retry_after`` is the wait
     ``Gateway.policy`` keeps the quota spent for, from ``Retry-After``, else the hour
     (recorded after spending the quota on 2026-10-23,
-    ``PSDData_GetCommodities/over_rate_limit.json``: ``Retry-After: 3151``,
+    ``get_commodities/over_rate_limit.json``: ``Retry-After: 3151``,
     ``x-ratelimit-remaining: 0``); core asks ``classify`` before it retries, so a wait
     beyond ``RetryPolicy.backoff_max`` is raised after one request; and its ``NOT_FOUND``
     404 as ``NotFoundError``: no such path. PSD's own follows:
 
     - 404 with an empty ``text/plain`` body on a data path is PSD's own answer for a
       market year without data, recorded for 1900 on every data form: one country
-      (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
-      (``PSDData_GetCommodityDataByYear/year_1900.json``) and the world
-      (``PSDData_GetWorldCommodityDataByYear/year_1900.json``). It is
+      (``get_country_commodity_data_by_year/unknown_year.json``), every country
+      (``get_commodity_data_by_year/year_1900.json``) and the world
+      (``get_world_commodity_data_by_year/year_1900.json``). It is
       ``errors.NoDataForYear``, a ``NotFoundError``; the gateway's ``NOT_FOUND``, and an
       empty 404 anywhere else, are a plain ``NotFoundError``.
 

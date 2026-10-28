@@ -20,10 +20,12 @@ from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import DataReleaseInfo
 
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
-DATA = "PSDData_GetCountryCommodityDataByYear"
-ALL = "PSDData_GetCommodityDataByYear"
-WORLD = "PSDData_GetWorldCommodityDataByYear"
-RELEASES = "PSDData_GetDataReleaseInfo"
+DATA = "get_country_commodity_data_by_year"
+ALL = "get_commodity_data_by_year"
+WORLD = "get_world_commodity_data_by_year"
+# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
+ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
+RELEASES_OVER_CAP = "PSDData_GetDataReleaseInfo"
 
 
 def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -48,7 +50,7 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     """``country/all``: records carry different releases; ``vintage`` is the latest."""
-    replay_fixture(ALL, "wheat_all_2023")
+    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
     result = tasks.get_data(WHEAT, 2023)
     assert result.meta.endpoint == "PSDData_GetCommodityDataByYear"
     assert result.meta.request == {"commodity_code": WHEAT, "market_year": 2023}
@@ -84,7 +86,7 @@ def _release_vintage(releases: list[DataReleaseInfo], country_code: str | None) 
     ("endpoint", "case", "country_code", "vintage"),
     [
         (DATA, "wheat_us_2023", "US", "2026-07"),
-        (ALL, "wheat_all_2023", None, "2026-10"),
+        (ALL_OVER_CAP, "wheat_all_2023", None, "2026-10"),
         (WORLD, "wheat_world_2023", None, "2026-10"),
     ],
 )
@@ -99,7 +101,7 @@ def test_vintage_equals_the_release_list(
     for the same commodity, market year and country (the latest across countries for
     every country and the world), so ``vintage`` needs no second call."""
     replay_fixture(endpoint, case)
-    replay_fixture(RELEASES, "wheat")
+    replay_fixture(RELEASES_OVER_CAP, "wheat")
     if endpoint == WORLD:
         result = tasks.get_world_data(WHEAT, 2023)
     else:
@@ -112,8 +114,8 @@ def test_every_country_carries_its_own_release(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """Wheat 2023: each of the 123 countries' records carry exactly its release record."""
-    replay_fixture(ALL, "wheat_all_2023")
-    replay_fixture(RELEASES, "wheat")
+    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
+    replay_fixture(RELEASES_OVER_CAP, "wheat")
     result = tasks.get_data(WHEAT, 2023)
     releases = {
         r.country_code: (r.release_year, r.release_month)
@@ -128,7 +130,7 @@ def test_vintage_is_none_for_an_empty_answer() -> None:
 
 
 def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    route = replay_fixture(RELEASES, "wheat")
+    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
     result = tasks.get_release_dates(WHEAT)
     assert len(result.data) == 7754
     assert result.meta.endpoint == "PSDData_GetDataReleaseInfo"
@@ -141,7 +143,7 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
 def test_get_release_dates_filters_after_the_one_call(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture(RELEASES, "wheat")
+    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
     one = tasks.get_release_dates(WHEAT, market_year=2023, country_code="US")
     assert [(r.country_code, r.market_year, r.release_year, r.release_month) for r in one.data] == [
         ("US", 2023, 2026, 7)
@@ -162,7 +164,7 @@ async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
 ) -> None:
     """Wheat's release list over MCP, every country and market year: cut at the family's
     default cap with core's note, which promises no filter the tool lacks (ADR-0016)."""
-    replay_fixture(RELEASES, "wheat")
+    replay_fixture(RELEASES_OVER_CAP, "wheat")
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
     assert len(payload["data"]) == 200
     assert payload["note"] == (

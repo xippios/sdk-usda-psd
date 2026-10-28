@@ -2,7 +2,7 @@
 
 Reference: ``docs/upstream/openapi/portal-document.json``, operation
 ``PSDData_GetCommodityAttributes``: no parameters, the response typed only as ``object``.
-The record shape is the recorded one, ``tests/fixtures/PSDData_GetCommodityAttributes/all.json``,
+The record shape is the recorded one, ``tests/fixtures/get_commodity_attributes/all.json``,
 parsed into ``models.CommodityAttribute``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """

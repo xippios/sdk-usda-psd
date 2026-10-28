@@ -2,7 +2,7 @@
 
 Reference: ``docs/upstream/openapi/portal-document.json``, operation
 ``PSDData_GetUnitsOfMeasure``: no parameters, the response typed only as ``object``.
-The record shape is the recorded one, ``tests/fixtures/PSDData_GetUnitsOfMeasure/all.json``,
+The record shape is the recorded one, ``tests/fixtures/get_units_of_measure/all.json``,
 parsed into ``models.UnitOfMeasure``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
