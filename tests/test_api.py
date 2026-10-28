@@ -2,9 +2,11 @@
 
 from collections.abc import Callable
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 import respx
+from xippios.core.testing import fixture_path, load_fixture
 
 from xippios.usda.psd import api
 from xippios.usda.psd.enums import AttributeId, UnitId
@@ -20,9 +22,7 @@ from xippios.usda.psd.models import (
 
 pytestmark = pytest.mark.anyio
 
-# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
-ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
-RELEASES_OVER_CAP = "PSDData_GetDataReleaseInfo"
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 async def test_get_commodities(
@@ -135,13 +135,19 @@ async def test_get_country_commodity_data(
 async def test_get_commodity_data_for_every_country(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """``country/all``, the largest answer: 1,875 records, 125 countries, 275,759 bytes."""
-    route = replay_fixture(ALL_OVER_CAP, "corn_all_2023")
+    """``country/all``, the largest answer, recorded cut (ADR-0019): upstream sent 1,875
+    records, 275,759 bytes (``original_count``, ``original_bytes``); the cut keeps the
+    first whole records, which upstream orders by country code."""
+    recorded = load_fixture(fixture_path(FIXTURES, "get_commodity_data_by_year", "corn_all_2023"))
+    assert recorded.response.truncated
+    assert (recorded.response.original_count, recorded.response.original_bytes) == (1875, 275759)
+    route = replay_fixture("get_commodity_data_by_year", "corn_all_2023")
     records = await api.get_commodity_data_by_year("0440000", 2023)
-    assert len(records) == 1875
-    assert len({r.country_code for r in records}) == 125
+    assert records
     assert {r.commodity_code for r in records} == {"0440000"}
     assert {r.market_year for r in records} == {2023}
+    codes = [r.country_code for r in records]
+    assert codes == sorted(codes), "upstream's order: by country code"
     assert route.calls.last.request.url.path == "/api/psd/commodity/0440000/country/all/year/2023"
 
 
@@ -160,17 +166,22 @@ async def test_get_world_commodity_data(
 async def test_get_data_release_info(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
+    """Recorded cut (ADR-0019): upstream sent 7,754 records, 837,433 bytes; it orders them by
+    market year, oldest first, so the cut keeps the first market years from 1960 on."""
+    recorded = load_fixture(fixture_path(FIXTURES, "get_data_release_info", "wheat"))
+    assert recorded.response.truncated
+    assert (recorded.response.original_count, recorded.response.original_bytes) == (7754, 837433)
+    route = replay_fixture("get_data_release_info", "wheat")
     releases = await api.get_data_release_info("0410000")
-    assert len(releases) == 7754
     assert releases[0] == DataReleaseInfo(
         commodity_code="0410000",
-        country_code="BL",
+        country_code="AF",
         market_year=1960,
         release_year=2006,
         release_month=7,
     )
-    assert len({r.country_code for r in releases}) == 145
+    years = [r.market_year for r in releases]
+    assert years == sorted(years), "upstream's order: by market year, oldest first"
     assert "00" not in {r.country_code for r in releases}
     assert route.call_count == 1
     path = route.calls.last.request.url.path

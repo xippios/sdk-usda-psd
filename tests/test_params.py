@@ -214,14 +214,12 @@ def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -
         validate_attribute_id(attribute_id)  # type: ignore[arg-type]
 
 
-# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
-ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
 DATA_FIXTURES = [
     ("get_country_commodity_data_by_year", "wheat_us_2021"),
     ("get_country_commodity_data_by_year", "wheat_us_2022"),
     ("get_country_commodity_data_by_year", "wheat_us_2023"),
-    (ALL_OVER_CAP, "corn_all_2023"),
-    (ALL_OVER_CAP, "wheat_all_2023"),
+    ("get_commodity_data_by_year", "corn_all_2023"),
+    ("get_commodity_data_by_year", "wheat_all_2023"),
     ("get_world_commodity_data_by_year", "soybeans_world_2023"),
     ("get_world_commodity_data_by_year", "wheat_world_2023"),
 ]

@@ -37,9 +37,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
 DATA = "get_country_commodity_data_by_year"
 ALL = "get_commodity_data_by_year"
-# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
-ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
-RELEASES_OVER_CAP = "PSDData_GetDataReleaseInfo"
+RELEASES = "get_data_release_info"
 SLICES = ["get_balance_sheet", "get_time_series", "get_top_countries", "get_latest_release"]
 
 WHEAT_US_2023_KEYS = [
@@ -64,8 +62,8 @@ WHEAT_US_2023_KEYS = [
 
 OPERATIONS = {
     DATA: "PSDData_GetCountryCommodityDataByYear",
-    ALL_OVER_CAP: "PSDData_GetCommodityDataByYear",
-    RELEASES_OVER_CAP: "PSDData_GetDataReleaseInfo",
+    ALL: "PSDData_GetCommodityDataByYear",
+    RELEASES: "PSDData_GetDataReleaseInfo",
 }
 """The upstream operation behind each fixture directory ``_recorded`` reads, verbatim, as
 the wrapper passes it to ``parse`` and as ``meta.endpoint`` carries it."""
@@ -449,7 +447,9 @@ async def test_time_series_tool_end_to_end(
 def test_get_top_countries_sorted_and_truncated(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
+    """On the cut ``wheat_all_2023`` (ADR-0019), which keeps the countries from AF to RS
+    in upstream's order by country code: the United States is not in it."""
+    route = replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_top_countries(WHEAT, 2023, AttributeId.PRODUCTION, 5)
     assert route.call_count == 1
     assert [(r.country_code, r.value) for r in result.data] == [
@@ -457,9 +457,9 @@ def test_get_top_countries_sorted_and_truncated(
         ("E4", Decimal("135375.0")),  # the European Union ranks like a country
         ("IN", Decimal("110554.0")),
         ("RS", Decimal("91500.0")),
-        ("US", Decimal("49095.0")),
+        ("CA", Decimal("33414.0")),
     ]
-    recorded = _recorded(ALL_OVER_CAP, "wheat_all_2023", list[CommodityData])
+    recorded = _recorded(ALL, "wheat_all_2023", list[CommodityData])
     assert all(record in recorded for record in result.data), "records as upstream sent them"
     assert {r.attribute_id for r in result.data} == {28}
     assert result.meta.endpoint == "PSDData_GetCommodityDataByYear"
@@ -477,20 +477,18 @@ def test_get_top_countries_sorted_and_truncated(
 def test_top_countries_ties_keep_upstream_order(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Wheat 2023: 123 countries report production, 44 of them 0. With ``n`` above the
-    count every record comes back, and equal values in upstream's order."""
-    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
+    """With ``n`` above the count every production record comes back, and equal values,
+    the many zeros, in upstream's order."""
+    replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_top_countries(WHEAT, 2023, AttributeId.PRODUCTION, 200)
     production = [
-        r
-        for r in _recorded(ALL_OVER_CAP, "wheat_all_2023", list[CommodityData])
-        if r.attribute_id == 28
+        r for r in _recorded(ALL, "wheat_all_2023", list[CommodityData]) if r.attribute_id == 28
     ]
-    assert len(result.data) == len(production) == 123
+    assert len(result.data) == len(production)
     zeros = [r for r in result.data if r.value == 0]
-    assert len(zeros) == 44
+    assert len(zeros) > 1
     assert zeros == [r for r in production if r.value == 0]
-    assert result.data[-44:] == zeros
+    assert result.data[-len(zeros) :] == zeros
     values = [r.value for r in result.data]
     assert values == sorted(values, reverse=True)
 
@@ -498,19 +496,20 @@ def test_top_countries_ties_keep_upstream_order(
 def test_top_countries_default_n_is_ten(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    replay_fixture(ALL_OVER_CAP, "corn_all_2023")
+    """On the cut ``corn_all_2023``, AF to RH: the United States is not in it."""
+    replay_fixture(ALL, "corn_all_2023")
     result = tasks.get_top_countries(CORN, 2023, AttributeId.EXPORTS)
     assert [r.country_code for r in result.data] == [
-        "US",
         "BR",
         "AR",
-        "UP",
-        "RS",
         "E4",
         "BM",
-        "TU",
         "RB",
-        "SF",
+        "CA",
+        "PA",
+        "PK",
+        "CB",
+        "MD",
     ]
     assert result.meta.request["n"] == 10
 
@@ -561,7 +560,7 @@ def test_the_gateways_not_found_propagates_unchanged(
 async def test_top_countries_tool_end_to_end(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
+    replay_fixture(ALL, "wheat_all_2023")
     payload = await mcp_call(
         server,
         "usda_psd_get_top_countries",
@@ -582,28 +581,20 @@ async def test_top_countries_tool_end_to_end(
 def test_get_latest_release_is_the_newest_month_of_the_list(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
+    """On the cut release list (ADR-0019), market years 1960 to 1978: its newest release
+    is 2024-02, Pakistan's revision of those years."""
+    route = replay_fixture(RELEASES, "wheat")
     result = tasks.get_latest_release(WHEAT)
     assert route.call_count == 1
-    recorded = _recorded(RELEASES_OVER_CAP, "wheat", list[DataReleaseInfo])
+    recorded = _recorded(RELEASES, "wheat", list[DataReleaseInfo])
     newest = max((r.release_year, r.release_month) for r in recorded)
-    assert newest == (2026, 10)
+    assert newest == (2024, 2)
     assert result.data == [r for r in recorded if (r.release_year, r.release_month) == newest]
-    assert len(result.data) == 146
-    assert sum(r.market_year == 2026 for r in result.data) == 123
+    assert {r.country_code for r in result.data} == {"PK"}
     assert result.meta.endpoint == "PSDData_GetDataReleaseInfo"
     assert result.meta.request == {"commodity_code": WHEAT}
-    assert result.meta.vintage == "2026-10"
+    assert result.meta.vintage == "2024-02"
     assert result.meta.published_at is None
-
-
-def test_latest_release_vintage_matches_get_data(
-    replay_fixture: Callable[[str, str], respx.Route],
-) -> None:
-    """Same form as the data tasks' vintage: wheat 2023 for every country is 2026-10."""
-    replay_fixture(RELEASES_OVER_CAP, "wheat")
-    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
-    assert tasks.get_latest_release(WHEAT).meta.vintage == tasks.get_data(WHEAT, 2023).meta.vintage
 
 
 def test_latest_of_no_releases_is_empty() -> None:
@@ -623,12 +614,12 @@ def test_latest_of_no_releases_is_empty() -> None:
 async def test_latest_release_tool_end_to_end(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    replay_fixture(RELEASES_OVER_CAP, "wheat")
+    replay_fixture(RELEASES, "wheat")
     payload = await mcp_call(server, "usda_psd_get_latest_release", {"commodity_code": WHEAT})
-    assert len(payload["data"]) == 146, "under the cap of 200 rows"
+    assert payload["data"]
     assert "note" not in payload
-    assert {(row["release_year"], row["release_month"]) for row in payload["data"]} == {(2026, 10)}
-    assert payload["meta"]["vintage"] == "2026-10"
+    assert {(row["release_year"], row["release_month"]) for row in payload["data"]} == {(2024, 2)}
+    assert payload["meta"]["vintage"] == "2024-02"
 
 
 # validation, before any request
