@@ -1,7 +1,7 @@
 {
   "param": "regions",
   "endpoint": "PSDData_GetRegions",
-  "fetched": "2026-10-23",
+  "fetched": "2026-10-28T21:42:04Z",
   "records": [
     {
       "regionCode": "R00",

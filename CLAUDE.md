@@ -190,10 +190,10 @@ record it in `CHANGELOG.md` as a breaking change (conventions §12).
 
 The `list_*` tasks answer from these files and never call upstream: core's `PackagedList`
 builds `meta` (ADR-0022, rule 1), `meta.endpoint` the file's `endpoint`,
-`meta.retrieved_at` its `fetched` (the bare date `2026-10-23` reads as 00:00 UTC until the
-next refresh writes the full time), `meta.vintage` `None` (upstream gives the lists no
-version). Their filters select records client-side, codes and names unchanged, upstream
-order kept. Over MCP `list_countries` has a
+`meta.retrieved_at` its `fetched`, the UTC time of the list's fetch to the second as
+`PackagedList.write` writes it (the refresh of 2026-10-28), `meta.vintage` `None`
+(upstream gives the lists no version). Their filters select records client-side, codes
+and names unchanged, upstream order kept. Over MCP `list_countries` has a
 cap of its own, 300 rows (`tasks.MCP_CAPS`, ADR-0016), so its 251 countries arrive whole;
 `get_data`, `get_release_dates` and `get_time_series` keep the family's limits, 200 rows
 or 64 KB, with a note naming their filters (`country_code`; `market_year`,
