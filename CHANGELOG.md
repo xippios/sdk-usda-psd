@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
+This release requires xippios-core 0.3.0 and sdk-template v0.3.0 as its floor
+(`xippios-core~=0.3.0`, the extras likewise); 0.2.0 does not work on core 0.3.0: it is
+bound to core 0.2.x (`~=0.2.0`), and while core is 0.x a minor keeps no compatibility
+with the one before it (conventions §12, ADR-0018).
+
 Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (conventions §15).
 
 ### Changed
@@ -16,8 +23,6 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   1): `meta.retrieved_at` is when the packaged list was fetched (the file's `fetched`, a
   UTC time to the second since the refresh of 2026-10-28), no longer when the task
   answered, and `meta.vintage` is `None`, no longer the fetch date.
-- `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
-  `get_release_dates` without its filters, and the `list_*` tasks without theirs.
 - BREAKING: `_client.policy` gives way to `_client.gateway`, core's
   `xippios.core.data_gov.Gateway`, whose `Gateway.policy` is the one quota policy per
   process for `DATA_GOV_API_KEY`. The gateway's `API_KEY_*` refusals, its 429 and its
@@ -25,6 +30,30 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   retried"; a request into a spent quota waits within the policy's `pause_cap` (30 s by
   default) or is refused with `source` `"api.data.gov"`, not `"usda-psd"`, and a message
   that starts "api.data.gov quota of the key in DATA_GOV_API_KEY spent".
+- BREAKING: the nine endpoint wrappers take conventions 1.22 §2's names, module and
+  function alike: the upstream operation in snake case without the `PSDData_` prefix
+  every operation shares, so `PSDData_GetCommodityDataByYear` is
+  `get_commodity_data_by_year` in `api/get_commodity_data_by_year.py`, and likewise
+  `get_commodities`, `get_commodity_attributes`, `get_countries`,
+  `get_country_commodity_data_by_year`, `get_data_release_info`, `get_regions`,
+  `get_units_of_measure` and `get_world_commodity_data_by_year`. The old names are no
+  longer importable from `xippios.usda.psd.api`. The fixture directories follow
+  (`tests/fixtures/get_commodities/`, conventions §10); the three fixtures over the
+  256 KiB cap are re-recorded, cut, under the new names (below). `meta.endpoint` and the
+  packaged lists' `endpoint` keep the verbatim operation id
+  (`"PSDData_GetCommodityDataByYear"`), and the tasks, MCP tools and HTTP routes are
+  unchanged.
+- BREAKING: `get_time_series` takes `(commodity_code, country_code, start_year,
+  end_year, attribute_id=None)`: `attribute_id` moves after `end_year`, so a positional
+  call of 0.2.0 (`get_time_series("0440000", "US", 28, 2021, 2023)`) no longer works;
+  name it, `attribute_id=28`. It takes an id, a list of ids (`[28, 88]`) or, omitted,
+  every attribute; each year's records come in upstream's order, every id is checked
+  before the first request, an empty list is refused, and `meta.request` carries
+  `attribute_id` as given or leaves it out. Since the parameter takes a list, the HTTP
+  route is `POST /usda-psd/get_time_series` with a JSON body, no longer `GET` with query
+  parameters (conventions §9). MCP calls name their arguments and are unaffected.
+- `meta.request` leaves out a parameter left `None`: `get_data` without `country_code`,
+  `get_release_dates` without its filters, and the `list_*` tasks without theirs.
 - An unknown code or attribute id is refused with core's `UnknownCode`, an
   `InvalidRequestError` as before: its message reads "'0410001' is not a commodity_code
   in the packaged commodities list (fetched 2026-10-28). Did you mean ...", ends "If
@@ -51,28 +80,6 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
   `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
   CHANGELOG entry and the fixture cap; `gates.yml` arrives switched off; `CLAUDE.md`
   imports the family rules from `.claude/family.md`.
-- BREAKING: the nine endpoint wrappers take conventions 1.22 §2's names, module and
-  function alike: the upstream operation in snake case without the `PSDData_` prefix
-  every operation shares, so `PSDData_GetCommodityDataByYear` is
-  `get_commodity_data_by_year` in `api/get_commodity_data_by_year.py`, and likewise
-  `get_commodities`, `get_commodity_attributes`, `get_countries`,
-  `get_country_commodity_data_by_year`, `get_data_release_info`, `get_regions`,
-  `get_units_of_measure` and `get_world_commodity_data_by_year`. The old names are no
-  longer importable from `xippios.usda.psd.api`. The fixture directories follow
-  (`tests/fixtures/get_commodities/`, conventions §10); the three fixtures over the
-  256 KiB cap are re-recorded, cut, under the new names (below). `meta.endpoint` and the
-  packaged lists' `endpoint` keep the verbatim operation id
-  (`"PSDData_GetCommodityDataByYear"`), and the tasks, MCP tools and HTTP routes are
-  unchanged.
-- BREAKING: `get_time_series` takes `(commodity_code, country_code, start_year,
-  end_year, attribute_id=None)`: `attribute_id` moves after `end_year`, so a positional
-  call of 0.2.0 (`get_time_series("0440000", "US", 28, 2021, 2023)`) no longer works;
-  name it, `attribute_id=28`. It takes an id, a list of ids (`[28, 88]`) or, omitted,
-  every attribute; each year's records come in upstream's order, every id is checked
-  before the first request, an empty list is refused, and `meta.request` carries
-  `attribute_id` as given or leaves it out. Since the parameter takes a list, the HTTP
-  route is `POST /usda-psd/get_time_series` with a JSON body, no longer `GET` with query
-  parameters (conventions §9). MCP calls name their arguments and are unaffected.
 - `get_top_countries` gains `region_code` (rank one PSD region's countries, mapped
   through the packaged countries list, checked before the call against the regions
   the packaged countries carry, `R15` included; an unknown one is `UnknownCode` naming
