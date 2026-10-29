@@ -356,3 +356,10 @@ def test_the_world_region_is_refused_with_a_hint() -> None:
         "get_world_data's, and region_code takes a region countries belong to, as "
         "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
     )
+
+
+@pytest.mark.parametrize("region_code", [4, None, ["R04"]])
+def test_a_region_code_that_is_not_text_is_refused(region_code: object) -> None:
+    with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code") as info:
+        validate_region_code(region_code)  # type: ignore[arg-type]
+    assert not isinstance(info.value, UnknownCode)
