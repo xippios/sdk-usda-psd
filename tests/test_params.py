@@ -22,10 +22,13 @@ from xippios.usda.psd.params import (
     PACKAGE,
     PACKAGED_LISTS,
     attribute_names,
+    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
     validate_market_year,
+    validate_region_code,
+    validate_since,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -214,14 +217,12 @@ def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -
         validate_attribute_id(attribute_id)  # type: ignore[arg-type]
 
 
-# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
-ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
 DATA_FIXTURES = [
     ("get_country_commodity_data_by_year", "wheat_us_2021"),
     ("get_country_commodity_data_by_year", "wheat_us_2022"),
     ("get_country_commodity_data_by_year", "wheat_us_2023"),
-    (ALL_OVER_CAP, "corn_all_2023"),
-    (ALL_OVER_CAP, "wheat_all_2023"),
+    ("get_commodity_data_by_year", "corn_all_2023"),
+    ("get_commodity_data_by_year", "wheat_all_2023"),
     ("get_world_commodity_data_by_year", "soybeans_world_2023"),
     ("get_world_commodity_data_by_year", "wheat_world_2023"),
 ]
@@ -278,3 +279,80 @@ def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -
         validate_country_code(value)
     assert info.value.closest == ()
     assert "Did you mean" not in info.value.message
+
+
+def test_country_regions_are_the_packaged_list() -> None:
+    records = _records("countries")
+    regions = country_regions()
+    assert regions == {r["countryCode"]: r["regionCode"] for r in records}
+    assert (regions["US"], regions["BR"], regions["E4"]) == ("R01", "R04", "R05")
+
+
+@pytest.mark.parametrize("code", ["R01", "R04", "R18", "R15"])
+def test_region_codes_the_packaged_countries_carry_pass(code: str) -> None:
+    """``R15`` too: four countries carry it although ``PSDData_GetRegions`` lacks it."""
+    assert validate_region_code(code) == code
+
+
+def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
+    with pytest.raises(UnknownCode) as info:
+        validate_region_code("R99")
+    error = info.value
+    assert status_for(error) == 422
+    assert (error.param, error.value, error.list_name) == ("region_code", "R99", "countries")
+    assert error.fetched == FETCHED
+    assert error.closest == (("R09", "Middle East"),)
+    assert "Did you mean R09 (Middle East)?" in error.message
+    assert "list_regions and list_countries name the regions" in error.message
+    with pytest.raises(UnknownCode) as by_name:
+        validate_region_code("South America")
+    assert ("R04", "South America") in by_name.value.closest
+
+
+def test_a_region_the_regions_list_lacks_is_named_by_its_countries() -> None:
+    """``closest`` names ``R15`` by the countries that carry it, the packaged regions list
+    having no name for it."""
+    with pytest.raises(UnknownCode) as fifteen:
+        validate_region_code("R15 ")
+    assert ("R15", "Africa, NEC; Fernando Po; French Equatorial Africa; Other") in (
+        fifteen.value.closest
+    )
+
+
+@pytest.mark.parametrize(
+    ("since", "month"), [("2026-09", (2026, 9)), ("2024-12", (2024, 12)), ("1960-01", (1960, 1))]
+)
+def test_a_release_month_reads_as_year_and_month(since: str, month: tuple[int, int]) -> None:
+    assert validate_since(since) == month
+
+
+@pytest.mark.parametrize(
+    "since", ["2026-13", "2026-00", "2026-9", "2026-09-01", "\uff12\uff10\uff12\uff16-09", ""]
+)
+def test_other_release_months_are_refused(since: str) -> None:
+    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'"):
+        validate_since(since)
+
+
+def test_the_world_region_is_refused_with_a_hint() -> None:
+    """``R00`` (World) is in the packaged regions list, but no packaged country belongs to
+    it: the refusal says where the world total is, and what ``region_code`` takes."""
+    with pytest.raises(UnknownCode) as info:
+        validate_region_code("R00")
+    error = info.value
+    assert (error.param, error.value, error.list_name) == ("region_code", "R00", "countries")
+    assert error.closest == ()
+    assert "Did you mean" not in error.message
+    assert error.message.startswith(
+        "'R00' is not a region_code in the packaged countries list (fetched 2026-10-23). "
+        "R00 (World) is in list_regions, but no country belongs to it: the world total is "
+        "get_world_data's, and region_code takes a region countries belong to, as "
+        "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
+    )
+
+
+@pytest.mark.parametrize("region_code", [4, None, ["R04"]])
+def test_a_region_code_that_is_not_text_is_refused(region_code: object) -> None:
+    with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code") as info:
+        validate_region_code(region_code)  # type: ignore[arg-type]
+    assert not isinstance(info.value, UnknownCode)

@@ -1,17 +1,19 @@
 """Live smoke tests, one per task, skipped unless XIPPIOS_LIVE_TESTS=1 (conventions §10).
 
-``/add-endpoint`` adds them. Twelve in all, fourteen keyed calls: one each, except the
+``/add-endpoint`` adds them. Sixteen in all, eighteen keyed calls: one each, except the
 time series, which spends one per market year (corn, United States, 2021 to 2023,
-three). The data tasks ask for wheat, United States, market year 2023, all checked
-against the packaged lists; the slices for wheat (balance sheet, latest release), corn
-(time series) and soybeans (top producers, 2023). The slices record what
-they answered as test properties (``--junitxml`` shows them), never a key. The list
-tasks answer from the package without a call, so their test fetches the list through
-its endpoint wrapper and checks that the packaged records equal it: the
-freshness check ``reference/README.md`` promises. A difference fails the test naming
-what is gone and what is new; ``/refresh-reference-data`` then refreshes the package.
-Next to them, the template's reachability check, ``test_upstream_answers``, sends no
-key: a plain request to ``BASE_URL`` that spends no keyed call.
+three); a second time series asks for two attributes of one market year, a second
+ranking for one region without PSD's groupings, and the release list and the latest
+release are asked once more each with ``since``. The data tasks ask for wheat, United
+States, market year 2023, all checked against the packaged lists; the slices for wheat
+(balance sheet, latest release), corn (time series) and soybeans (top producers,
+2023). The slices record what they answered as test properties (``--junitxml`` shows
+them), never a key. The list tasks answer from the package without a call, so their
+test fetches the list through its endpoint wrapper and checks that the packaged records
+equal it: the freshness check ``reference/README.md`` promises. A difference fails the
+test naming what is gone and what is new; ``/refresh-reference-data`` then refreshes the
+package. Next to them, the template's reachability check, ``test_upstream_answers``,
+sends no key: a plain request to ``BASE_URL`` that spends no keyed call.
 """
 
 import re
@@ -25,6 +27,7 @@ from xippios.core.data_gov import Gateway
 from xippios.usda.psd import api, tasks
 from xippios.usda.psd._client import BASE_URL, config
 from xippios.usda.psd.enums import AttributeId
+from xippios.usda.psd.params import country_regions
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
@@ -89,13 +92,26 @@ async def test_get_balance_sheet_live(record_property: Callable[[str, object], N
 
 
 async def test_get_time_series_live(record_property: Callable[[str, object], None]) -> None:
-    result = await tasks.get_time_series_async(CORN, "US", AttributeId.PRODUCTION, 2021, 2023)
+    result = await tasks.get_time_series_async(
+        CORN, "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION
+    )
     assert [r.market_year for r in result.data] == [2021, 2022, 2023]
     assert {(r.country_code, r.attribute_id) for r in result.data} == {("US", 28)}
     assert result.meta.vintage is not None
     assert VINTAGE.match(result.meta.vintage)
     record_property("series", [(r.market_year, str(r.value), r.unit_id) for r in result.data])
     record_property("vintage", result.meta.vintage)
+
+
+async def test_get_time_series_of_several_attributes_live() -> None:
+    """``attribute_id`` as a list, one market year: one keyed call."""
+    ids = [AttributeId.PRODUCTION, AttributeId.EXPORTS]
+    result = await tasks.get_time_series_async(CORN, "US", 2023, 2023, attribute_id=ids)
+    assert {(r.country_code, r.market_year) for r in result.data} == {("US", 2023)}
+    assert {r.attribute_id for r in result.data} == {28, 88}
+    assert result.meta.request["attribute_id"] == [28, 88]
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
 
 
 async def test_get_top_countries_live(record_property: Callable[[str, object], None]) -> None:
@@ -110,6 +126,21 @@ async def test_get_top_countries_live(record_property: Callable[[str, object], N
     record_property("vintage", result.meta.vintage)
 
 
+async def test_get_top_countries_of_a_region_without_groupings_live() -> None:
+    """``region_code`` and ``exclude_groupings``: one keyed call."""
+    result = await tasks.get_top_countries_async(
+        SOYBEANS, 2023, AttributeId.PRODUCTION, n=5, region_code="R04", exclude_groupings=True
+    )
+    assert 0 < len(result.data) <= 5
+    regions = country_regions()
+    assert {regions.get(r.country_code) for r in result.data} == {"R04"}
+    assert not {r.country_code for r in result.data} & tasks.GROUPINGS
+    values = [r.value for r in result.data]
+    assert values == sorted(values, reverse=True)
+    assert result.meta.vintage is not None
+    assert VINTAGE.match(result.meta.vintage)
+
+
 async def test_get_latest_release_live(record_property: Callable[[str, object], None]) -> None:
     result = await tasks.get_latest_release_async(WHEAT)
     releases = {(r.release_year, r.release_month) for r in result.data}
@@ -119,6 +150,25 @@ async def test_get_latest_release_live(record_property: Callable[[str, object], 
     assert result.meta.published_at is None
     record_property("vintage", result.meta.vintage)
     record_property("records", len(result.data))
+
+
+async def test_get_release_dates_since_live() -> None:
+    """``since``: one keyed call, the whole wheat list filtered after it."""
+    result = await tasks.get_release_dates_async(WHEAT, since="2020-01")
+    assert result.data
+    assert all((r.release_year, r.release_month) > (2020, 1) for r in result.data)
+    assert result.meta.request == {"commodity_code": WHEAT, "since": "2020-01"}
+
+
+async def test_get_latest_release_since_live() -> None:
+    """``since`` far back: the newest release comes back whole; one keyed call."""
+    result = await tasks.get_latest_release_async(WHEAT, since="2000-01")
+    releases = {(r.release_year, r.release_month) for r in result.data}
+    assert len(releases) == 1
+    ((year, month),) = releases
+    assert (year, month) > (2000, 1)
+    assert result.meta.vintage == f"{year:04d}-{month:02d}"
+    assert result.meta.request == {"commodity_code": WHEAT, "since": "2000-01"}
 
 
 LISTS = [

@@ -9,7 +9,7 @@ from decimal import Decimal
 import httpx
 import pytest
 import respx
-from xippios.core import InvalidRequestError, NotFoundError, UnknownCode
+from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
 from xippios.core.testing import mcp_call
 
 from xippios.usda.psd import tasks
@@ -17,15 +17,12 @@ from xippios.usda.psd._client import BASE_URL
 from xippios.usda.psd.enums import AttributeId, UnitId
 from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
-from xippios.usda.psd.models import DataReleaseInfo
 
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
 DATA = "get_country_commodity_data_by_year"
 ALL = "get_commodity_data_by_year"
 WORLD = "get_world_commodity_data_by_year"
-# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
-ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
-RELEASES_OVER_CAP = "PSDData_GetDataReleaseInfo"
+RELEASES = "get_data_release_info"
 
 
 def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -49,12 +46,15 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
 
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    """``country/all``: records carry different releases; ``vintage`` is the latest."""
-    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
+    """``country/all``: records carry different releases; ``vintage`` is the latest. The
+    fixture is cut (ADR-0019), so the shape is checked, not the count."""
+    route = replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_data(WHEAT, 2023)
+    assert route.call_count == 1
     assert result.meta.endpoint == "PSDData_GetCommodityDataByYear"
     assert result.meta.request == {"commodity_code": WHEAT, "market_year": 2023}
-    assert len(result.data) == 1845
+    assert {r.market_year for r in result.data} == {2023}
+    assert len({r.country_code for r in result.data}) > 1
     assert len({(r.calendar_year, r.month) for r in result.data}) > 1
     assert result.meta.vintage == "2026-10"
     assert result.meta.published_at is None
@@ -73,66 +73,15 @@ def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> No
     assert result.meta.published_at is None
 
 
-def _release_vintage(releases: list[DataReleaseInfo], country_code: str | None) -> str:
-    year, month = max(
-        (r.release_year, r.release_month)
-        for r in releases
-        if r.market_year == 2023 and (country_code is None or r.country_code == country_code)
-    )
-    return f"{year:04d}-{month:02d}"
-
-
-@pytest.mark.parametrize(
-    ("wrapper", "case", "country_code", "vintage"),
-    [
-        (DATA, "wheat_us_2023", "US", "2026-07"),
-        (ALL_OVER_CAP, "wheat_all_2023", None, "2026-10"),
-        (WORLD, "wheat_world_2023", None, "2026-10"),
-    ],
-)
-def test_vintage_equals_the_release_list(
-    replay_fixture: Callable[[str, str], respx.Route],
-    wrapper: str,
-    case: str,
-    country_code: str | None,
-    vintage: str,
-) -> None:
-    """Established by fixtures: the records' latest release is the release list's record
-    for the same commodity, market year and country (the latest across countries for
-    every country and the world), so ``vintage`` needs no second call."""
-    replay_fixture(wrapper, case)
-    replay_fixture(RELEASES_OVER_CAP, "wheat")
-    if wrapper == WORLD:
-        result = tasks.get_world_data(WHEAT, 2023)
-    else:
-        result = tasks.get_data(WHEAT, 2023, country_code)
-    releases = tasks.get_release_dates(WHEAT).data
-    assert result.meta.vintage == _release_vintage(releases, country_code) == vintage
-
-
-def test_every_country_carries_its_own_release(
-    replay_fixture: Callable[[str, str], respx.Route],
-) -> None:
-    """Wheat 2023: each of the 123 countries' records carry exactly its release record."""
-    replay_fixture(ALL_OVER_CAP, "wheat_all_2023")
-    replay_fixture(RELEASES_OVER_CAP, "wheat")
-    result = tasks.get_data(WHEAT, 2023)
-    releases = {
-        r.country_code: (r.release_year, r.release_month)
-        for r in tasks.get_release_dates(WHEAT, market_year=2023).data
-    }
-    assert len(releases) == 123
-    assert {r.country_code: (r.calendar_year, r.month) for r in result.data} == releases
-
-
 def test_vintage_is_none_for_an_empty_answer() -> None:
     assert tasks._vintage([]) is None
 
 
 def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
+    route = replay_fixture(RELEASES, "wheat")
     result = tasks.get_release_dates(WHEAT)
-    assert len(result.data) == 7754
+    assert result.data
+    assert {r.commodity_code for r in result.data} == {WHEAT}
     assert result.meta.endpoint == "PSDData_GetDataReleaseInfo"
     assert result.meta.request == {"commodity_code": WHEAT}, "filters left None are left out"
     assert result.meta.published_at is None
@@ -143,32 +92,125 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
 def test_get_release_dates_filters_after_the_one_call(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
-    one = tasks.get_release_dates(WHEAT, market_year=2023, country_code="US")
+    """The cut list holds market years 1960 to 1978 (upstream orders it by market year), so
+    the filters are checked on 1975 and against the unfiltered answer."""
+    route = replay_fixture(RELEASES, "wheat")
+    every = tasks.get_release_dates(WHEAT).data
+    one = tasks.get_release_dates(WHEAT, market_year=1975, country_code="US")
     assert [(r.country_code, r.market_year, r.release_year, r.release_month) for r in one.data] == [
-        ("US", 2023, 2026, 7)
+        ("US", 1975, 2006, 7)
     ]
-    assert one.meta.request == {"commodity_code": WHEAT, "market_year": 2023, "country_code": "US"}
-    year = tasks.get_release_dates(WHEAT, market_year=2023)
-    assert len(year.data) == 123
-    assert {r.market_year for r in year.data} == {2023}
+    assert one.meta.request == {"commodity_code": WHEAT, "market_year": 1975, "country_code": "US"}
+    year = tasks.get_release_dates(WHEAT, market_year=1975)
+    assert year.data == [r for r in every if r.market_year == 1975]
+    assert len({r.country_code for r in year.data}) == len(year.data), "one per country"
     country = tasks.get_release_dates(WHEAT, country_code="US")
-    assert {r.country_code for r in country.data} == {"US"}
-    assert len(country.data) == 67, "market years 1960 to 2026"
-    assert route.call_count == 3
+    assert country.data == [r for r in every if r.country_code == "US"]
+    assert len({r.market_year for r in country.data}) == len(country.data), "one per market year"
+    assert route.call_count == 4
+
+
+def test_get_release_dates_since_keeps_later_releases_only(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Strictly after ``since``: the cut list's two newest releases are 2022-09 (Syria's
+    revision of 1960 to 1977) and 2024-02 (Pakistan's)."""
+    route = replay_fixture(RELEASES, "wheat")
+    every = tasks.get_release_dates(WHEAT).data
+    later = tasks.get_release_dates(WHEAT, since="2022-08")
+    assert later.data == [r for r in every if (r.release_year, r.release_month) > (2022, 8)]
+    assert {(r.country_code, r.release_year, r.release_month) for r in later.data} == {
+        ("SY", 2022, 9),
+        ("PK", 2024, 2),
+    }
+    strictly = tasks.get_release_dates(WHEAT, since="2022-09")
+    assert {(r.country_code, r.release_year, r.release_month) for r in strictly.data} == {
+        ("PK", 2024, 2)
+    }, "the release since names is not kept"
+    assert strictly.meta.request == {"commodity_code": WHEAT, "since": "2022-09"}
+    one_year = tasks.get_release_dates(WHEAT, market_year=1975, since="2022-08")
+    assert [(r.country_code, r.market_year) for r in one_year.data] == [("PK", 1975), ("SY", 1975)]
+    assert one_year.meta.request == {
+        "commodity_code": WHEAT,
+        "market_year": 1975,
+        "since": "2022-08",
+    }
+    assert tasks.get_release_dates(WHEAT, since="2024-02").data == []
+    assert route.call_count == 5
 
 
 @pytest.mark.anyio
-async def test_a_tool_without_a_cap_of_its_own_keeps_cores_default_and_note(
+async def test_release_dates_since_through_the_tool(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Wheat's release list over MCP, every country and market year: cut at the family's
-    default cap with core's note, which promises no filter the tool lacks (ADR-0016)."""
-    replay_fixture(RELEASES_OVER_CAP, "wheat")
+    replay_fixture(RELEASES, "wheat")
+    payload = await mcp_call(
+        server,
+        "usda_psd_get_release_dates",
+        {"commodity_code": WHEAT, "country_code": "PK", "since": "2022-09"},
+    )
+    assert {(row["release_year"], row["release_month"]) for row in payload["data"]} == {(2024, 2)}
+    assert "note" not in payload
+    assert payload["meta"]["request"] == {
+        "commodity_code": WHEAT,
+        "country_code": "PK",
+        "since": "2022-09",
+    }
+    with pytest.raises(AssertionError, match="InvalidRequestError: since must be a PSD release"):
+        await mcp_call(
+            server, "usda_psd_get_release_dates", {"commodity_code": WHEAT, "since": "2026-13"}
+        )
+
+
+def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> None:
+    """``get_data``, ``get_release_dates`` and ``get_time_series`` keep 200 rows or 64 KB,
+    ``ResultCap``'s defaults, and name their filters; ``list_countries`` has 300 rows;
+    every other tool has no entry, so core's default cap and note apply to it, the note
+    promising no filter the tool lacks (conventions §8, ADR-0016). It succeeds the
+    end-to-end test of core's default note: the recorded answers over 200 rows, wheat's
+    release list and every country's data, now come through tools with a note of their
+    own, so no recorded answer shows the default note any more."""
+    default = ResultCap()
+    assert (default.max_rows, default.max_bytes, default.note) == (200, 65536, None)
+    noted = ("get_data", "get_release_dates", "get_time_series")
+    for name in noted:
+        cap = tasks.MCP_CAPS[name]
+        assert (cap.max_rows, cap.max_bytes) == (default.max_rows, default.max_bytes), name
+        assert cap.note is not None, name
+    assert tasks.MCP_CAPS["list_countries"].max_rows == 300
+    assert set(tasks.MCP_CAPS) == {"list_countries", *noted}
+    assert set(tasks.MCP_CAPS) < set(tasks.__all__)
+
+
+@pytest.mark.anyio
+async def test_a_cut_release_list_names_the_filters_that_narrow_it(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Wheat's release list over MCP, every country and market year: cut at 200 rows with
+    a note naming the tool's own filters, never one it lacks (ADR-0016)."""
+    replay_fixture(RELEASES, "wheat")
+    every = tasks.get_release_dates(WHEAT).data
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
     assert len(payload["data"]) == 200
     assert payload["note"] == (
-        "showing 200 of 7754 rows (cap: 200 rows or 65536 bytes); narrow the query to see the rest"
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
+        "market_year, country_code or since to see the rest"
+    )
+
+
+@pytest.mark.anyio
+async def test_a_cut_answer_for_every_country_names_country_code(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    replay_fixture(ALL, "wheat_all_2023")
+    every = tasks.get_data(WHEAT, 2023).data
+    payload = await mcp_call(
+        server, "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023}
+    )
+    assert len(payload["data"]) == 200
+    assert payload["note"] == (
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
+        "country_code to see the rest"
     )
 
 
@@ -179,6 +221,11 @@ def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -
         tasks.get_release_dates(WHEAT, country_code="00")
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_release_dates(WHEAT, market_year=23)
+    for since in ("2026-13", "2026-00", "2026-9", "2026/09", "26-09", "2026-09-15", "", " 2026-09"):
+        with pytest.raises(InvalidRequestError, match="since must be a PSD release month"):
+            tasks.get_release_dates(WHEAT, since=since)
+    with pytest.raises(InvalidRequestError, match="got 202609"):
+        tasks.get_release_dates(WHEAT, since=202609)  # type: ignore[arg-type]
     assert not respx_mock.calls
 
 

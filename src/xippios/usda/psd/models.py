@@ -117,8 +117,8 @@ class CommodityData(UpstreamModel):
     ``country/all`` form) and ``PSDData_GetWorldCommodityDataByYear`` answer the same
     record: one per country (``"00"`` for the world), commodity, market year and
     attribute. Shape from the fixtures ``wheat_us_2023`` (15 records), ``corn_all_2023``
-    and ``wheat_all_2023`` (1,875 and 1,845), ``soybeans_world_2023`` and
-    ``wheat_world_2023`` (13 and 15). Upstream sends the years and the month as digit
+    and ``wheat_all_2023`` (upstream's 1,875 and 1,845, recorded cut), ``soybeans_world_2023``
+    and ``wheat_world_2023`` (13 and 15). Upstream sends the years and the month as digit
     strings (``"2023"``, ``"07"``), parsed to ``int`` here as Quick Stats' ``year`` is;
     ``value`` arrives as a JSON number and becomes ``Decimal`` (ADR-0008). Nothing is
     renamed, converted or re-based: a PSD market year stays a PSD market year, PSD
@@ -127,7 +127,8 @@ class CommodityData(UpstreamModel):
     ``calendar_year`` and ``month`` are the PSD release that last revised the record:
     for wheat, market year 2023, each of the 123 countries carries exactly the
     ``releaseYear``/``releaseMonth`` that ``PSDData_GetDataReleaseInfo`` lists for it
-    (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10).
+    (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10), in the
+    whole answers recorded on 2026-10-23.
     A data task's ``meta.vintage`` is the latest of them across its records, formatted
     ``"YYYY-MM"`` with the month zero-padded (``"2026-07"``).
 
@@ -160,13 +161,17 @@ class CommodityData(UpstreamModel):
 class DataReleaseInfo(UpstreamModel):
     """One record of ``PSDData_GetDataReleaseInfo`` (``commodity/{code}/dataReleaseDates``).
 
-    Shape from ``tests/fixtures/PSDData_GetDataReleaseInfo/wheat.json``: 7,754 records,
-    one per country and market year (1960 to 2026), 145 countries, no world (``"00"``)
-    record. The release is a year and a month as digit strings, no day, no time, no time
-    zone; both are parsed to ``int`` and nothing is combined into a date here.
+    Shape from ``tests/fixtures/get_data_release_info/wheat.json``, recorded cut
+    (ADR-0019): upstream's 7,754 records (``original_count``), one per country and market
+    year, ordered by market year, of which the cut keeps 1960 to 1978. The whole answer
+    recorded on 2026-10-23 held 145 countries and market years 1960 to 2026, no world
+    (``"00"``) record. The release is a year and a month as digit strings, no day, no
+    time, no time zone; both are parsed to ``int`` and nothing is combined into a date
+    here.
 
     The data records carry the same release in ``calendarYear``/``month``: in every case
-    recorded with its release list (wheat 2023: US, all countries, world) the data's
+    recorded with its whole release list (wheat 2023: US, all countries, world, on
+    2026-10-23) the data's
     latest release equals this list's record for the same commodity, market year and
     country (or the latest across countries); the corn and soybeans recordings are
     internally consistent. So the data tasks take ``meta.vintage`` from the data and
