@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-28
+## [0.3.0] - 2026-10-29
 
 This release requires xippios-core 0.3.0 and sdk-template v0.3.0 as its floor
 (`xippios-core~=0.3.0`, the extras likewise); 0.2.0 does not work on core 0.3.0: it is
