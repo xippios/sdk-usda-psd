@@ -68,6 +68,13 @@ Adopted xippios-core 0.3.0, sdk-template v0.3.0 and conventions 1.22 (convention
 - `scripts/check-siblings.sh` is replaced by the template's
   `.github/scripts/check-siblings.sh`, which `siblings.yml` runs and which finds the
   siblings under `xippios.usda` itself.
+- `docs/upstream/FETCHED.md` follows conventions §3: `Fetched` is the UTC time of the run
+  with `Z`, an Attribution section says the documentation is a work of the United States
+  Government (17 U.S.C. § 105) and that no page or document read states a copyright line,
+  licence or terms of use, the table's last column is Note, and the excerpt rows keep the
+  shared documents' size and sha256; `scripts/refresh_upstream.py` checks every page and
+  document for such a statement on every run. The snapshot was refreshed on 2026-10-28:
+  both Swagger documents are unchanged since 2026-10-23, byte for byte.
 - From sdk-template v0.2.1 to v0.3.0: `tests/test_family.py`, core's family check,
   replaces `tests/test_layout.py`, `tests/test_adapters.py` and two structural tests of
   `tests/test_tasks.py`; `publish.yml` tags a release from its merge; `ci.yml` checks the
