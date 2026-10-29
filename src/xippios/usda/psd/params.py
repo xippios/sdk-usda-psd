@@ -241,12 +241,19 @@ def validate_region_code(region_code: str) -> str:
         The code, unchanged.
 
     Raises:
+        InvalidRequestError: When ``region_code`` is not text.
         UnknownCode: Naming up to three close codes with their names in the packaged
             ``regions`` list, or for ``"R15"`` its countries' names; for a region of
             that list no country belongs to (``"R00"``, World) saying that the world is
             ``get_world_data``'s and that ``region_code`` takes a region countries
             belong to.
     """
+    if not isinstance(region_code, str):
+        raise InvalidRequestError(
+            f"region_code must be a PSD region code such as 'R04' (South America), got "
+            f"{region_code!r}. list_regions and list_countries name the regions.",
+            source=SOURCE,
+        )
     fetched, regions = _codes("countries", "countryCode", "regionCode")
     carried = set(regions.values())
     if region_code in carried:
