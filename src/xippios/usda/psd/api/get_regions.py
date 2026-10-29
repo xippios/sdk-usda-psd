@@ -2,7 +2,7 @@
 
 Reference: ``docs/upstream/openapi/portal-document.json``, operation
 ``PSDData_GetRegions``: no parameters, the response typed only as ``object``.
-The record shape is the recorded one, ``tests/fixtures/PSDData_GetRegions/all.json``,
+The record shape is the recorded one, ``tests/fixtures/get_regions/all.json``,
 parsed into ``models.Region``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
@@ -12,10 +12,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import Region
 
-__all__ = ["PSDData_GetRegions"]
+__all__ = ["get_regions"]
 
 
-async def PSDData_GetRegions() -> list[Region]:
+async def get_regions() -> list[Region]:
     """Call ``PSDData_GetRegions``.
 
     Returns:

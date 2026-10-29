@@ -20,12 +20,16 @@ from xippios.usda.psd.models import (
 
 pytestmark = pytest.mark.anyio
 
+# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
+ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
+RELEASES_OVER_CAP = "PSDData_GetDataReleaseInfo"
+
 
 async def test_get_commodities(
     replay_fixture: Callable[[str, str], respx.Route], placeholder_api_key: str
 ) -> None:
-    route = replay_fixture("PSDData_GetCommodities", "all")
-    commodities = await api.PSDData_GetCommodities()
+    route = replay_fixture("get_commodities", "all")
+    commodities = await api.get_commodities()
     assert len(commodities) == 63
     assert commodities[0] == Commodity(
         commodity_code="0577400", commodity_name="Almonds, Shelled Basis"
@@ -41,8 +45,8 @@ async def test_get_commodities(
 
 
 async def test_get_countries(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    replay_fixture("PSDData_GetCountries", "all")
-    countries = await api.PSDData_GetCountries()
+    replay_fixture("get_countries", "all")
+    countries = await api.get_countries()
     assert len(countries) == 251
     by_code = {c.country_code: c for c in countries}
     assert by_code["US"] == Country(
@@ -53,8 +57,8 @@ async def test_get_countries(replay_fixture: Callable[[str, str], respx.Route]) 
 
 
 async def test_get_regions(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    replay_fixture("PSDData_GetRegions", "all")
-    regions = await api.PSDData_GetRegions()
+    replay_fixture("get_regions", "all")
+    regions = await api.get_regions()
     assert len(regions) == 15
     assert regions[0] == Region(region_code="R00", region_name="World")
 
@@ -64,10 +68,10 @@ async def test_countries_name_one_region_the_regions_list_lacks(
 ) -> None:
     """Upstream as recorded: four countries (T3, T8, T4, ZZ) sit in region R15, which
     ``PSDData_GetRegions`` does not list. Kept as upstream sends it."""
-    replay_fixture("PSDData_GetCountries", "all")
-    replay_fixture("PSDData_GetRegions", "all")
-    regions = {r.region_code for r in await api.PSDData_GetRegions()}
-    countries = await api.PSDData_GetCountries()
+    replay_fixture("get_countries", "all")
+    replay_fixture("get_regions", "all")
+    regions = {r.region_code for r in await api.get_regions()}
+    countries = await api.get_countries()
     assert {c.region_code for c in countries} - regions == {"R15"}
     assert sorted(c.country_code for c in countries if c.region_code == "R15") == [
         "T3",
@@ -78,16 +82,16 @@ async def test_countries_name_one_region_the_regions_list_lacks(
 
 
 async def test_get_units_of_measure(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    replay_fixture("PSDData_GetUnitsOfMeasure", "all")
-    units = await api.PSDData_GetUnitsOfMeasure()
+    replay_fixture("get_units_of_measure", "all")
+    units = await api.get_units_of_measure()
     assert len(units) == 42
     assert units[7] == UnitOfMeasure(unit_id=8, unit_description="(1000 MT)           ")
     assert all(len(u.unit_description) == 20 for u in units), "upstream's padding is kept"
 
 
 async def test_get_commodity_attributes(replay_fixture: Callable[[str, str], respx.Route]) -> None:
-    replay_fixture("PSDData_GetCommodityAttributes", "all")
-    attributes = await api.PSDData_GetCommodityAttributes()
+    replay_fixture("get_commodity_attributes", "all")
+    attributes = await api.get_commodity_attributes()
     assert len(attributes) == 85
     assert CommodityAttribute(attribute_id=28, attribute_name="Production") in attributes
     duplicates = [a.attribute_id for a in attributes if a.attribute_name == "Total Disappearance"]
@@ -97,8 +101,8 @@ async def test_get_commodity_attributes(replay_fixture: Callable[[str, str], res
 async def test_models_serialise_snake_case(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    replay_fixture("PSDData_GetCountries", "all")
-    country = (await api.PSDData_GetCountries())[0]
+    replay_fixture("get_countries", "all")
+    country = (await api.get_countries())[0]
     assert country.model_dump(mode="json") == {
         "country_code": "AF",
         "country_name": "Afghanistan",
@@ -110,8 +114,8 @@ async def test_models_serialise_snake_case(
 async def test_get_country_commodity_data(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture("PSDData_GetCountryCommodityDataByYear", "wheat_us_2023")
-    records = await api.PSDData_GetCountryCommodityDataByYear("0410000", "US", 2023)
+    route = replay_fixture("get_country_commodity_data_by_year", "wheat_us_2023")
+    records = await api.get_country_commodity_data_by_year("0410000", "US", 2023)
     assert len(records) == 15
     assert records[2] == CommodityData(
         commodity_code="0410000",
@@ -132,8 +136,8 @@ async def test_get_commodity_data_for_every_country(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """``country/all``, the largest answer: 1,875 records, 125 countries, 275,759 bytes."""
-    route = replay_fixture("PSDData_GetCommodityDataByYear", "corn_all_2023")
-    records = await api.PSDData_GetCommodityDataByYear("0440000", 2023)
+    route = replay_fixture(ALL_OVER_CAP, "corn_all_2023")
+    records = await api.get_commodity_data_by_year("0440000", 2023)
     assert len(records) == 1875
     assert len({r.country_code for r in records}) == 125
     assert {r.commodity_code for r in records} == {"0440000"}
@@ -144,8 +148,8 @@ async def test_get_commodity_data_for_every_country(
 async def test_get_world_commodity_data(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture("PSDData_GetWorldCommodityDataByYear", "soybeans_world_2023")
-    records = await api.PSDData_GetWorldCommodityDataByYear("2222000", 2023)
+    route = replay_fixture("get_world_commodity_data_by_year", "soybeans_world_2023")
+    records = await api.get_world_commodity_data_by_year("2222000", 2023)
     assert len(records) == 13
     assert {(r.country_code, r.calendar_year, r.month) for r in records} == {("00", 2026, 10)}
     production = next(r for r in records if r.attribute_id == AttributeId.PRODUCTION)
@@ -156,8 +160,8 @@ async def test_get_world_commodity_data(
 async def test_get_data_release_info(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    route = replay_fixture("PSDData_GetDataReleaseInfo", "wheat")
-    releases = await api.PSDData_GetDataReleaseInfo("0410000")
+    route = replay_fixture(RELEASES_OVER_CAP, "wheat")
+    releases = await api.get_data_release_info("0410000")
     assert len(releases) == 7754
     assert releases[0] == DataReleaseInfo(
         commodity_code="0410000",

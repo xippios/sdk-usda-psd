@@ -30,11 +30,17 @@ from xippios.usda.psd.params import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SOURCES = {
-    "commodities": ("PSDData_GetCommodities", Commodity),
-    "countries": ("PSDData_GetCountries", Country),
-    "regions": ("PSDData_GetRegions", Region),
-    "unitsOfMeasure": ("PSDData_GetUnitsOfMeasure", UnitOfMeasure),
-    "commodityAttributes": ("PSDData_GetCommodityAttributes", CommodityAttribute),
+    # packaged list: operation it came from (meta.endpoint, verbatim), its wrapper and
+    # fixture directory, record model
+    "commodities": ("PSDData_GetCommodities", "get_commodities", Commodity),
+    "countries": ("PSDData_GetCountries", "get_countries", Country),
+    "regions": ("PSDData_GetRegions", "get_regions", Region),
+    "unitsOfMeasure": ("PSDData_GetUnitsOfMeasure", "get_units_of_measure", UnitOfMeasure),
+    "commodityAttributes": (
+        "PSDData_GetCommodityAttributes",
+        "get_commodity_attributes",
+        CommodityAttribute,
+    ),
 }
 FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
 """The packaged lists' ``fetched``, a bare date in the files, read as 00:00 UTC (ADR-0022)."""
@@ -42,7 +48,7 @@ FETCHED = datetime(2026, 10, 23, tzinfo=UTC)
 
 def test_every_packaged_list_loads_and_parses() -> None:
     assert set(PACKAGED_LISTS) == set(SOURCES)
-    for name, (endpoint, model) in SOURCES.items():
+    for name, (endpoint, _, model) in SOURCES.items():
         packaged = PackagedList.load(PACKAGE, name)
         assert (packaged.param, packaged.endpoint) == (name, endpoint)
         assert packaged.fetched == FETCHED
@@ -51,8 +57,8 @@ def test_every_packaged_list_loads_and_parses() -> None:
 
 
 def test_packaged_lists_are_the_recorded_answers_verbatim() -> None:
-    for name, (endpoint, _) in SOURCES.items():
-        recorded = json.loads(load_fixture(FIXTURES / endpoint / "all.json").response.body)
+    for name, (_, wrapper, _) in SOURCES.items():
+        recorded = json.loads(load_fixture(FIXTURES / wrapper / "all.json").response.body)
         assert _records(name) == recorded, name
 
 
@@ -208,14 +214,16 @@ def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -
         validate_attribute_id(attribute_id)  # type: ignore[arg-type]
 
 
+# Over the 256 KiB cap: not moved, PR 3 re-records them cut under the new names (ADR-0019, row 209)
+ALL_OVER_CAP = "PSDData_GetCommodityDataByYear"
 DATA_FIXTURES = [
-    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2021"),
-    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2022"),
-    ("PSDData_GetCountryCommodityDataByYear", "wheat_us_2023"),
-    ("PSDData_GetCommodityDataByYear", "corn_all_2023"),
-    ("PSDData_GetCommodityDataByYear", "wheat_all_2023"),
-    ("PSDData_GetWorldCommodityDataByYear", "soybeans_world_2023"),
-    ("PSDData_GetWorldCommodityDataByYear", "wheat_world_2023"),
+    ("get_country_commodity_data_by_year", "wheat_us_2021"),
+    ("get_country_commodity_data_by_year", "wheat_us_2022"),
+    ("get_country_commodity_data_by_year", "wheat_us_2023"),
+    (ALL_OVER_CAP, "corn_all_2023"),
+    (ALL_OVER_CAP, "wheat_all_2023"),
+    ("get_world_commodity_data_by_year", "soybeans_world_2023"),
+    ("get_world_commodity_data_by_year", "wheat_world_2023"),
 ]
 
 
@@ -225,8 +233,8 @@ def test_every_recorded_id_is_in_the_packaged_lists() -> None:
     answer names an id the packaged lists lack: run ``/refresh-reference-data``."""
     attribute_ids = {member.value for member in enums.AttributeId}
     unit_ids = {member.value for member in enums.UnitId}
-    for endpoint, case in DATA_FIXTURES:
-        records = json.loads(load_fixture(FIXTURES / endpoint / f"{case}.json").response.body)
+    for wrapper, case in DATA_FIXTURES:
+        records = json.loads(load_fixture(FIXTURES / wrapper / f"{case}.json").response.body)
         assert {r["attributeId"] for r in records} <= attribute_ids, case
         assert {r["unitId"] for r in records} <= unit_ids, case
 

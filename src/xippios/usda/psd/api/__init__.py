@@ -1,31 +1,34 @@
 """Endpoint wrappers, layer 1: one async function per upstream operation (conventions §2).
 
-``/add-endpoint`` adds them. Modules and functions carry the snapshot's ``operationId``
-verbatim, e.g. ``PSDData_GetCommodities``.
+``/add-endpoint`` adds them. A module and its function carry the snapshot's
+``operationId`` in snake case, without the ``PSDData_`` prefix every PSD operation shares:
+``PSDData_GetCommodities`` is ``get_commodities`` in ``get_commodities.py``. The verbatim
+id stays in the first line of each wrapper's docstring and in the ``endpoint=`` it
+passes, so ``meta.endpoint`` keeps upstream's exact name.
 """
 
-from xippios.usda.psd.api.PSDData_GetCommodities import PSDData_GetCommodities
-from xippios.usda.psd.api.PSDData_GetCommodityAttributes import PSDData_GetCommodityAttributes
-from xippios.usda.psd.api.PSDData_GetCommodityDataByYear import PSDData_GetCommodityDataByYear
-from xippios.usda.psd.api.PSDData_GetCountries import PSDData_GetCountries
-from xippios.usda.psd.api.PSDData_GetCountryCommodityDataByYear import (
-    PSDData_GetCountryCommodityDataByYear,
+from xippios.usda.psd.api.get_commodities import get_commodities
+from xippios.usda.psd.api.get_commodity_attributes import get_commodity_attributes
+from xippios.usda.psd.api.get_commodity_data_by_year import get_commodity_data_by_year
+from xippios.usda.psd.api.get_countries import get_countries
+from xippios.usda.psd.api.get_country_commodity_data_by_year import (
+    get_country_commodity_data_by_year,
 )
-from xippios.usda.psd.api.PSDData_GetDataReleaseInfo import PSDData_GetDataReleaseInfo
-from xippios.usda.psd.api.PSDData_GetRegions import PSDData_GetRegions
-from xippios.usda.psd.api.PSDData_GetUnitsOfMeasure import PSDData_GetUnitsOfMeasure
-from xippios.usda.psd.api.PSDData_GetWorldCommodityDataByYear import (
-    PSDData_GetWorldCommodityDataByYear,
+from xippios.usda.psd.api.get_data_release_info import get_data_release_info
+from xippios.usda.psd.api.get_regions import get_regions
+from xippios.usda.psd.api.get_units_of_measure import get_units_of_measure
+from xippios.usda.psd.api.get_world_commodity_data_by_year import (
+    get_world_commodity_data_by_year,
 )
 
 __all__ = [
-    "PSDData_GetCommodities",
-    "PSDData_GetCommodityAttributes",
-    "PSDData_GetCommodityDataByYear",
-    "PSDData_GetCountries",
-    "PSDData_GetCountryCommodityDataByYear",
-    "PSDData_GetDataReleaseInfo",
-    "PSDData_GetRegions",
-    "PSDData_GetUnitsOfMeasure",
-    "PSDData_GetWorldCommodityDataByYear",
+    "get_commodities",
+    "get_commodity_attributes",
+    "get_commodity_data_by_year",
+    "get_countries",
+    "get_country_commodity_data_by_year",
+    "get_data_release_info",
+    "get_regions",
+    "get_units_of_measure",
+    "get_world_commodity_data_by_year",
 ]
