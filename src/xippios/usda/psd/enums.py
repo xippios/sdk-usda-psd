@@ -9,7 +9,7 @@ __all__ = [
 
 
 class UnitId(IntEnum):
-    """Values of ``unitId`` (fetched 2026-10-23)."""
+    """Values of ``unitId`` (fetched 2026-10-28)."""
 
     _1000_BUSHES = 1
     _1000_60_KG_BAGS = 2
@@ -56,7 +56,7 @@ class UnitId(IntEnum):
 
 
 class AttributeId(IntEnum):
-    """Values of ``attributeId`` (fetched 2026-10-23)."""
+    """Values of ``attributeId`` (fetched 2026-10-28)."""
 
     AREA_PLANTED = 1
     AREA_HARVESTED = 4

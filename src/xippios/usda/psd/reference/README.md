@@ -23,16 +23,15 @@ those that are new: the signal to run `/refresh-reference-data`.
 
 | File | Origin | Fetched (UTC) | Records |
 | --- | --- | --- | --- |
-| `commodities.json` | `GET https://api.fas.usda.gov/api/psd/commodities` (`PSDData_GetCommodities`) | 2026-10-23 | 63 |
-| `countries.json` | `GET https://api.fas.usda.gov/api/psd/countries` (`PSDData_GetCountries`) | 2026-10-23 | 251 |
-| `regions.json` | `GET https://api.fas.usda.gov/api/psd/regions` (`PSDData_GetRegions`) | 2026-10-23 | 15 |
-| `unitsOfMeasure.json` | `GET https://api.fas.usda.gov/api/psd/unitsOfMeasure` (`PSDData_GetUnitsOfMeasure`) | 2026-10-23 | 42 |
-| `commodityAttributes.json` | `GET https://api.fas.usda.gov/api/psd/commodityAttributes` (`PSDData_GetCommodityAttributes`) | 2026-10-23 | 85 |
+| `commodities.json` | `GET https://api.fas.usda.gov/api/psd/commodities` (`PSDData_GetCommodities`) | 2026-10-28T21:42:03Z | 63 |
+| `countries.json` | `GET https://api.fas.usda.gov/api/psd/countries` (`PSDData_GetCountries`) | 2026-10-28T21:42:03Z | 251 |
+| `regions.json` | `GET https://api.fas.usda.gov/api/psd/regions` (`PSDData_GetRegions`) | 2026-10-28T21:42:04Z | 15 |
+| `unitsOfMeasure.json` | `GET https://api.fas.usda.gov/api/psd/unitsOfMeasure` (`PSDData_GetUnitsOfMeasure`) | 2026-10-28T21:42:05Z | 42 |
+| `commodityAttributes.json` | `GET https://api.fas.usda.gov/api/psd/commodityAttributes` (`PSDData_GetCommodityAttributes`) | 2026-10-28T21:42:06Z | 85 |
 
-The 2026-10-23 files were written by `scripts/refresh_reference.py` from the answers
-recorded the same morning, now in `tests/fixtures/<wrapper>/all.json` (07:56 UTC), served to
-the script's wrappers through `respx` so that the refresh spent no second round of keyed
-calls; the records are byte-for-byte the recorded ones.
-Their `fetched` is the bare date the script then wrote, which `PackagedList.load` reads
-as 00:00 UTC of that day (so the list tasks' `meta.retrieved_at`) until the next refresh
-writes the full time.
+The 2026-10-28 files were written by `scripts/refresh_reference.py` from one live request
+per list (five keyed calls), each file's `fetched` the UTC time of its fetch to the second,
+as `PackagedList.write` writes it, and so the list tasks' `meta.retrieved_at`. Their records
+are identical to those of the files of 2026-10-23, which the script had written from the
+answers recorded that morning, now in `tests/fixtures/<wrapper>/all.json` (07:56 UTC),
+then with the bare date as `fetched`; the recordings still hold the packaged records.
