@@ -17,10 +17,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import DataReleaseInfo
 
-__all__ = ["PSDData_GetDataReleaseInfo"]
+__all__ = ["get_data_release_info"]
 
 
-async def PSDData_GetDataReleaseInfo(commodity_code: str) -> list[DataReleaseInfo]:
+async def get_data_release_info(commodity_code: str) -> list[DataReleaseInfo]:
     """Call ``PSDData_GetDataReleaseInfo``.
 
     Args:

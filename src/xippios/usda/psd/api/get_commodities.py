@@ -2,7 +2,7 @@
 
 Reference: ``docs/upstream/openapi/portal-document.json``, operation
 ``PSDData_GetCommodities``: no parameters, the response typed only as ``object``.
-The record shape is the recorded one, ``tests/fixtures/PSDData_GetCommodities/all.json``,
+The record shape is the recorded one, ``tests/fixtures/get_commodities/all.json``,
 parsed into ``models.Commodity``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
@@ -12,10 +12,10 @@ from xippios.core import parse
 from xippios.usda.psd._client import SOURCE, client
 from xippios.usda.psd.models import Commodity
 
-__all__ = ["PSDData_GetCommodities"]
+__all__ = ["get_commodities"]
 
 
-async def PSDData_GetCommodities() -> list[Commodity]:
+async def get_commodities() -> list[Commodity]:
     """Call ``PSDData_GetCommodities``.
 
     Returns:

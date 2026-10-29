@@ -122,18 +122,19 @@ async def test_get_latest_release_live(record_property: Callable[[str, object], 
 
 
 LISTS = [
-    ("list_commodities", "PSDData_GetCommodities"),
-    ("list_countries", "PSDData_GetCountries"),
-    ("list_regions", "PSDData_GetRegions"),
-    ("list_units_of_measure", "PSDData_GetUnitsOfMeasure"),
-    ("list_commodity_attributes", "PSDData_GetCommodityAttributes"),
+    # task, operation it came from (meta.endpoint, verbatim), its wrapper in api/
+    ("list_commodities", "PSDData_GetCommodities", "get_commodities"),
+    ("list_countries", "PSDData_GetCountries", "get_countries"),
+    ("list_regions", "PSDData_GetRegions", "get_regions"),
+    ("list_units_of_measure", "PSDData_GetUnitsOfMeasure", "get_units_of_measure"),
+    ("list_commodity_attributes", "PSDData_GetCommodityAttributes", "get_commodity_attributes"),
 ]
 
 
-@pytest.mark.parametrize(("task", "endpoint"), LISTS, ids=[task for task, _ in LISTS])
-async def test_packaged_list_equals_the_live_list(task: str, endpoint: str) -> None:
+@pytest.mark.parametrize(("task", "endpoint", "wrapper"), LISTS, ids=[task for task, *_ in LISTS])
+async def test_packaged_list_equals_the_live_list(task: str, endpoint: str, wrapper: str) -> None:
     packaged = await getattr(tasks, f"{task}_async")()
-    live: list[Any] = await getattr(api, endpoint)()
+    live: list[Any] = await getattr(api, wrapper)()
     stale = [record for record in packaged.data if record not in live]
     new = [record for record in live if record not in packaged.data]
     behind = bool(stale or new)

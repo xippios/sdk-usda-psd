@@ -33,7 +33,7 @@ __all__ = [
 class Commodity(UpstreamModel):
     """One record of ``PSDData_GetCommodities`` (``GET /api/psd/commodities``).
 
-    Shape from ``tests/fixtures/PSDData_GetCommodities/all.json`` (63 records).
+    Shape from ``tests/fixtures/get_commodities/all.json`` (63 records).
 
     Attributes:
         commodity_code: ``commodityCode``, seven digits as text, e.g. ``"0410000"``.
@@ -47,7 +47,7 @@ class Commodity(UpstreamModel):
 class Country(UpstreamModel):
     """One record of ``PSDData_GetCountries`` (``GET /api/psd/countries``).
 
-    Shape from ``tests/fixtures/PSDData_GetCountries/all.json`` (251 records, 38 of them
+    Shape from ``tests/fixtures/get_countries/all.json`` (251 records, 38 of them
     without a GENC code).
 
     Attributes:
@@ -67,7 +67,7 @@ class Country(UpstreamModel):
 class Region(UpstreamModel):
     """One record of ``PSDData_GetRegions`` (``GET /api/psd/regions``).
 
-    Shape from ``tests/fixtures/PSDData_GetRegions/all.json`` (15 records).
+    Shape from ``tests/fixtures/get_regions/all.json`` (15 records).
 
     Attributes:
         region_code: ``regionCode``, e.g. ``"R00"``.
@@ -81,7 +81,7 @@ class Region(UpstreamModel):
 class UnitOfMeasure(UpstreamModel):
     """One record of ``PSDData_GetUnitsOfMeasure`` (``GET /api/psd/unitsOfMeasure``).
 
-    Shape from ``tests/fixtures/PSDData_GetUnitsOfMeasure/all.json`` (42 records).
+    Shape from ``tests/fixtures/get_units_of_measure/all.json`` (42 records).
 
     Attributes:
         unit_id: ``unitId``, an integer, e.g. ``8``.
@@ -97,7 +97,7 @@ class UnitOfMeasure(UpstreamModel):
 class CommodityAttribute(UpstreamModel):
     """One record of ``PSDData_GetCommodityAttributes`` (``GET /api/psd/commodityAttributes``).
 
-    Shape from ``tests/fixtures/PSDData_GetCommodityAttributes/all.json`` (85 records).
+    Shape from ``tests/fixtures/get_commodity_attributes/all.json`` (85 records).
     Names are not unique: ``"Total Disappearance"`` (126, 173) and ``"Fresh Dom.
     Consumption"`` (133, 135) appear twice each.
 

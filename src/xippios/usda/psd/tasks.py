@@ -170,10 +170,10 @@ async def get_data_async(
     try:
         if country_code is None:
             endpoint = "PSDData_GetCommodityDataByYear"
-            records = await api.PSDData_GetCommodityDataByYear(commodity_code, market_year)
+            records = await api.get_commodity_data_by_year(commodity_code, market_year)
         else:
             endpoint = "PSDData_GetCountryCommodityDataByYear"
-            records = await api.PSDData_GetCountryCommodityDataByYear(
+            records = await api.get_country_commodity_data_by_year(
                 commodity_code, country_code, market_year
             )
     except NoDataForYear as exc:
@@ -210,7 +210,7 @@ async def get_world_data_async(
         "market_year": market_year,
     }
     try:
-        records = await api.PSDData_GetWorldCommodityDataByYear(commodity_code, market_year)
+        records = await api.get_world_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "the world", market_year) from exc
     meta = ResultMeta(
@@ -245,7 +245,7 @@ async def get_release_dates_async(
         validate_market_year(market_year)
     if country_code is not None:
         validate_country_code(country_code)
-    releases = await api.PSDData_GetDataReleaseInfo(commodity_code)
+    releases = await api.get_data_release_info(commodity_code)
     selected = [
         release
         for release in releases
@@ -364,7 +364,7 @@ async def get_balance_sheet_async(
         "market_year": market_year,
     }
     try:
-        records = await api.PSDData_GetCountryCommodityDataByYear(
+        records = await api.get_country_commodity_data_by_year(
             commodity_code, country_code, market_year
         )
     except NoDataForYear as exc:
@@ -458,7 +458,7 @@ async def get_time_series_async(
     series: list[CommodityData] = []
     for market_year in range(start_year, end_year + 1):
         try:
-            records = await api.PSDData_GetCountryCommodityDataByYear(
+            records = await api.get_country_commodity_data_by_year(
                 commodity_code, country_code, market_year
             )
         except NoDataForYear:
@@ -518,7 +518,7 @@ async def get_top_countries_async(
         "n": n,
     }
     try:
-        records = await api.PSDData_GetCommodityDataByYear(commodity_code, market_year)
+        records = await api.get_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "every country", market_year) from exc
     ranked = sorted(
@@ -571,7 +571,7 @@ async def get_latest_release_async(commodity_code: str) -> Result[list[DataRelea
             ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
     """
     validate_commodity_code(commodity_code)
-    releases = await api.PSDData_GetDataReleaseInfo(commodity_code)
+    releases = await api.get_data_release_info(commodity_code)
     latest, vintage = _latest(releases)
     meta = ResultMeta(
         source=SOURCE,

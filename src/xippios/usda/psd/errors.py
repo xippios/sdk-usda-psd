@@ -15,9 +15,9 @@ class NoDataForYear(NotFoundError):
     """PSD's own answer for a market year without data (HTTP 404, empty ``text/plain``).
 
     Recorded for 1900 on all three data forms: one country
-    (``PSDData_GetCountryCommodityDataByYear/unknown_year.json``), every country
-    (``PSDData_GetCommodityDataByYear/year_1900.json``) and the world
-    (``PSDData_GetWorldCommodityDataByYear/year_1900.json``): status 404, an empty body,
+    (``get_country_commodity_data_by_year/unknown_year.json``), every country
+    (``get_commodity_data_by_year/year_1900.json``) and the world
+    (``get_world_commodity_data_by_year/year_1900.json``): status 404, an empty body,
     ``content-type: text/plain; charset=utf-8``. ``_client.classify`` raises it for that
     answer on a data path only. The gateway's 404 (``{"error": {"code": "NOT_FOUND",
     ...}}``, no such route) stays a plain ``NotFoundError``: it says the request is wrong,

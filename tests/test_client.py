@@ -1,7 +1,7 @@
 """The client's error mapping, and core's api.data.gov gateway wired to it.
 
 Recorded answers come from ``tests/fixtures``, the gateway's 429 included
-(``PSDData_GetCommodities/over_rate_limit.json``, recorded after spending the key's
+(``get_commodities/over_rate_limit.json``, recorded after spending the key's
 hourly quota on 2026-10-23). Cases the recordings do not cover (the gateway's
 ``NOT_FOUND`` 404, the other ``API_KEY_*`` codes, a 429 without ``Retry-After``) are
 built in the recorded body's shape and say so. The gateway and its quota policy are
@@ -39,7 +39,7 @@ from xippios.usda.psd._client import (
 from xippios.usda.psd.errors import NoDataForYear
 
 FIXTURES = Path(__file__).parent / "fixtures"
-DATA = "PSDData_GetCountryCommodityDataByYear"
+DATA = "get_country_commodity_data_by_year"
 SLACK = CLOCK_SLACK.total_seconds()
 """A wait read through the client counts from the snapshot to now, a moment later."""
 
@@ -54,7 +54,7 @@ def synthesised(status: int, body: object, headers: dict[str, str] | None = None
     )
 
 
-RECORDED_429 = load_fixture(FIXTURES / "PSDData_GetCommodities" / "over_rate_limit.json").response
+RECORDED_429 = load_fixture(FIXTURES / "get_commodities" / "over_rate_limit.json").response
 """The recorded 429: ``Retry-After: 3151``, ``x-ratelimit-remaining: 0``."""
 OVER_RATE_LIMIT = json.loads(RECORDED_429.body)
 """The recorded 429 body, for the variants built around it."""
@@ -84,7 +84,7 @@ def test_the_client_is_wired_for_the_gateway() -> None:
 
 def test_invalid_key_is_an_auth_error_naming_the_code_and_the_variable() -> None:
     response = response_from_fixture(
-        load_fixture(FIXTURES / "PSDData_GetCommodities" / "invalid_key.json")
+        load_fixture(FIXTURES / "get_commodities" / "invalid_key.json")
     )
     error = classify(response)
     assert isinstance(error, AuthError)
@@ -117,9 +117,9 @@ async def test_the_wrapper_raises_auth_error_on_the_recorded_invalid_key(
     replay_fixture: Callable[[str, str], respx.Route],
     placeholder_api_key: str,
 ) -> None:
-    route = replay_fixture("PSDData_GetCommodities", "invalid_key")
+    route = replay_fixture("get_commodities", "invalid_key")
     with pytest.raises(AuthError, match="API_KEY_INVALID") as info:
-        await api.PSDData_GetCommodities()
+        await api.get_commodities()
     assert placeholder_api_key not in str(info.value)
     assert route.call_count == 1, "a 403 is never retried"
 
@@ -156,17 +156,17 @@ async def test_a_year_without_data_answers_404_with_an_empty_body(
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "case"),
+    ("wrapper", "case"),
     [
-        ("PSDData_GetCountryCommodityDataByYear", "unknown_year"),
-        ("PSDData_GetCommodityDataByYear", "year_1900"),
-        ("PSDData_GetWorldCommodityDataByYear", "year_1900"),
+        ("get_country_commodity_data_by_year", "unknown_year"),
+        ("get_commodity_data_by_year", "year_1900"),
+        ("get_world_commodity_data_by_year", "year_1900"),
     ],
 )
 def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
-    endpoint: str, case: str
+    wrapper: str, case: str
 ) -> None:
-    response = response_from_fixture(load_fixture(FIXTURES / endpoint / f"{case}.json"))
+    response = response_from_fixture(load_fixture(FIXTURES / wrapper / f"{case}.json"))
     assert (response.status_code, response.content) == (404, b"")
     assert response.headers["content-type"].startswith("text/plain")
     error = classify(response)
@@ -207,11 +207,7 @@ def test_an_empty_404_is_no_data_for_year_only_on_a_data_path_as_text() -> None:
 
 
 def test_valid_codes_without_data_answer_200_with_an_empty_list() -> None:
-    response = response_from_fixture(
-        load_fixture(
-            FIXTURES / "PSDData_GetCountryCommodityDataByYear" / "no_data_valid_codes.json"
-        )
-    )
+    response = response_from_fixture(load_fixture(FIXTURES / DATA / "no_data_valid_codes.json"))
     assert (response.status_code, response.json()) == (200, [])
     assert classify(response) is None
 
@@ -231,7 +227,7 @@ def test_the_gateway_not_found_is_a_not_found_error() -> None:
 
 
 def test_other_statuses_fall_through_to_core() -> None:
-    listed = response_from_fixture(load_fixture(FIXTURES / "PSDData_GetCommodities" / "all.json"))
+    listed = response_from_fixture(load_fixture(FIXTURES / "get_commodities" / "all.json"))
     assert classify(synthesised(500, {"Message": "An error has occurred."})) is None
     assert classify(listed) is None
 
@@ -239,7 +235,7 @@ def test_other_statuses_fall_through_to_core() -> None:
 def test_the_recorded_429_is_a_rate_limit_error_with_its_retry_after() -> None:
     """``classify`` called on its own gives the exact wait: no client has observed it."""
     response = response_from_fixture(
-        load_fixture(FIXTURES / "PSDData_GetCommodities" / "over_rate_limit.json")
+        load_fixture(FIXTURES / "get_commodities" / "over_rate_limit.json")
     )
     assert response.status_code == 429
     assert response.headers["retry-after"] == "3151"
@@ -267,9 +263,9 @@ async def test_the_policy_reads_the_recorded_429_through_core(
     (3151 s is beyond ``backoff_max``) with the snapshot's wait from now, and the next
     request is refused before it is sent, in the gateway's name. Marked ``rate_limited``:
     the refusal is the policy's pause, which the plugin turns off."""
-    route = replay_fixture("PSDData_GetCommodities", "over_rate_limit")
+    route = replay_fixture("get_commodities", "over_rate_limit")
     with pytest.raises(RateLimitError) as info:
-        await api.PSDData_GetCommodities()
+        await api.get_commodities()
     assert info.value.retry_after is not None
     assert 3151 - SLACK <= info.value.retry_after <= 3151
     assert info.value.source == SOURCE
@@ -281,7 +277,7 @@ async def test_the_policy_reads_the_recorded_429_through_core(
     assert (snapshot.limit, snapshot.remaining) == (1000, 0)
     assert snapshot.resumes_at == snapshot.observed_at + timedelta(seconds=3151)
     with pytest.raises(RateLimitError, match="nothing was sent") as refused:
-        await api.PSDData_GetRegions()
+        await api.get_regions()
     assert refused.value.source == "api.data.gov", "the gateway's quota, not psd's"
     assert refused.value.message.startswith(f"api.data.gov quota of the key in {API_KEY_ENV} spent")
     assert refused.value.retry_after is not None
@@ -353,13 +349,13 @@ async def test_core_retries_a_429_only_within_its_backoff(
 def test_the_recorded_bodies_are_the_documented_shapes() -> None:
     """The bad-key answer carries api.data.gov's error object and no quota headers."""
     response = response_from_fixture(
-        load_fixture(FIXTURES / "PSDData_GetCommodities" / "invalid_key.json")
+        load_fixture(FIXTURES / "get_commodities" / "invalid_key.json")
     )
     body = json.loads(response.text)
     assert set(body) == {"error"}
     assert set(body["error"]) == {"code", "message"}
     assert "x-ratelimit-remaining" not in response.headers
-    listed = response_from_fixture(load_fixture(FIXTURES / "PSDData_GetCommodities" / "all.json"))
+    listed = response_from_fixture(load_fixture(FIXTURES / "get_commodities" / "all.json"))
     assert listed.headers["x-ratelimit-limit"] == "1000"
 
 
