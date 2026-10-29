@@ -13,6 +13,7 @@ a validation failure names a code the package lacks.
 """
 
 import functools
+import re
 from datetime import datetime
 
 from xippios.core import InvalidRequestError, PackagedList, UnknownCode, closest
@@ -23,10 +24,13 @@ __all__ = [
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
     "attribute_names",
+    "country_regions",
     "validate_attribute_id",
     "validate_commodity_code",
     "validate_country_code",
     "validate_market_year",
+    "validate_region_code",
+    "validate_since",
 ]
 
 PACKAGE = "xippios.usda.psd"
@@ -206,3 +210,109 @@ def validate_attribute_id(attribute_id: int) -> int:
         "the package refuses it. list_commodity_attributes lists the ids.",
         source=SOURCE,
     )
+
+
+def country_regions() -> dict[str, str]:
+    """``{countryCode: regionCode}`` of the packaged ``countries`` list, in upstream order.
+
+    PSD's data records carry no region; a task that selects by region maps each record's
+    ``countryCode`` through this. Four countries sit in ``"R15"``, which the packaged
+    ``regions`` list lacks.
+    """
+    _, regions = _codes("countries", "countryCode", "regionCode")
+    return dict(regions)
+
+
+def validate_region_code(region_code: str) -> str:
+    """Check a region code against the ``regionCode`` values the packaged countries carry.
+
+    The data operations take no region: a task that keeps one region's countries maps
+    each record through the packaged ``countries`` list after the call, so a code no
+    country carries would select nothing. The check runs before any upstream call.
+    ``"R15"`` passes, carried by four countries although ``PSDData_GetRegions`` lacks
+    it; ``"R00"`` (World), a region of the packaged ``regions`` list that no country
+    belongs to, is refused with a hint instead of close codes.
+
+    Args:
+        region_code: A region code as ``list_countries`` gives it, e.g. ``"R01"`` (North
+            America), ``"R04"`` (South America), ``"R15"``.
+
+    Returns:
+        The code, unchanged.
+
+    Raises:
+        InvalidRequestError: When ``region_code`` is not text.
+        UnknownCode: Naming up to three close codes with their names in the packaged
+            ``regions`` list, or for ``"R15"`` its countries' names; for a region of
+            that list no country belongs to (``"R00"``, World) saying that the world is
+            ``get_world_data``'s and that ``region_code`` takes a region countries
+            belong to.
+    """
+    if not isinstance(region_code, str):
+        raise InvalidRequestError(
+            f"region_code must be a PSD region code such as 'R04' (South America), got "
+            f"{region_code!r}. list_regions and list_countries name the regions.",
+            source=SOURCE,
+        )
+    fetched, regions = _codes("countries", "countryCode", "regionCode")
+    carried = set(regions.values())
+    if region_code in carried:
+        return region_code
+    _, names = _codes("regions", "regionCode", "regionName")
+    _, countries = _codes("countries", "countryCode", "countryName")
+    known = {
+        code: names.get(code)
+        or "; ".join(countries[country] for country, region in regions.items() if region == code)
+        for code in sorted(carried)
+    }
+    hint = (
+        f"{region_code} ({names[region_code]}) is in list_regions, but no country belongs "
+        "to it: the world total is get_world_data's, and region_code takes a region "
+        "countries belong to, as list_countries gives it, e.g. R04 (South America); omit "
+        "it to rank every country."
+        if region_code in names
+        else None
+    )
+    raise UnknownCode(
+        "region_code",
+        region_code,
+        list_name="countries",
+        fetched=fetched,
+        closest=() if hint else closest(region_code, known),
+        hint=hint,
+        reason="The data operations take no region; the task keeps the countries whose "
+        "packaged regionCode equals it, so a code no country carries would rank nothing, "
+        "and the package refuses it. list_regions and list_countries name the regions.",
+        source=SOURCE,
+    )
+
+
+RELEASE_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
+"""A PSD release month as ``meta.vintage`` writes it: ``"YYYY-MM"``, the month zero-padded."""
+
+
+def validate_since(since: str) -> tuple[int, int]:
+    """Check a release month ``"YYYY-MM"`` and return it as ``(year, month)``.
+
+    The form ``meta.vintage`` of the data tasks and of ``get_latest_release`` takes, so a
+    stored vintage passes as it is. Nothing else is read as a month: no day, no other
+    separator, no unpadded month.
+
+    Args:
+        since: A PSD release month, e.g. ``"2026-09"``, ``"2024-02"``.
+
+    Returns:
+        ``(year, month)``, e.g. ``(2026, 9)``, comparable with a release record's
+        ``(release_year, release_month)``.
+
+    Raises:
+        InvalidRequestError: When ``since`` is not four digits, a hyphen and a month from
+            ``01`` to ``12``.
+    """
+    if not isinstance(since, str) or not RELEASE_MONTH.fullmatch(since):
+        raise InvalidRequestError(
+            f"since must be a PSD release month 'YYYY-MM' such as '2026-09', the form "
+            f"meta.vintage takes, got {since!r}.",
+            source=SOURCE,
+        )
+    return int(since[:4]), int(since[5:])

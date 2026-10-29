@@ -22,7 +22,10 @@ The snapshot in `docs/upstream/` is the reference for names, parameters and sema
 ## Upstream behaviour established by fixtures
 
 The snapshot types every response as `object`, so these facts come from the answers
-recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them once.
+recorded on 2026-10-23 under `tests/fixtures/`, and the three re-recorded cut on
+2026-10-28 (ADR-0019); `_client.classify` maps them once. A fact of a whole answer the
+cut fixtures no longer hold is dated 2026-10-23; those whole recordings are in commit
+`07b88ad` on `main`.
 
 - Record shapes of the five lists are in `models.py`, each naming its fixture. Unit
   descriptions are padded with spaces to 20 characters (kept); attribute names are not
@@ -66,24 +69,32 @@ recorded on 2026-10-23 under `tests/fixtures/`; `_client.classify` maps them onc
   refresh never fails an answer; every recorded id is in the packaged lists, which
   `test_params` checks as a freshness test), `value` as a JSON number (`Decimal`). One
   record per country and attribute; wheat US 2023 has 15.
-- `country/all` is the largest answer and has no paging: corn 2023 is 1,875 records from
-  125 countries, 275,759 bytes of JSON (`corn_all_2023`); wheat 2023 is 1,845 from 123.
+- `country/all` is the largest answer and has no paging: corn 2023 is 1,875 records,
+  275,759 bytes of JSON (`corn_all_2023`), wheat 2023 1,845 records, 271,470 bytes, both
+  ordered by country code; the fixtures are cut at 200,000 bytes and keep the countries
+  from AF to RH (corn) and to RS (wheat), the whole sizes in their `original_count` and
+  `original_bytes`. On 2026-10-23 the whole answers held 125 and 123 countries.
 - Release dates (`PSDData_GetDataReleaseInfo`; `models.DataReleaseInfo`): one record per
   country and market year, `commodityCode`, `countryCode`, `marketYear`, `releaseYear`,
   `releaseMonth`, all digit strings; a month, no day, no time, no zone. Wheat: 7,754
-  records, 145 countries, market years 1960 to 2026, no world record, about 840 KB.
-  `get_release_dates` serves it, filtered by market year and country after the call.
+  records, 837,433 bytes (`original_count`, `original_bytes`), ordered by market year,
+  oldest first (within a year by country code on 2026-10-28, in another order on
+  2026-10-23), so the cut fixture keeps market years 1960 to 1978, whose newest release
+  is 2024-02. The whole list of 2026-10-23 held 145 countries, market years 1960 to
+  2026 and no world record. `get_release_dates` serves it, filtered by market year,
+  country and `since` after the call.
 - A data record's `calendarYear`/`month` is the release that last revised it: for wheat
-  2023 every one of the 123 countries matches its release record exactly, and the world
-  records carry the latest of them (2026-10).
+  2023 every one of the 123 countries matched its release record exactly, and the world
+  records carried the latest of them (2026-10), in the whole answers of 2026-10-23.
 - `meta.vintage` of `get_data` and `get_world_data` is the latest `calendarYear`-`month`
   across the result's records, `"YYYY-MM"` with the month zero-padded: `"2026-07"` for
   wheat US 2023, `"2026-10"` for wheat all countries and world 2023. In every case
-  recorded with its release list (wheat 2023: US, all countries, world) it equals the
-  release list's record for the same commodity, market year and country, or the latest
-  across countries (`test_vintage_equals_the_release_list`); the corn and soybeans
-  recordings are internally consistent. So the data tasks make no second call. `None`
-  for an empty answer.
+  recorded with its whole release list (wheat 2023: US, all countries, world, on
+  2026-10-23) it equals the release list's record for the same commodity, market year
+  and country, or the latest across countries; the corn and soybeans recordings are
+  internally consistent. So the data tasks make no second call. The cut release list
+  ends at market year 1978, so no replay test re-checks this on 2023 any more; the
+  whole recordings of commit `07b88ad` show it. `None` for an empty answer.
 - `meta.published_at` is `None` for every task: PSD gives a month, no day, and the
   first of the month would predate the real mid-month release, a look-ahead bias in an
   as-of store.
@@ -108,32 +119,54 @@ totals, no unit conversion, no gap filling, nothing renamed (ADR-0003).
   projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
   `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
   `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
-- `get_time_series(commodity_code, country_code, attribute_id, start_year, end_year)`:
-  one request per market year, oldest first, at the client's pace; `start_year` from
+- `get_time_series(commodity_code, country_code, start_year, end_year, attribute_id=None)`:
+  `attribute_id` an id, a list of ids or, omitted, every attribute; every id is checked
+  before the first request and an empty list is refused; records as upstream sent them,
+  ordered by market year and within a year in upstream's order; `meta.request` carries
+  `attribute_id` as given (the id or the list) and leaves it out when omitted. Since the
+  parameter takes a list, the HTTP route is a `POST` with a JSON body (conventions §9).
+  One request per market year, oldest first, at the client's pace; `start_year` from
   1960 (the snapshot: "PSD Database has data for most commodities since year 1960");
   at most 100 market years per call (`SERIES_MAX_YEARS`, a self-imposed sanity bound:
   1960 to the current forecast years is about 67 requests, 1960 to 9999 would be
   8,040), no upper bound on `end_year` itself. A future year is expected to answer 404
   like 1900 (not recorded) and costs its request. A year that raises `NoDataForYear`,
-  or has no record for the attribute, is absent (no gap filling); an empty series is a
-  valid result. Every other error, the gateway's `NOT_FOUND` included, is raised.
-- `get_top_countries(commodity_code, market_year, attribute_id, n=10)`: one
-  `country/all` request; the attribute's records sorted by `value`, largest first,
-  stable, first `n` kept; no unit check, each record carries its own `unit_id`.
-  Groupings (`E4`, `T3` Africa, NEC, `X8`, `Z7`, `ZZ`) rank like countries.
-  `meta.vintage` is the latest release among every record ranked, not only the `n`
-  returned (wheat production 2023: `"2026-10"`; the top five alone `"2026-09"`).
-- `get_latest_release(commodity_code)`: one request; the release-list records of the
-  newest (`release_year`, `release_month`), `meta.vintage` that release (wheat:
-  `"2026-10"`, 146 records); `[]` and `None` for a commodity without releases. The MCP
-  server returns at most 200 rows, and a release that adds a market year and revises
-  earlier ones can exceed it (the recorded wheat list has 130 more records still on
-  2026-09, so September's answer held between 130 and 276);
-  `get_release_dates(commodity_code, market_year=..., country_code=...)` returns any
-  part of the list in full.
+  or has no record for the attributes, is absent (no gap filling); an empty series is a
+  valid result. Every other error, the gateway's `NOT_FOUND` included, is raised. Over
+  MCP a cut series' note names `attribute_id`, `start_year` and `end_year`
+  (`tasks.MCP_CAPS`).
+- `get_top_countries(commodity_code, market_year, attribute_id, n=10, region_code=None,
+  exclude_groupings=False)`: one `country/all` request; the attribute's records sorted
+  by `value`, largest first, stable, first `n` kept; no unit check, each record carries
+  its own `unit_id`. By default PSD's groupings rank like countries;
+  `exclude_groupings=True` leaves out `tasks.GROUPINGS`, the eight aggregates of the
+  packaged countries list (`E4` European Union, `E2` EU-15, `E3` EU-25, `C1` Caribbean
+  Basin, `T3` Africa, NEC, `X8` Southern Asia NEC, `Z7` Other Pacific Islands, NEC, `ZZ`
+  Other), named by hand, never inferred from names. `region_code` keeps the records
+  whose country the packaged countries list puts in that region (the data records
+  carry none), checked before the call against the `regionCode` values the packaged
+  countries carry, `R15` included (`params.validate_region_code`); `R00` (World), in the
+  regions list but carried by no country, is refused with a hint that the world total
+  is `get_world_data`'s. `meta.vintage` is the latest release among every record
+  ranked, after both apply, not only the `n` returned (wheat production 2023:
+  `"2026-10"`; the top five alone `"2026-09"`; South America, `R04`, `"2026-09"`).
+- `get_latest_release(commodity_code, since=None)`: one request; the release-list
+  records of the newest (`release_year`, `release_month`), `meta.vintage` that release
+  (wheat on 2026-10-23: `"2026-10"`, 146 records); `[]` and `None` for a commodity
+  without releases. `since`, a release month `"YYYY-MM"` as `meta.vintage` writes it
+  (`params.validate_since`), returns `[]` when the newest release is not later than it,
+  `meta.vintage` still naming that release, so a poll with the stored vintage learns
+  that nothing newer exists; `get_release_dates(..., since=...)` keeps the records of
+  releases strictly after it. The MCP server returns at most 200 rows, and a release
+  that adds a market year and revises earlier ones can exceed it (the wheat list of
+  2026-10-23 had 130 more records still on 2026-09, so September's answer held between
+  130 and 276); `get_release_dates(commodity_code, market_year=..., country_code=...,
+  since=...)` returns any part of the list in full.
 
-Attribute ids are checked against the packaged list before any call
-(`params.validate_attribute_id`, `UnknownCode` with the closest ids).
+Attribute ids and region codes are checked against the packaged lists before any call
+(`params.validate_attribute_id`, `params.validate_region_code`, `UnknownCode` with the
+closest), and a release month against its form (`params.validate_since`,
+`InvalidRequestError`).
 
 ## Reference data
 
@@ -162,7 +195,10 @@ next refresh writes the full time), `meta.vintage` `None` (upstream gives the li
 version). Their filters select records client-side, codes and names unchanged, upstream
 order kept. Over MCP `list_countries` has a
 cap of its own, 300 rows (`tasks.MCP_CAPS`, ADR-0016), so its 251 countries arrive whole;
-every other tool keeps the family default, 200 rows or 64 KB. The live tests compare each
+`get_data`, `get_release_dates` and `get_time_series` keep the family's limits, 200 rows
+or 64 KB, with a note naming their filters (`country_code`; `market_year`,
+`country_code`, `since`; `attribute_id`, `start_year`, `end_year`); every other tool
+keeps the family default with core's note. The live tests compare each
 packaged list with the live one, the freshness check.
 
 `enums.AttributeId` and `enums.UnitId` are `IntEnum`s, as conventions §3 has it for integer
@@ -200,9 +236,8 @@ scripts/
                          --render-only renders it without a call
 tests/
   conftest.py      enables xippios.core.testing.plugin, which keeps the run offline
-  fixtures/        recorded responses, <wrapper>/<case>.json, never hand-written; the
-                   three over the 256 KiB cap stay under their PSDData_ directories
-                   until re-recorded, cut (ADR-0019)
+  fixtures/        recorded responses, <wrapper>/<case>.json, never hand-written; an
+                   answer over the 256 KiB cap is recorded cut (ADR-0019)
   test_family.py   core's family check, one line: namespace levels, py.typed, __version__,
                    the adapters serving exactly the tasks, task shapes and docstrings, the
                    README status table, the template tag, the core bound
@@ -212,8 +247,10 @@ tests/
   test_api.py      replay tests for the endpoint wrappers
   test_client.py   classify on recorded error bodies; core's quota policy on the recorded 429
   test_params.py   packaged lists, enums and the code checks
-  test_live.py     @pytest.mark.live smoke tests, one per task (14 keyed calls in all), and
-                   the template's keyless reachability check
+  test_live.py     @pytest.mark.live smoke tests, one per task and one more each for the
+                   new arguments of get_time_series, get_top_countries, get_release_dates
+                   and get_latest_release (18 keyed calls in all), and the template's
+                   keyless reachability check
 docs/upstream/     documentation snapshot and FETCHED.md
 .github/workflows/ ci.yml (the required ci check, with the CHANGELOG and fixture-size steps),
                    publish.yml (the release train: tag, build, PyPI), live.yml (nightly live
@@ -260,3 +297,8 @@ the org secret `DATA_GOV_API_KEY`.
   quota's 429 to `RateLimitError` with `retry_after` (ADR-0009, ADR-0010, ADR-0015). An
   endpoint added here installs no policy of its own; only PSD's own error shapes go into
   `classify`, after the gateway's.
+- The reference guard: `test_balance_sheet_keys_of_every_packaged_attribute_are_pinned`
+  in `tests/test_slices.py` writes out the key `get_balance_sheet` gives each packaged
+  attribute id; when a reference refresh fails it, the refresh PR updates the mapping and
+  records every changed or newly suffixed key in `CHANGELOG.md` as a breaking change
+  (conventions §12).
