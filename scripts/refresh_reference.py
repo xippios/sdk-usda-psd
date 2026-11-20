@@ -10,10 +10,10 @@ from the packaged files by one ``xippios.core.reference.render_enums`` call, a `
 per value list in ``LISTS`` and an ``IntEnum`` per list of integer ids and names in
 ``ID_LISTS`` (``id_name_pairs``), so that a member compares equal to the id in upstream's
 data, each class naming the day its list was fetched; and formatted with ``ruff format``
-and ``ruff check --fix``, as it is committed (ADR-0008). ``TABLES``, this package's own
-and now the template's too, are record lists packaged without an enum. Where a member
-name derives to nothing, or two collide, name it by hand in ``render``'s call:
-``render_enums(member_names=...)``, per list and value (an id for an ``IntEnum``).
+and ``ruff check --fix``, as it is committed (sdk-core ADR-0031, decision 6). ``TABLES``,
+this package's own and now the template's too, are record lists packaged without an enum.
+Where a member name derives to nothing, or two collide, name it by hand in ``render``'s
+call: ``render_enums(member_names=...)``, per list and value (an id for an ``IntEnum``).
 
 PSD publishes five lists, all of them records: ``unitsOfMeasure`` and
 ``commodityAttributes`` are id lists, which make ``UnitId`` and ``AttributeId``;
@@ -25,7 +25,7 @@ list, so ``LISTS`` stays empty. The list endpoints take the api.data.gov key, so
 
 Five requests against api.data.gov's hourly quota, shared with every package using the
 key. Then update the times in ``reference/README.md``. Only lists that are the same for
-every caller are packaged; a multi-tenant source packages no tenant data (ADR-0014),
+every caller are packaged; a multi-tenant source packages no tenant data (sdk-core ADR-0036),
 which PSD is not.
 
 ``--render-only`` regenerates ``enums.py`` from the packaged ``reference/*.json`` alone,
@@ -127,7 +127,6 @@ def render() -> None:
     """Regenerate ``enums.py`` from the packaged files and format it as it is committed."""
     lists: dict[str, Sequence[str] | Sequence[tuple[int, str]]] = {}
     fetched: dict[str, str] = {}
-    class_names: dict[str, str] = {}
     keys = [*LISTS, *(id_field for _, _, id_field, _ in ID_LISTS.values())]
     if len(set(keys)) < len(keys):
         raise SystemExit("an id field of ID_LISTS names a list of LISTS: one enum each")
@@ -139,8 +138,7 @@ def render() -> None:
         ids = read(name)
         lists[id_field] = id_name_pairs(ids.records, id_field=id_field, name_field=name_field)
         fetched[id_field] = f"{ids.fetched:%Y-%m-%d}"
-        class_names[id_field] = id_field[:1].upper() + id_field[1:]
-    module = render_enums(lists, fetched=fetched, class_names=class_names, generator=GENERATOR)
+    module = render_enums(lists, fetched=fetched, generator=GENERATOR)
     ENUMS.write_text(module, encoding="utf-8")
     sys.stdout.flush()
     for command in (["format"], ["check", "--fix"]):

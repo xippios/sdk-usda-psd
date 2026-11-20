@@ -3,19 +3,23 @@
 ``/add-endpoint`` and ``/record-fixture`` add them.
 """
 
+import re
 from collections.abc import Callable
 from decimal import Decimal
 
 import httpx
 import pytest
 import respx
+from mcp.types import TextContent
 from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
+from xippios.core.data_gov import NoDataForYear
+from xippios.core.mcp import ToolSet
 from xippios.core.testing import mcp_call
 
-from xippios.usda.psd import tasks
+from xippios.usda.psd import __version__, tasks
+from xippios.usda.psd import mcp as psd_mcp
 from xippios.usda.psd._client import BASE_URL
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
@@ -23,6 +27,8 @@ DATA = "get_country_commodity_data_by_year"
 ALL = "get_commodity_data_by_year"
 WORLD = "get_world_commodity_data_by_year"
 RELEASES = "get_data_release_info"
+WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) for world data"
+"""How a refusal names the task to call instead and its tool (conventions §8)."""
 
 
 def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -47,7 +53,7 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     """``country/all``: records carry different releases; ``vintage`` is the latest. The
-    fixture is cut (ADR-0019), so the shape is checked, not the count."""
+    fixture is cut (sdk-core ADR-0040, decision 5), so the shape is checked, not the count."""
     route = replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_data(WHEAT, 2023)
     assert route.call_count == 1
@@ -166,7 +172,7 @@ def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> Non
     """``get_data``, ``get_release_dates`` and ``get_time_series`` keep 200 rows or 64 KB,
     ``ResultCap``'s defaults, and name their filters; ``list_countries`` has 300 rows;
     every other tool has no entry, so core's default cap and note apply to it, the note
-    promising no filter the tool lacks (conventions §8, ADR-0016). It succeeds the
+    promising no filter the tool lacks (conventions §8, sdk-core ADR-0038). It succeeds the
     end-to-end test of core's default note: the recorded answers over 200 rows, wheat's
     release list and every country's data, now come through tools with a note of their
     own, so no recorded answer shows the default note any more."""
@@ -187,7 +193,7 @@ async def test_a_cut_release_list_names_the_filters_that_narrow_it(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """Wheat's release list over MCP, every country and market year: cut at 200 rows with
-    a note naming the tool's own filters, never one it lacks (ADR-0016)."""
+    a note naming the tool's own filters, never one it lacks (sdk-core ADR-0038)."""
     replay_fixture(RELEASES, "wheat")
     every = tasks.get_release_dates(WHEAT).data
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
@@ -236,6 +242,7 @@ def test_a_market_year_without_data_is_not_found(
     with pytest.raises(NoDataForYear) as info:
         tasks.get_data(WHEAT, 1900, "US")
     assert info.value.path == "/api/psd/commodity/0410000/country/US/year/1900"
+    assert info.value.source == "usda-psd", "raised again in the package's name"
     message = str(info.value)
     assert "commodity 0410000, country US, market year 1900" in message
     assert "upstream answered HTTP 404" in message
@@ -248,7 +255,7 @@ def test_unknown_codes_are_refused_before_any_request(respx_mock: respx.MockRout
         tasks.get_data("0410001", 2023, "US")
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):
         tasks.get_data(WHEAT, 2023, "XX")
-    with pytest.raises(UnknownCode, match="use get_world_data for world data") as world:
+    with pytest.raises(UnknownCode, match=re.escape(WORLD_HINT)) as world:
         tasks.get_data(WHEAT, 2023, "00")
     assert world.value.closest == ()
     with pytest.raises(UnknownCode, match="Omit country_code for every country"):
@@ -295,7 +302,8 @@ async def test_mcp_tool_call_end_to_end(replay_fixture: Callable[[str, str], res
 async def test_value_is_a_json_number_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """ADR-0008: ``Decimal`` in Python, a JSON number on the wire, never a string."""
+    """``Decimal`` in Python, a JSON number on the wire, never a string (sdk-core ADR-0031,
+    decision 1)."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -323,6 +331,64 @@ async def test_value_is_a_json_number_through_both_adapters(
     )
     assert rejected.status_code == 422
     assert rejected.json()["title"] == "UnknownCode"
+
+
+def test_build_returns_the_tool_set_the_entry_point_serves() -> None:
+    """``mcp.build()``, the package contract (conventions §8; sdk-core ADR-0026, amendment
+    2026-11-18, points c and d): a host that serves it beside other sources' tool sets
+    serves the tools, caps, text and version that ``xippios-usda-psd-mcp`` serves."""
+    tools = psd_mcp.build()
+    assert isinstance(tools, ToolSet)
+    assert tools.source == "usda-psd"
+    assert [task.__name__ for task in tools.tasks] == tasks.__all__
+    assert dict(tools.caps or {}) == dict(tasks.MCP_CAPS)
+    assert (tools.instructions, tools.version) == (psd_mcp.INSTRUCTIONS, __version__)
+    assert tools.read_only
+    assert (tools.add_options, tools.apply_options) == (None, None), "no options of its own"
+
+
+@pytest.mark.anyio
+async def test_the_adapters_refuse_a_bad_argument_before_the_task_runs(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """Core 0.4.0's adapters, on this package's tools and routes: a tool refuses an argument
+    it does not declare (sdk-core#84), so ``country`` for ``country_code`` no longer runs
+    ``get_data`` for every country; a tool's error answer is flagged ``is_error``
+    (sdk-core#168); and a route answers a value its schema refuses as problem details, the
+    value not echoed (sdk-core#66). respx has no route mounted: nothing is sent."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mcp.client import Client
+
+    from xippios.usda.psd.http import router
+
+    async with Client(server) as client:
+        undeclared = await client.call_tool(
+            "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023, "country": "US"}
+        )
+        unknown = await client.call_tool(
+            "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
+        )
+    assert undeclared.is_error
+    assert isinstance(undeclared.content[0], TextContent)
+    assert undeclared.content[0].text == (
+        "error: InvalidRequestError: country: Not an argument of this tool; it takes "
+        "commodity_code, market_year, country_code"
+    )
+    assert unknown.is_error
+    assert isinstance(unknown.content[0], TextContent)
+    assert unknown.content[0].text.startswith("error: UnknownCode: '0410001' is not a")
+    app = FastAPI()
+    app.include_router(router)
+    refused = TestClient(app).get(
+        "/usda-psd/get_data", params={"commodity_code": WHEAT, "market_year": "2023/24"}
+    )
+    assert refused.status_code == 422
+    assert refused.headers["content-type"].startswith("application/problem+json")
+    assert refused.json()["title"] == "InvalidRequestError"
+    assert refused.json()["detail"].startswith("market_year: ")
+    assert "2023/24" not in refused.text, "the input is not echoed"
+    assert not respx_mock.calls
 
 
 def test_valid_codes_without_data_are_an_empty_result(

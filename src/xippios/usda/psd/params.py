@@ -57,10 +57,19 @@ def _codes(name: str, code_field: str, name_field: str) -> tuple[datetime, dict[
     return packaged.fetched, codes
 
 
+WORLD_DATA = "get_world_data (over MCP, the tool usda_psd_get_world_data)"
+ATTRIBUTE_LIST = "list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes)"
+REGION_LISTS = (
+    "list_regions and list_countries (over MCP, the tools usda_psd_list_regions and "
+    "usda_psd_list_countries)"
+)
+"""The tasks a refusal names, the one to call instead or the list of the known values, each
+with its MCP tool, since an agent calls the tool (conventions §8)."""
+
 COUNTRY_HINTS: dict[str, str] = {
     "all": "Omit country_code for every country; PSD's 'all' is a path element, not a code.",
     "00": "'00' is the world aggregate in PSD's world records, not a country code: use "
-    "get_world_data for world data; the release list has no world record, pass market_year "
+    f"{WORLD_DATA} for world data; the release list has no world record, pass market_year "
     "only.",
 }
 """Values agents pass for a country that are not country codes, with what to do instead."""
@@ -193,7 +202,7 @@ def validate_attribute_id(attribute_id: int) -> int:
     if isinstance(attribute_id, bool) or not isinstance(attribute_id, int):
         raise InvalidRequestError(
             f"attribute_id must be an integer id such as 28 (Production), got "
-            f"{attribute_id!r}. list_commodity_attributes lists them.",
+            f"{attribute_id!r}. {ATTRIBUTE_LIST} lists them.",
             source=SOURCE,
         )
     fetched, codes = _codes("commodityAttributes", "attributeId", "attributeName")
@@ -207,7 +216,7 @@ def validate_attribute_id(attribute_id: int) -> int:
         closest=closest(str(attribute_id), codes),
         reason="The data operations take no attribute; the task keeps this id's records "
         "after the call, so an id the packaged list lacks would give an empty result, and "
-        "the package refuses it. list_commodity_attributes lists the ids.",
+        f"the package refuses it. {ATTRIBUTE_LIST} lists the ids.",
         source=SOURCE,
     )
 
@@ -251,7 +260,7 @@ def validate_region_code(region_code: str) -> str:
     if not isinstance(region_code, str):
         raise InvalidRequestError(
             f"region_code must be a PSD region code such as 'R04' (South America), got "
-            f"{region_code!r}. list_regions and list_countries name the regions.",
+            f"{region_code!r}. {REGION_LISTS} name the regions.",
             source=SOURCE,
         )
     fetched, regions = _codes("countries", "countryCode", "regionCode")
@@ -267,9 +276,9 @@ def validate_region_code(region_code: str) -> str:
     }
     hint = (
         f"{region_code} ({names[region_code]}) is in list_regions, but no country belongs "
-        "to it: the world total is get_world_data's, and region_code takes a region "
-        "countries belong to, as list_countries gives it, e.g. R04 (South America); omit "
-        "it to rank every country."
+        "to it: the world total is get_world_data's (over MCP, the tool "
+        "usda_psd_get_world_data), and region_code takes a region countries belong to, as "
+        "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
         if region_code in names
         else None
     )
@@ -282,7 +291,7 @@ def validate_region_code(region_code: str) -> str:
         hint=hint,
         reason="The data operations take no region; the task keeps the countries whose "
         "packaged regionCode equals it, so a code no country carries would rank nothing, "
-        "and the package refuses it. list_regions and list_countries name the regions.",
+        f"and the package refuses it. {REGION_LISTS} name the regions.",
         source=SOURCE,
     )
 

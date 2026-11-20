@@ -1,7 +1,7 @@
 """The wave 2 slices: balance sheet, time series, top countries, latest release.
 
 Each replays recorded answers and checks that the slice selects, orders or pivots
-upstream's records without changing one (ADR-0003). ``_recorded`` parses a fixture the
+upstream's records without changing one (sdk-core ADR-0028). ``_recorded`` parses a fixture the
 way the wrapper does, without a call, so a test can compare with what upstream sent
 while still counting the task's own requests. The two pure helpers, the balance-sheet
 pivot and the newest-release filter, are also tested on in-memory records: those are
@@ -10,6 +10,7 @@ function inputs, not fixture files.
 
 import dataclasses
 import json
+import re
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -26,6 +27,7 @@ from xippios.core import (
     ValidationError,
     parse,
 )
+from xippios.core.data_gov import NoDataForYear
 from xippios.core.testing import (
     ReplayFixture,
     assert_projection,
@@ -37,7 +39,6 @@ from xippios.core.testing import (
 
 from xippios.usda.psd import tasks
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import BalanceSheetEntry, CommodityData, DataReleaseInfo
 from xippios.usda.psd.params import PACKAGE, attribute_names, country_regions
@@ -48,6 +49,9 @@ DATA = "get_country_commodity_data_by_year"
 ALL = "get_commodity_data_by_year"
 RELEASES = "get_data_release_info"
 SLICES = ["get_balance_sheet", "get_time_series", "get_top_countries", "get_latest_release"]
+WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) for world data"
+WORLD_TOTAL = "the world total is get_world_data's (over MCP, the tool usda_psd_get_world_data)"
+"""How a refusal names the task to call instead and its tool (conventions §8)."""
 
 WHEAT_US_2023_KEYS = [
     "Area Harvested",
@@ -393,7 +397,7 @@ async def test_balance_sheet_through_both_adapters(
     assert response.status_code == 200, response.text
     attributes = response.json()["data"]["attributes"]
     assert list(attributes) == WHEAT_US_2023_KEYS
-    assert attributes["Yield"]["value"] == 3.2719, "a JSON number (ADR-0008)"
+    assert attributes["Yield"]["value"] == 3.2719, "a JSON number (sdk-core ADR-0031, decision 1)"
 
 
 # get_time_series
@@ -637,7 +641,7 @@ async def test_time_series_of_several_attributes_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """A list of ids is a keyword argument of the tool; since ``attribute_id`` takes a list,
-    the HTTP route is a ``POST`` with a JSON body (conventions §9, ADR-0007). A value the
+    the HTTP route is a ``POST`` with a JSON body (conventions §9, sdk-core ADR-0007). A value the
     tool's schema refuses comes back as core's ``InvalidRequestError`` text."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -678,7 +682,7 @@ async def test_time_series_of_several_attributes_through_both_adapters(
 async def test_a_cut_series_names_the_filters_that_narrow_it(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """The tool's own note (conventions §8, ADR-0016) on a server built for this test with
+    """The tool's own note (conventions §8, sdk-core ADR-0038) on a server built for this test with
     the package's cap for ``get_time_series``, its rows lowered to 20 so that three
     recorded years of every attribute, 45 records, are cut. The real cap is 200 rows."""
     from xippios.core.mcp import build_server
@@ -710,8 +714,9 @@ async def test_a_cut_series_names_the_filters_that_narrow_it(
 def test_get_top_countries_sorted_and_truncated(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """On the cut ``wheat_all_2023`` (ADR-0019), which keeps the countries from AF to RS
-    in upstream's order by country code: the United States is not in it."""
+    """On the cut ``wheat_all_2023`` (sdk-core ADR-0040, decision 5), which keeps the
+    countries from AF to RS in upstream's order by country code: the United States is not
+    in it."""
     route = replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_top_countries(WHEAT, 2023, AttributeId.PRODUCTION, 5)
     assert route.call_count == 1
@@ -930,8 +935,8 @@ async def test_top_countries_tool_end_to_end(
 def test_get_latest_release_is_the_newest_month_of_the_list(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """On the cut release list (ADR-0019), market years 1960 to 1978: its newest release
-    is 2024-02, Pakistan's revision of those years."""
+    """On the cut release list (sdk-core ADR-0040, decision 5), market years 1960 to 1978:
+    its newest release is 2024-02, Pakistan's revision of those years."""
     route = replay_fixture(RELEASES, "wheat")
     result = tasks.get_latest_release(WHEAT)
     assert route.call_count == 1
@@ -1005,7 +1010,7 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="0410000 \\(Wheat\\)"):
         tasks.get_balance_sheet("0410001", "US", 2023)
-    with pytest.raises(UnknownCode, match="use get_world_data for world data"):
+    with pytest.raises(UnknownCode, match=re.escape(WORLD_HINT)):
         tasks.get_balance_sheet(WHEAT, "00", 2023)
     with pytest.raises(UnknownCode, match="Omit country_code"):
         tasks.get_balance_sheet(WHEAT, "all", 2023)
@@ -1047,7 +1052,7 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     with pytest.raises(UnknownCode, match="'R99' is not a region_code") as region:
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R99")
     assert region.value.closest == (("R09", "Middle East"),)
-    with pytest.raises(UnknownCode, match="the world total is get_world_data's"):
+    with pytest.raises(UnknownCode, match=re.escape(WORLD_TOTAL)):
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R00")
     with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code"):
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code=4)  # type: ignore[arg-type]

@@ -120,8 +120,8 @@ class CommodityData(UpstreamModel):
     and ``wheat_all_2023`` (upstream's 1,875 and 1,845, recorded cut), ``soybeans_world_2023``
     and ``wheat_world_2023`` (13 and 15). Upstream sends the years and the month as digit
     strings (``"2023"``, ``"07"``), parsed to ``int`` here as Quick Stats' ``year`` is;
-    ``value`` arrives as a JSON number and becomes ``Decimal`` (ADR-0008). Nothing is
-    renamed, converted or re-based: a PSD market year stays a PSD market year, PSD
+    ``value`` arrives as a JSON number and becomes ``Decimal`` (sdk-core ADR-0031, decision 1).
+    Nothing is renamed, converted or re-based: a PSD market year stays a PSD market year, PSD
     country codes are not ISO codes, and ``unit_id`` names the unit of ``value``.
 
     ``calendar_year`` and ``month`` are the PSD release that last revised the record:
@@ -162,10 +162,10 @@ class DataReleaseInfo(UpstreamModel):
     """One record of ``PSDData_GetDataReleaseInfo`` (``commodity/{code}/dataReleaseDates``).
 
     Shape from ``tests/fixtures/get_data_release_info/wheat.json``, recorded cut
-    (ADR-0019): upstream's 7,754 records (``original_count``), one per country and market
-    year, ordered by market year, of which the cut keeps 1960 to 1978. The whole answer
-    recorded on 2026-10-23 held 145 countries and market years 1960 to 2026, no world
-    (``"00"``) record. The release is a year and a month as digit strings, no day, no
+    (sdk-core ADR-0040, decision 5): upstream's 7,754 records (``original_count``), one per
+    country and market year, ordered by market year, of which the cut keeps 1960 to 1978. The
+    whole answer recorded on 2026-10-23 held 145 countries and market years 1960 to 2026, no
+    world (``"00"``) record. The release is a year and a month as digit strings, no day, no
     time, no time zone; both are parsed to ``int`` and nothing is combined into a date
     here.
 
@@ -196,7 +196,7 @@ class DataReleaseInfo(UpstreamModel):
 class BalanceSheetEntry(UpstreamModel):
     """One attribute of a balance sheet: a ``CommodityData`` record without its keys.
 
-    A projection (ADR-0003, ``UpstreamModel.project``): the record's own fields under
+    A projection (sdk-core ADR-0028, ``UpstreamModel.project``): the record's own fields under
     their names, values exactly as upstream sent them, nothing converted. The commodity,
     country and market year the record also carried sit once on ``BalanceSheet``.
 

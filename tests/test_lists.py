@@ -6,7 +6,7 @@ so a task returning exactly what the endpoint wrapper parses from that recording
 the package answers what upstream answered.
 Every test here runs with ``respx`` active: a request no route matches fails loudly, and
 each test checks that the tasks sent none. ``meta`` is core's ``PackagedList.meta``
-(ADR-0022, rule 1): ``retrieved_at`` the list's fetch time, ``vintage`` ``None``, and
+(sdk-core ADR-0041, decision 1): ``retrieved_at`` the list's fetch time, ``vintage`` ``None``, and
 ``request`` without the filters left ``None``. Counts are read from the packaged files,
 never pinned: a refresh changes them.
 """
@@ -57,7 +57,7 @@ WRAPPERS = {
 (conventions §2), which also names its fixture directory (§10)."""
 CAP = 200
 """The family's default MCP result cap in rows (conventions §8); ``list_countries`` has a
-cap of its own, ``tasks.MCP_CAPS`` (ADR-0016)."""
+cap of its own, ``tasks.MCP_CAPS`` (sdk-core ADR-0038)."""
 FETCHED: dict[str, datetime] = {
     "commodities": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
     "countries": datetime(2026, 10, 28, 21, 42, 3, tzinfo=UTC),
@@ -66,7 +66,7 @@ FETCHED: dict[str, datetime] = {
     "commodityAttributes": datetime(2026, 10, 28, 21, 42, 6, tzinfo=UTC),
 }
 """Each packaged list's ``fetched``: the UTC time of its fetch in the refresh of 2026-10-28,
-to the second, as ``PackagedList.write`` wrote it (ADR-0022, amendment 2026-10-27)."""
+to the second, as ``PackagedList.write`` wrote it (sdk-core ADR-0041, decision 4)."""
 
 
 def _packaged(name: str) -> PackagedList:
@@ -162,7 +162,7 @@ async def test_countries_over_mcp_are_whole_without_a_filter_and_with_one(
     respx_mock: respx.MockRouter,
 ) -> None:
     """More countries than the default cap of 200 rows: ``list_countries``'s own cap
-    (``tasks.MCP_CAPS``, ADR-0016) lets every one through, the United States included, and
+    (``tasks.MCP_CAPS``, sdk-core ADR-0038) lets every one through, the United States included, and
     every region and a search come back whole as well."""
     every = await mcp_call(server, "usda_psd_list_countries", {})
     countries = tasks.list_countries().data
