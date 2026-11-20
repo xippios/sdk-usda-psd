@@ -4,10 +4,56 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: breaking changes bump the minor).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-20
+
+### Added
+
+- `xippios.usda.psd.mcp.build()` returns the read-only tool set that `xippios-usda-psd-mcp`
+  serves, xippios-core's `ToolSet` with the caps of `tasks.MCP_CAPS`, so a host serves the
+  same tools beside other sources' in one server. `ENV_VARS`, beside `SOURCE`, names the
+  one variable the package reads, `DATA_GOV_API_KEY`, secret and required.
+  (https://github.com/xippios/sdk-core/issues/245,
+  https://github.com/xippios/sdk-template/issues/81)
 
 ### Changed
 
+- `CLAUDE.md` cites the choice of `IntEnum` for `AttributeId` and `UnitId` by the pull
+  request that took it, where it gave only a date, and calls the slices by that name alone.
+  `scripts/refresh_upstream.py` dates the find of the portal's Swagger document without
+  naming who found it, and `docs/upstream/FETCHED.md` takes that text at its next capture.
+  (https://github.com/xippios/sdk-usda-psd/issues/19)
+- `xippios-usda-psd-mcp` names itself in its usage line and its errors, an unknown option
+  ending `xippios-usda-psd-mcp: error: unrecognized arguments: --<option>`, where they named
+  the server, `xippios-usda-psd`. Its help says that `--allow-remote` changes nothing, since
+  this read server is not held to loopback. (https://github.com/xippios/sdk-core/issues/167)
+- A tool's error answer sets `isError` on its result beside the text
+  `error: <ErrorClass>: <message>`, an unknown commodity code's `UnknownCode` as well as a
+  refused argument, so a client tells a refusal from data without reading the text.
+  (https://github.com/xippios/sdk-core/issues/168)
+- A refusal that names another task names its MCP tool too, so an agent calls the tool it
+  is told of: the country code `00` points to `get_world_data` (over MCP, the tool
+  `usda_psd_get_world_data`), as does the region `R00`, an attribute id the packaged list
+  lacks to `list_commodity_attributes` (`usda_psd_list_commodity_attributes`), and a region
+  no country carries to `list_regions` and `list_countries` (`usda_psd_list_regions`,
+  `usda_psd_list_countries`). (https://github.com/xippios/sdk-core/issues/111)
+- A route answers an argument that its schema refuses, a `market_year` of `2023/24` or a
+  missing `commodity_code` say, as problem details before the task runs: HTTP 422, the
+  title `InvalidRequestError` and the detail `<argument>: <message>`, where FastAPI's own
+  422 listed its error details with the input. (https://github.com/xippios/sdk-core/issues/66)
+- Adopts sdk-template v0.4.0, from v0.3.4, with `core_version=0.4.0`: the package depends
+  on `xippios-core~=0.4.0`, its extras likewise, and follows conventions 1.28.
+  (https://github.com/xippios/sdk-template/releases/tag/v0.4.0,
+  https://github.com/xippios/sdk-usda-psd/issues/44)
+- A refusal of a commodity, country, attribute or region code that the packaged lists lack
+  ends with `If upstream added it since, the packaged list is out of date.`, where it
+  named the maintainers' `/refresh-reference-data`, which an agent cannot run.
+  (https://github.com/xippios/sdk-core/issues/111)
+- Adopts sdk-template v0.3.4, from v0.3.1, with conventions 1.27 and no new core minor: the
+  floor stays `xippios-core~=0.3.0`, and no module or test changes. The README lists the
+  documents a change follows under `## Documents`, and `CLAUDE.md` takes the place of
+  `.claude/family.md`, which the update deletes, and cites sdk-core's records as
+  `sdk-core ADR-NNNN`. (https://github.com/xippios/sdk-template/releases/tag/v0.3.4,
+  https://github.com/xippios/sdk-usda-psd/issues/17)
 - From sdk-template v0.3.0 to v0.3.1, with no new core minor, the floor staying
   `xippios-core~=0.3.0` (conventions §15): `.github/CODEOWNERS` is rendered from the
   template's answers and names the code owner whose review a change needs on `.github/`,
@@ -15,6 +61,19 @@ All notable changes to this project are documented here. The format follows
   `.gitignore` leaves copier's `*.rej` and `*.orig` out; `.claude/family.md`,
   `/adopt-release`, `/release-prep` and the PR template no longer have the author of a
   pull request merge it.
+
+### Breaking
+
+- A tool refuses an argument that it does not declare before it runs, whatever its value:
+  `usda_psd_get_data` called with `country` for `country_code` answers
+  `error: InvalidRequestError: country: Not an argument of this tool` and names the
+  arguments it takes, where the argument was dropped and the tool fetched every country.
+  (https://github.com/xippios/sdk-core/issues/84)
+- `NoDataForYear`, raised for a market year PSD holds no data for, is xippios-core's
+  `xippios.core.data_gov.NoDataForYear`, and `xippios.usda.psd.errors` is gone. The class
+  is still a `NotFoundError` with `path`, its message still names commodity, country and
+  market year, and an `except NotFoundError` catches it as before.
+  (https://github.com/xippios/sdk-core/issues/106)
 
 ## [0.3.0] - 2026-10-29
 
