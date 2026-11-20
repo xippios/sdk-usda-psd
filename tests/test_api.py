@@ -135,9 +135,9 @@ async def test_get_country_commodity_data(
 async def test_get_commodity_data_for_every_country(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """``country/all``, the largest answer, recorded cut (ADR-0019): upstream sent 1,875
-    records, 275,759 bytes (``original_count``, ``original_bytes``); the cut keeps the
-    first whole records, which upstream orders by country code."""
+    """``country/all``, the largest answer, recorded cut (sdk-core ADR-0040, decision 5):
+    upstream sent 1,875 records, 275,759 bytes (``original_count``, ``original_bytes``); the
+    cut keeps the first whole records, which upstream orders by country code."""
     recorded = load_fixture(fixture_path(FIXTURES, "get_commodity_data_by_year", "corn_all_2023"))
     assert recorded.response.truncated
     assert (recorded.response.original_count, recorded.response.original_bytes) == (1875, 275759)
@@ -166,8 +166,9 @@ async def test_get_world_commodity_data(
 async def test_get_data_release_info(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Recorded cut (ADR-0019): upstream sent 7,754 records, 837,433 bytes; it orders them by
-    market year, oldest first, so the cut keeps the first market years from 1960 on."""
+    """Recorded cut (sdk-core ADR-0040, decision 5): upstream sent 7,754 records, 837,433
+    bytes; it orders them by market year, oldest first, so the cut keeps the first market
+    years from 1960 on."""
     recorded = load_fixture(fixture_path(FIXTURES, "get_data_release_info", "wheat"))
     assert recorded.response.truncated
     assert (recorded.response.original_count, recorded.response.original_bytes) == (7754, 837433)

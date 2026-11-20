@@ -53,7 +53,7 @@ FETCHED: dict[str, datetime] = {
     "commodityAttributes": datetime(2026, 10, 28, 21, 42, 6, tzinfo=UTC),
 }
 """Each packaged list's ``fetched``: the UTC time of its fetch in the refresh of 2026-10-28,
-to the second, as ``PackagedList.write`` wrote it (ADR-0022, amendment 2026-10-27)."""
+to the second, as ``PackagedList.write`` wrote it (sdk-core ADR-0041, decision 4)."""
 
 
 def test_every_packaged_list_loads_and_parses() -> None:

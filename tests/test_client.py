@@ -5,10 +5,10 @@ Recorded answers come from ``tests/fixtures``, the gateway's 429 included
 hourly quota on 2026-10-23). Cases the recordings do not cover (the gateway's
 ``NOT_FOUND`` 404, the other ``API_KEY_*`` codes, a 429 without ``Retry-After``) are
 built in the recorded body's shape and say so. The gateway and its quota policy are
-core's (``xippios.core.data_gov.Gateway``, ADR-0009, ADR-0015) and are tested there; this
-module checks that the package installs them, that the policy reads the recorded 429
-through the package's client, that ``classify`` keeps PSD's own answers after the
-gateway's, and that it shapes core's retries of a 429.
+core's (``xippios.core.data_gov.Gateway``, sdk-core ADR-0032, sdk-core ADR-0037) and are
+tested there; this module checks that the package installs them, that the policy reads the
+recorded 429 through the package's client, that ``classify`` keeps PSD's own answers after
+the gateway's, and that it shapes core's retries of a 429.
 """
 
 import dataclasses
@@ -71,7 +71,8 @@ OVER_RATE_LIMIT = json.loads(RECORDED_429.body)
 def test_the_client_is_wired_for_the_gateway() -> None:
     """One request per second, psd's classify, and core's gateway: its key auth and its
     one quota policy per process on api.data.gov's ``x-ratelimit-*`` headers, which count
-    the rolling hour, not a pace; one hour is the fallback wait (ADR-0009, ADR-0015)."""
+    the rolling hour, not a pace; one hour is the fallback wait (sdk-core ADR-0032,
+    sdk-core ADR-0037)."""
     assert (RATE_LIMIT.per_minute, RATE_LIMIT.capacity) == (60, 1)
     assert config.rate_limit is RATE_LIMIT
     assert config.classify is classify
@@ -331,12 +332,12 @@ def _recorded_429(retry_after: str | None) -> httpx.Response:
 async def test_core_retries_a_429_only_within_its_backoff(
     respx_mock: respx.MockRouter, retry_after: str | None, shaped: bool, attempts: int
 ) -> None:
-    """psd's ``classify`` shapes core's retries (ADR-0015): its ``RateLimitError`` carries the
-    wait, the recorded ``Retry-After`` or else the one-hour window, beyond ``backoff_max``
-    (30 s), so a 429 is sent once, with or without the header. The control drops
-    ``classify``: core then retries the 429 without ``Retry-After`` on its status alone,
-    three more times at its short backoff, so this test fails if ``classify`` stops
-    shaping the retries."""
+    """psd's ``classify`` shapes core's retries (sdk-core ADR-0037, decision 3): its
+    ``RateLimitError`` carries the wait, the recorded ``Retry-After`` or else the one-hour
+    window, beyond ``backoff_max`` (30 s), so a 429 is sent once, with or without the
+    header. The control drops ``classify``: core then retries the 429 without
+    ``Retry-After`` on its status alone, three more times at its short backoff, so this test
+    fails if ``classify`` stops shaping the retries."""
     sleeps: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:

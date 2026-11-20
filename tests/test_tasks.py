@@ -53,7 +53,7 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     """``country/all``: records carry different releases; ``vintage`` is the latest. The
-    fixture is cut (ADR-0019), so the shape is checked, not the count."""
+    fixture is cut (sdk-core ADR-0040, decision 5), so the shape is checked, not the count."""
     route = replay_fixture(ALL, "wheat_all_2023")
     result = tasks.get_data(WHEAT, 2023)
     assert route.call_count == 1
@@ -172,7 +172,7 @@ def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> Non
     """``get_data``, ``get_release_dates`` and ``get_time_series`` keep 200 rows or 64 KB,
     ``ResultCap``'s defaults, and name their filters; ``list_countries`` has 300 rows;
     every other tool has no entry, so core's default cap and note apply to it, the note
-    promising no filter the tool lacks (conventions §8, ADR-0016). It succeeds the
+    promising no filter the tool lacks (conventions §8, sdk-core ADR-0038). It succeeds the
     end-to-end test of core's default note: the recorded answers over 200 rows, wheat's
     release list and every country's data, now come through tools with a note of their
     own, so no recorded answer shows the default note any more."""
@@ -193,7 +193,7 @@ async def test_a_cut_release_list_names_the_filters_that_narrow_it(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """Wheat's release list over MCP, every country and market year: cut at 200 rows with
-    a note naming the tool's own filters, never one it lacks (ADR-0016)."""
+    a note naming the tool's own filters, never one it lacks (sdk-core ADR-0038)."""
     replay_fixture(RELEASES, "wheat")
     every = tasks.get_release_dates(WHEAT).data
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
@@ -302,7 +302,8 @@ async def test_mcp_tool_call_end_to_end(replay_fixture: Callable[[str, str], res
 async def test_value_is_a_json_number_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """ADR-0008: ``Decimal`` in Python, a JSON number on the wire, never a string."""
+    """``Decimal`` in Python, a JSON number on the wire, never a string (sdk-core ADR-0031,
+    decision 1)."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 

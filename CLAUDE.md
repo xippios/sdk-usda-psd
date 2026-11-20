@@ -13,8 +13,8 @@ follows, sdk-core's conventions among them, are listed under
 | Upstream | USDA FAS PSD Online, https://apps.fas.usda.gov/psdonline/ |
 | API base URL | `https://api.fas.usda.gov` |
 | Documentation | https://apps.fas.usda.gov/opendatawebV2/, snapshotted in `docs/upstream/` |
-| Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header by `xippios.core.data_gov`'s `Gateway` (`_client.auth` is `gateway.auth`); the key is api.data.gov's, shared by every package that reads it. sdk-core ADR-0009: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
-| Rate limit | sdk-core ADR-0010, decisions 1–5. Pace: 60 requests per minute, burst 1 (`RateLimit(per_minute=60, burst=1)` in `_client.py`, enforced client-side): a self-imposed pace, upstream documents none (the snapshot names no limit). Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` (the hourly quota, not a pace) and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. The quota is the gateway's: `Gateway.policy` of `xippios.core.data_gov`, one `QuotaPolicy` per process for the key, which `_client.py` installs with `gateway.install` (sdk-core ADR-0009, sdk-core ADR-0015), keeps the snapshot from every answer from the wire, never a cache hit's, and gates: once the quota is spent the next request waits it out inside the call, logged, when that is within the policy's `pause_cap` (30 s by default), and otherwise raises `RateLimitError` with `retry_after` without sending, a refusal that speaks for `api.data.gov` (its `source`). The wait counts from the last answer: a 429's `Retry-After`, else the policy's `window` of one hour (the gateway sends no reset header, and the 200 that leaves `remaining` at 0 no `Retry-After`). `gateway.classify`, which `classify` asks first, maps the 429 to `RateLimitError` with `retry_after` the wait the policy keeps the quota spent for, from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s, and core shapes its retries from that: a wait beyond `RetryPolicy.backoff_max` is raised after one request. In offline tests core's pytest plugin bypasses the limiter and the quota policy and forgets the snapshot around each test; a test that asserts a wait or a refusal is marked `rate_limited` |
+| Credentials | `DATA_GOV_API_KEY` from the environment, sent as the `X-Api-Key` header by `xippios.core.data_gov`'s `Gateway` (`_client.auth` is `gateway.auth`); the key is api.data.gov's, shared by every package that reads it. sdk-core ADR-0032: one key variable per issuer when one key serves several sources, so every source reached through api.data.gov (`usda-psd`, `usda-esr`, `usda-gats`) reads `DATA_GOV_API_KEY`, and one key is one gateway quota |
+| Rate limit | sdk-core ADR-0033, decisions 1–5. Pace: 60 requests per minute, burst 1 (`RateLimit(per_minute=60, burst=1)` in `_client.py`, enforced client-side): a self-imposed pace, upstream documents none (the snapshot names no limit). Quota: api.data.gov's 1,000 requests per rolling hour per key, reported in `x-ratelimit-limit` / `x-ratelimit-remaining` (the hourly quota, not a pace) and shared by every package and process using the same `DATA_GOV_API_KEY`; it may be spent, it is not pre-rationed. The quota is the gateway's: `Gateway.policy` of `xippios.core.data_gov`, one `QuotaPolicy` per process for the key, which `_client.py` installs with `gateway.install` (sdk-core ADR-0032, sdk-core ADR-0037), keeps the snapshot from every answer from the wire, never a cache hit's, and gates: once the quota is spent the next request waits it out inside the call, logged, when that is within the policy's `pause_cap` (30 s by default), and otherwise raises `RateLimitError` with `retry_after` without sending, a refusal that speaks for `api.data.gov` (its `source`). The wait counts from the last answer: a 429's `Retry-After`, else the policy's `window` of one hour (the gateway sends no reset header, and the 200 that leaves `remaining` at 0 no `Retry-After`). `gateway.classify`, which `classify` asks first, maps the 429 to `RateLimitError` with `retry_after` the wait the policy keeps the quota spent for, from `Retry-After` (recorded: 3151 s, `over_rate_limit.json`), else 3600 s, and core shapes its retries from that: a wait beyond `RetryPolicy.backoff_max` is raised after one request. In offline tests core's pytest plugin bypasses the limiter and the quota policy and forgets the snapshot around each test; a test that asserts a wait or a refusal is marked `rate_limited` |
 | Write tools | no, this package is read-only |
 
 The snapshot listed in `docs/upstream/FETCHED.md` is the reference for names, parameters and
@@ -51,7 +51,7 @@ scripts/
 tests/
   conftest.py      enables xippios.core.testing.plugin, which keeps the run offline
   fixtures/        recorded responses, <wrapper>/<case>.json, never hand-written; an
-                   answer over the 256 KiB cap is recorded cut (sdk-core ADR-0019)
+                   answer over the 256 KiB cap is recorded cut (sdk-core ADR-0040, decision 5)
   test_family.py   core's family check, one line: namespace levels, py.typed, __version__,
                    the adapters serving exactly the tasks, task shapes and docstrings, the
                    README status table, the template tag, the core bound
@@ -106,7 +106,7 @@ uv run xippios-usda-psd-mcp   # stdio; add --http for streamable HTTP
 ```
 
 `uv run pytest` is offline: core's plugin refuses the network and skips the rate limiter's
-waits in every test not marked `live` (conventions §10, sdk-core ADR-0013). A test that
+waits in every test not marked `live` (conventions §10, sdk-core ADR-0035). A test that
 asserts a limiter wait or a quota pause is marked `rate_limited`, one that must reach the
 network `network`.
 It sends the key's placeholder, with `DATA_GOV_API_KEY` set to it because
@@ -151,7 +151,7 @@ and counts, never on a raw payload.
 - Never write a key, a token or another credential into a file or a commit.
 - Never put logic in `mcp.py` or `http.py`, and never add a route or a tool by hand: the
   adapters register `tasks.__all__` (sdk-core ADR-0001).
-- Never rename or re-map an upstream concept to another source's (sdk-core ADR-0003).
+- Never rename or re-map an upstream concept to another source's (sdk-core ADR-0028).
 - Never return a documented personal identifier in a task's projection, echo one in
   `meta.request`, or commit one in a fixture (sdk-core ADR-0017).
 - Never edit `docs/upstream/` by hand: `/refresh-upstream` fetches it, and the pull request
@@ -184,7 +184,7 @@ semantics or the shape of the public API.
 
 The snapshot types every response as `object`, so these facts come from the answers
 recorded on 2026-10-23 under `tests/fixtures/`, and the three re-recorded cut on
-2026-10-28 (sdk-core ADR-0019); `_client.classify` maps them once. A fact of a whole
+2026-10-28 (sdk-core ADR-0040, decision 5); `_client.classify` maps them once. A fact of a whole
 answer the cut fixtures no longer hold is dated 2026-10-23; those whole recordings are in
 commit `07b88ad` on `main`.
 
@@ -265,7 +265,7 @@ commit `07b88ad` on `main`.
 
 Task-shaped functions in `tasks.py` over the same operations, no wrapper of their own.
 They select, order and pivot upstream's records and never change one: no derived
-totals, no unit conversion, no gap filling, nothing renamed (sdk-core ADR-0003).
+totals, no unit conversion, no gap filling, nothing renamed (sdk-core ADR-0028).
 
 - `get_balance_sheet(commodity_code, country_code, market_year)`: one request; the
   records of one country-year pivoted into one `BalanceSheet`, `attributes` keyed by the
@@ -351,12 +351,12 @@ an existing name, in `commodityAttributes` changes `get_balance_sheet`'s public 
 record it in `CHANGELOG.md` as a breaking change (conventions §12).
 
 The `list_*` tasks answer from these files and never call upstream: core's `PackagedList`
-builds `meta` (sdk-core ADR-0022, rule 1), `meta.endpoint` the file's `endpoint`,
+builds `meta` (sdk-core ADR-0041, decision 1), `meta.endpoint` the file's `endpoint`,
 `meta.retrieved_at` its `fetched`, the UTC time of the list's fetch to the second as
 `PackagedList.write` writes it (the refresh of 2026-10-28), `meta.vintage` `None`
 (upstream gives the lists no version). Their filters select records client-side, codes
 and names unchanged, upstream order kept. Over MCP `list_countries` has a cap of its own,
-300 rows (`tasks.MCP_CAPS`, sdk-core ADR-0016), so its 251 countries arrive whole;
+300 rows (`tasks.MCP_CAPS`, sdk-core ADR-0038), so its 251 countries arrive whole;
 `get_data`, `get_release_dates` and `get_time_series` keep the family's limits, 200 rows
 or 64 KB, with a note naming their filters (`country_code`; `market_year`,
 `country_code`, `since`; `attribute_id`, `start_year`, `end_year`); every other tool
@@ -364,7 +364,7 @@ keeps the family default with core's note. The live tests compare each
 packaged list with the live one, the freshness check.
 
 `enums.AttributeId` and `enums.UnitId` are `IntEnum`s, as conventions §3 has it for integer
-ids (sdk-core ADR-0008 amendment, which this package's ruling of 2026-10-23 led to): PSD's
+ids (sdk-core ADR-0031, decision 6, which this package's ruling of 2026-10-23 led to): PSD's
 ids are integers in the lists and in every data record, and fidelity to upstream wins.
 Where upstream gives two ids the same name, both members carry the id
 (`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
@@ -379,8 +379,8 @@ as plain `int` (the NASS pattern), and members compare equal to them.
 - The quota is the gateway's, not this package's: `_client.py` puts `Gateway.policy`,
   core's one `QuotaPolicy` per process for the shared key, on `config` with
   `gateway.install(...)`, and `classify` asks `gateway.classify` first, which maps a spent
-  quota's 429 to `RateLimitError` with `retry_after` (sdk-core ADR-0009,
-  sdk-core ADR-0010, sdk-core ADR-0015). An endpoint added here installs no policy of its
+  quota's 429 to `RateLimitError` with `retry_after` (sdk-core ADR-0032,
+  sdk-core ADR-0033, sdk-core ADR-0037). An endpoint added here installs no policy of its
   own; only PSD's own error shapes go into `classify`, after the gateway's.
 - The reference guard: `test_balance_sheet_keys_of_every_packaged_attribute_are_pinned`
   in `tests/test_slices.py` writes out the key `get_balance_sheet` gives each packaged

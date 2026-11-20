@@ -16,9 +16,9 @@ mid-month release, a look-ahead bias in an as-of store. ``get_release_dates`` is
 to poll for new releases.
 
 The ``list_*`` tasks answer from the five lists packaged under ``reference/`` and make no
-upstream call. Core's ``PackagedList`` reads the file and builds ``meta`` (ADR-0022, rule
-1): ``meta.endpoint`` is the operation the list was fetched from
-(``"PSDData_GetCountries"``), ``meta.retrieved_at`` is when the package fetched the list,
+upstream call. Core's ``PackagedList`` reads the file and builds ``meta``
+(sdk-core ADR-0041, decision 1): ``meta.endpoint`` is the operation the list was fetched
+from (``"PSDData_GetCountries"``), ``meta.retrieved_at`` is when the package fetched the list,
 the file's ``fetched``, a UTC time to the second (``2026-10-28T21:42:03Z``), and
 ``meta.vintage`` is ``None``: upstream gives these lists no release identifier, and a
 fetch date is not one. Their filters (``search``, ``region_code``) only select records of
@@ -29,7 +29,7 @@ The slices (``get_balance_sheet``, ``get_time_series``, ``get_top_countries``,
 ``get_latest_release``) compose the same wrappers and the packaged lists into the
 answers people ask for. They select, order and pivot upstream's records and never
 change one: no derived totals, no unit conversion, no gap filling, nothing renamed
-(ADR-0003). ``get_balance_sheet`` keys its entries by the packaged attribute names,
+(sdk-core ADR-0028). ``get_balance_sheet`` keys its entries by the packaged attribute names,
 ``get_time_series`` spends one request per market year; the docstrings say what each
 costs.
 """
@@ -91,7 +91,8 @@ __all__ = [
     "list_units_of_measure",
 ]
 
-# A task named here is Python-only: no tool, no route; the adapters skip it (ADR-0019 decision 4).
+# A task named here is Python-only: no tool, no route; the adapters skip it (sdk-core ADR-0040,
+# decision 4).
 BULK_TASKS: frozenset[str] = frozenset()
 
 MCP_CAPS: Mapping[str, ResultCap] = {
@@ -104,7 +105,7 @@ MCP_CAPS: Mapping[str, ResultCap] = {
         note="filter by attribute_id or narrow start_year and end_year to see the rest"
     ),
 }
-"""MCP result caps of their own, by task function name (conventions §8, ADR-0016).
+"""MCP result caps of their own, by task function name (conventions §8, sdk-core ADR-0038).
 
 ``list_countries`` is a reference list an agent needs whole: 251 countries when packaged,
 past the family's default of 200 rows, and 22,467 bytes of compact JSON, well within its
