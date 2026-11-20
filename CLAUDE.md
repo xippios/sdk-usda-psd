@@ -58,7 +58,7 @@ tests/
                    README status table, the template tag, the core bound
   test_tasks.py    per-task replay tests of the data tasks, MCP and HTTP
   test_lists.py    the list_* tasks: the recorded lists, no call, filters, MCP cap
-  test_slices.py   the wave 2 slices: pivot, series, ranking, newest release, checks first
+  test_slices.py   the slices: pivot, series, ranking, newest release, checks first
   test_api.py      replay tests for the endpoint wrappers
   test_client.py   classify on recorded error bodies; core's quota policy on the recorded 429
   test_params.py   packaged lists, enums and the code checks
@@ -274,7 +274,7 @@ commit `07b88ad` on `main`.
   first of the month would predate the real mid-month release, a look-ahead bias in an
   as-of store.
 
-## Slices (wave 2)
+## Slices
 
 Task-shaped functions in `tasks.py` over the same operations, no wrapper of their own.
 They select, order and pivot upstream's records and never change one: no derived
@@ -377,11 +377,11 @@ keeps the family default with core's note. The live tests compare each
 packaged list with the live one, the freshness check.
 
 `enums.AttributeId` and `enums.UnitId` are `IntEnum`s, as conventions §3 has it for integer
-ids (sdk-core ADR-0031, decision 6, which this package's ruling of 2026-10-23 led to): PSD's
-ids are integers in the lists and in every data record, and fidelity to upstream wins.
-Where upstream gives two ids the same name, both members carry the id
-(`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
-The enums are for lookups and for the wave 2 slice parameters; the models keep the ids
+ids (sdk-core ADR-0031, decision 6, the rule that decision 5 of this package's
+https://github.com/xippios/sdk-usda-psd/pull/3 led to): PSD's ids are integers in the lists
+and in every data record, and fidelity to upstream wins. Where upstream gives two ids the
+same name, both members carry the id (`TOTAL_DISAPPEARANCE_126`, `TOTAL_DISAPPEARANCE_173`).
+The enums are for lookups and for the slices' parameters; the models keep the ids
 as plain `int` (the NASS pattern), and members compare equal to them.
 
 ## USDA FAS PSD Online specifics

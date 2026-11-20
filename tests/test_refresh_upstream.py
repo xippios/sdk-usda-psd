@@ -71,6 +71,22 @@ def test_fetched_md_names_no_observed_md_while_there_is_none() -> None:
     assert "Nothing here was edited by hand." in " ".join(text.split())
 
 
+def test_fetched_md_says_when_and_where_the_portal_document_was_found() -> None:
+    """How this is captured dates the find of the portal's Swagger document.
+
+    It states what was fetched, when and where the URL stood, which a reader of the snapshot
+    can check against the portal, and names nobody who fetched it.
+    """
+    text = " ".join(render(observed=False).split())
+    found = (
+        f"On {script.PORTAL_SWAGGER_FOUND_ON}, when this snapshot was set up, the portal page"
+        " and its JavaScript bundle were fetched into a temporary directory and that URL was"
+        " found in the bundle's Swagger UI configuration; those copies have since been"
+        " deleted."
+    )
+    assert found in text
+
+
 def test_a_snapshot_leaves_observed_md_as_written(tmp_path: Path) -> None:
     """The run writes its files and ``FETCHED.md`` and never touches the notes."""
     notes = tmp_path / script.OBSERVED

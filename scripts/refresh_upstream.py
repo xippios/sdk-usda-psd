@@ -9,9 +9,9 @@
 
 The FAS Open Data Services portal (https://apps.fas.usda.gov/opendatawebV2/) is an
 Angular app whose page holds no documentation text; its Swagger window loads the
-Swagger 2.0 document ``assets/swagger/swagger.json``. On 2026-10-23 the session that set
-up this snapshot fetched the portal page and its bundle ``main.<hash>.js`` into a
-session-local scratch directory and found that URL in the bundle's Swagger UI
+Swagger 2.0 document ``assets/swagger/swagger.json``. On 2026-10-23, when this snapshot
+was set up, the portal page and its bundle ``main.<hash>.js`` were fetched into a
+temporary directory and that URL was found in the bundle's Swagger UI
 configuration; those copies have since been deleted. This script never downloads the
 bundle, because it embeds the portal's own api.data.gov signup-widget key; FETCHED.md
 records only the bundle's file name. The API also serves its own Swashbuckle document,
@@ -71,7 +71,7 @@ PORTAL_URL = "https://apps.fas.usda.gov/opendatawebV2/"
 PORTAL_SWAGGER_URL = "https://apps.fas.usda.gov/opendatawebV2/assets/swagger/swagger.json"
 """Named by the Swagger UI configuration in the portal's ``main.<hash>.js`` bundle."""
 PORTAL_SWAGGER_FOUND_ON = "2026-10-23"
-"""The day ``PORTAL_SWAGGER_URL`` was found in a scratch copy of the bundle, since deleted."""
+"""The day ``PORTAL_SWAGGER_URL`` was found in a temporary copy of the bundle, since deleted."""
 CLASSIC_UI_URL = "https://apps.fas.usda.gov/opendata/swagger/ui/index"
 PSDONLINE_URL = "https://apps.fas.usda.gov/psdonline/"
 FAS_DATA_URL = "https://www.fas.usda.gov/data"
@@ -559,10 +559,10 @@ def render_fetched(
             f"The FAS Open Data Services portal, {PORTAL_URL}, documents three APIs of",
             "USDA's Foreign Agricultural Service: ESR, GATS and PSD. It is an Angular app",
             "whose page is a shell without documentation text. Its Swagger window loads the",
-            f"Swagger 2.0 document {PORTAL_SWAGGER_URL}. On {PORTAL_SWAGGER_FOUND_ON} the",
-            "session that set up this snapshot fetched the portal page and its JavaScript",
-            "bundle into a session-local scratch directory and found that URL in the",
-            "bundle's Swagger UI configuration; those copies have since been deleted. The",
+            f"Swagger 2.0 document {PORTAL_SWAGGER_URL}. On {PORTAL_SWAGGER_FOUND_ON}, when",
+            "this snapshot was set up, the portal page and its JavaScript bundle were",
+            "fetched into a temporary directory and that URL was found in the bundle's",
+            "Swagger UI configuration; those copies have since been deleted. The",
             "script never downloads the bundle, since it embeds the portal's own",
             "api.data.gov signup-widget key, and this file records only its file name: as of",
             f"this run the portal page loads `{bundle}`.",
