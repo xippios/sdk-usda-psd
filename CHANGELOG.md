@@ -40,10 +40,6 @@ All notable changes to this project are documented here. The format follows
   missing `commodity_code` say, as problem details before the task runs: HTTP 422, the
   title `InvalidRequestError` and the detail `<argument>: <message>`, where FastAPI's own
   422 listed its error details with the input. (https://github.com/xippios/sdk-core/issues/66)
-- Adopts sdk-template v0.4.0, from v0.3.4, with `core_version=0.4.0`: the package depends
-  on `xippios-core~=0.4.0`, its extras likewise, and follows conventions 1.28.
-  (https://github.com/xippios/sdk-template/releases/tag/v0.4.0,
-  https://github.com/xippios/sdk-usda-psd/issues/44)
 - A refusal of a commodity, country, attribute or region code that the packaged lists lack
   ends with `If upstream added it since, the packaged list is out of date.`, where it
   named the maintainers' `/refresh-reference-data`, which an agent cannot run.
@@ -74,6 +70,10 @@ All notable changes to this project are documented here. The format follows
   is still a `NotFoundError` with `path`, its message still names commodity, country and
   market year, and an `except NotFoundError` catches it as before.
   (https://github.com/xippios/sdk-core/issues/106)
+- Adopts sdk-template v0.4.0, from v0.3.4, with `core_version=0.4.0`: the package depends
+  on `xippios-core~=0.4.0`, its extras likewise, and follows conventions 1.28.
+  (https://github.com/xippios/sdk-template/releases/tag/v0.4.0,
+  https://github.com/xippios/sdk-usda-psd/issues/44)
 
 ## [0.3.0] - 2026-10-29
 

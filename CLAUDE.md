@@ -361,7 +361,7 @@ refresh. Refresh policy:
 `/refresh-reference-data` inside `/release-prep`, and whenever a validation failure
 names a code the package lacks. A refresh that renames an attribute, or adds an id under
 an existing name, in `commodityAttributes` changes `get_balance_sheet`'s public keys:
-record it in `CHANGELOG.md` as a breaking change (conventions §12).
+record it in a fragment of the group `breaking` under `changelog/` (conventions §12).
 
 The `list_*` tasks answer from these files and never call upstream: core's `PackagedList`
 builds `meta` (sdk-core ADR-0041, decision 1), `meta.endpoint` the file's `endpoint`,
