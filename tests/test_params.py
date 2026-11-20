@@ -131,8 +131,8 @@ def test_unknown_commodity_code_names_the_closest() -> None:
     assert "0410000 (Wheat)" in error.message
     assert error.message.endswith(
         " PSD answers unknown codes with an empty result, so the package refuses them. If "
-        "upstream added it since, the packaged list needs a refresh (/refresh-reference-data)."
-    )
+        "upstream added it since, the packaged list is out of date."
+    ), "core 0.4.0's tail names no maintainer's command (sdk-core#111)"
 
 
 def test_a_commodity_name_leads_to_its_code() -> None:
@@ -214,14 +214,21 @@ def test_unknown_attribute_id_names_the_closest() -> None:
         "2026-10-28). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
         "attribute"
     )
-    assert "list_commodity_attributes lists the ids" in error.message
+    assert error.message.endswith(
+        "list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
+        "lists the ids. If upstream added it since, the packaged list is out of date."
+    ), "names the task and its tool (conventions §8)"
     assert "PSD answers unknown codes" not in error.message, "its own reason"
 
 
 @pytest.mark.parametrize("attribute_id", [True, False, "28", 28.0])
 def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -> None:
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
+    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer") as info:
         validate_attribute_id(attribute_id)  # type: ignore[arg-type]
+    assert info.value.message.endswith(
+        ". list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
+        "lists them."
+    ), "names the task and its tool (conventions §8)"
 
 
 DATA_FIXTURES = [
@@ -271,15 +278,14 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
     assert info.value.message == (
         "'0000000x' is not a commodity_code in the packaged commodities list (fetched "
         "2026-10-28). PSD answers unknown codes with an empty result, so the package refuses "
-        "them. If upstream added it since, the packaged list needs a refresh "
-        "(/refresh-reference-data)."
+        "them. If upstream added it since, the packaged list is out of date."
     )
 
 
 @pytest.mark.parametrize(
     ("value", "hint"),
     [("all", "Omit country_code for every country"), ("ALL", "Omit country_code"),
-     ("00", "use get_world_data for world data")],
+     ("00", "use get_world_data \\(over MCP, the tool usda_psd_get_world_data\\) for world data")],
 )  # fmt: skip
 def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -> None:
     with pytest.raises(UnknownCode, match=hint) as info:
@@ -310,7 +316,11 @@ def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
     assert error.fetched == FETCHED["countries"]
     assert error.closest == (("R09", "Middle East"),)
     assert "Did you mean R09 (Middle East)?" in error.message
-    assert "list_regions and list_countries name the regions" in error.message
+    assert error.message.endswith(
+        "list_regions and list_countries (over MCP, the tools usda_psd_list_regions and "
+        "usda_psd_list_countries) name the regions. If upstream added it since, the packaged "
+        "list is out of date."
+    ), "names the tasks and their tools (conventions §8)"
     with pytest.raises(UnknownCode) as by_name:
         validate_region_code("South America")
     assert ("R04", "South America") in by_name.value.closest
@@ -353,9 +363,10 @@ def test_the_world_region_is_refused_with_a_hint() -> None:
     assert error.message.startswith(
         "'R00' is not a region_code in the packaged countries list (fetched 2026-10-28). "
         "R00 (World) is in list_regions, but no country belongs to it: the world total is "
-        "get_world_data's, and region_code takes a region countries belong to, as "
-        "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
-    )
+        "get_world_data's (over MCP, the tool usda_psd_get_world_data), and region_code takes "
+        "a region countries belong to, as list_countries gives it, e.g. R04 (South America); "
+        "omit it to rank every country."
+    ), "names the task to call instead and its tool (conventions §8)"
 
 
 @pytest.mark.parametrize("region_code", [4, None, ["R04"]])
@@ -363,3 +374,7 @@ def test_a_region_code_that_is_not_text_is_refused(region_code: object) -> None:
     with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code") as info:
         validate_region_code(region_code)  # type: ignore[arg-type]
     assert not isinstance(info.value, UnknownCode)
+    assert info.value.message.endswith(
+        ". list_regions and list_countries (over MCP, the tools usda_psd_list_regions and "
+        "usda_psd_list_countries) name the regions."
+    ), "names the tasks and their tools (conventions §8)"

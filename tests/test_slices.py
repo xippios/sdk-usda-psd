@@ -10,6 +10,7 @@ function inputs, not fixture files.
 
 import dataclasses
 import json
+import re
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -26,6 +27,7 @@ from xippios.core import (
     ValidationError,
     parse,
 )
+from xippios.core.data_gov import NoDataForYear
 from xippios.core.testing import (
     ReplayFixture,
     assert_projection,
@@ -37,7 +39,6 @@ from xippios.core.testing import (
 
 from xippios.usda.psd import tasks
 from xippios.usda.psd.enums import AttributeId, UnitId
-from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.mcp import server
 from xippios.usda.psd.models import BalanceSheetEntry, CommodityData, DataReleaseInfo
 from xippios.usda.psd.params import PACKAGE, attribute_names, country_regions
@@ -48,6 +49,9 @@ DATA = "get_country_commodity_data_by_year"
 ALL = "get_commodity_data_by_year"
 RELEASES = "get_data_release_info"
 SLICES = ["get_balance_sheet", "get_time_series", "get_top_countries", "get_latest_release"]
+WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) for world data"
+WORLD_TOTAL = "the world total is get_world_data's (over MCP, the tool usda_psd_get_world_data)"
+"""How a refusal names the task to call instead and its tool (conventions §8)."""
 
 WHEAT_US_2023_KEYS = [
     "Area Harvested",
@@ -1005,7 +1009,7 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="0410000 \\(Wheat\\)"):
         tasks.get_balance_sheet("0410001", "US", 2023)
-    with pytest.raises(UnknownCode, match="use get_world_data for world data"):
+    with pytest.raises(UnknownCode, match=re.escape(WORLD_HINT)):
         tasks.get_balance_sheet(WHEAT, "00", 2023)
     with pytest.raises(UnknownCode, match="Omit country_code"):
         tasks.get_balance_sheet(WHEAT, "all", 2023)
@@ -1047,7 +1051,7 @@ def test_slices_check_their_arguments_before_any_request(respx_mock: respx.MockR
     with pytest.raises(UnknownCode, match="'R99' is not a region_code") as region:
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R99")
     assert region.value.closest == (("R09", "Middle East"),)
-    with pytest.raises(UnknownCode, match="the world total is get_world_data's"):
+    with pytest.raises(UnknownCode, match=re.escape(WORLD_TOTAL)):
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code="R00")
     with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code"):
         tasks.get_top_countries(SOYBEANS, 2023, 28, region_code=4)  # type: ignore[arg-type]

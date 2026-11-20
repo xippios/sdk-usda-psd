@@ -20,14 +20,23 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from xippios.core import AsyncClient, AuthError, NotFoundError, RateLimitError, RetryPolicy
-from xippios.core.data_gov import Gateway
+from xippios.core import (
+    AsyncClient,
+    AuthError,
+    EnvVar,
+    NotFoundError,
+    RateLimitError,
+    RetryPolicy,
+)
+from xippios.core.data_gov import Gateway, NoDataForYear
 from xippios.core.testing import CLOCK_SLACK, load_fixture, response_from_fixture
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import (
     API_KEY_ENV,
     BASE_URL,
+    DATA_PATH,
+    ENV_VARS,
     RATE_LIMIT,
     SOURCE,
     auth,
@@ -36,7 +45,6 @@ from xippios.usda.psd._client import (
     config,
     gateway,
 )
-from xippios.usda.psd.errors import NoDataForYear
 
 FIXTURES = Path(__file__).parent / "fixtures"
 DATA = "get_country_commodity_data_by_year"
@@ -69,6 +77,7 @@ def test_the_client_is_wired_for_the_gateway() -> None:
     assert config.classify is classify
     assert client.config is config
     assert gateway.source == SOURCE == "usda-psd"
+    assert gateway.data_path is DATA_PATH, "core maps PSD's empty 404 there (sdk-core#106)"
     assert gateway.policy is Gateway.policy, "one policy per process for the shared key"
     assert config.observe == Gateway.policy.observe, "installed: every answer reaches it"
     assert config.before_request == Gateway.policy.before_request
@@ -80,6 +89,12 @@ def test_the_client_is_wired_for_the_gateway() -> None:
     assert auth is gateway.auth
     assert auth.header == "X-Api-Key"
     assert auth.env_var == API_KEY_ENV == "DATA_GOV_API_KEY"  # pragma: allowlist secret
+
+
+def test_env_vars_name_the_one_key_the_package_reads() -> None:
+    """``ENV_VARS`` tells a host what to set: the gateway's key, secret and required, and
+    nothing else, since the package reads no other variable (conventions §7)."""
+    assert (EnvVar(API_KEY_ENV, secret=True, required=True),) == ENV_VARS
 
 
 def test_invalid_key_is_an_auth_error_naming_the_code_and_the_variable() -> None:
@@ -170,9 +185,10 @@ def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
     assert (response.status_code, response.content) == (404, b"")
     assert response.headers["content-type"].startswith("text/plain")
     error = classify(response)
-    assert isinstance(error, NoDataForYear)
+    assert isinstance(error, NoDataForYear), "core's class, through the gateway's data_path"
     assert isinstance(error, NotFoundError), "in the taxonomy, conventions §5"
     assert error.path == response.request.url.path
+    assert error.source == SOURCE
     assert f"no data for {error.path} (HTTP 404 with an empty body)" in error.message
 
 
