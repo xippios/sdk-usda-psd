@@ -1,4 +1,4 @@
-"""The wave 2 slices: balance sheet, time series, top countries, latest release.
+"""The slices: balance sheet, time series, top countries, latest release.
 
 Each replays recorded answers and checks that the slice selects, orders or pivots
 upstream's records without changing one (sdk-core ADR-0028). ``_recorded`` parses a fixture the
