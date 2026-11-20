@@ -38,7 +38,6 @@ src/xippios/usda/psd/
                    the Python-only ones (none); MCP_CAPS any per-tool result caps
   mcp.py           xippios-usda-psd-mcp entry point
   http.py          FastAPI router
-  errors.py        NoDataForYear, PSD's empty 404 for a market year (UnknownCode is core's)
   params.py        packaged lists (PACKAGED_LISTS, read with PackagedList.load;
                    attribute_names()) and the code, year and attribute checks
   enums.py         IntEnums AttributeId, UnitId from the packaged lists; never edited by hand
@@ -203,8 +202,9 @@ commit `07b88ad` on `main`.
 - Market year without data: HTTP 404 with an empty `text/plain` body on every data form,
   one country (`commodity/0410000/country/US/year/1900`, `unknown_year`), every country
   (`.../country/all/year/1900`) and the world (`.../world/year/1900`, both `year_1900`),
-  mapped to `errors.NoDataForYear`, a `NotFoundError` (only that answer on a data path:
-  an empty 404 elsewhere or the gateway's `NOT_FOUND` stays a plain `NotFoundError`).
+  mapped by core's gateway, given `_client.DATA_PATH`, to `NoDataForYear` of
+  `xippios.core.data_gov`, a `NotFoundError` (only that answer on a data path: an empty
+  404 elsewhere or the gateway's `NOT_FOUND` stays a plain `NotFoundError`).
   `get_time_series` skips such a year; the other data tasks re-raise it as
   `NoDataForYear` naming commodity, country and year. Any other `NotFoundError` (the
   gateway's `NOT_FOUND`) propagates unchanged from every task.

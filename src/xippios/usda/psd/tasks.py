@@ -49,10 +49,10 @@ from xippios.core import (
     matches,
     sync,
 )
+from xippios.core.data_gov import NoDataForYear
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import SOURCE
-from xippios.usda.psd.errors import NoDataForYear
 from xippios.usda.psd.models import (
     BalanceSheet,
     BalanceSheetEntry,
@@ -144,16 +144,18 @@ def _vintage(records: list[CommodityData]) -> str | None:
 def _absent(
     exc: NoDataForYear, commodity_code: str, country: str, market_year: int
 ) -> NoDataForYear:
-    """PSD's empty 404 again, naming what was asked for.
+    """PSD's empty 404 again, naming what was asked for, in the source's name.
 
-    Only ``NoDataForYear`` means "no data for this market year"; any other
-    ``NotFoundError`` (the gateway's ``NOT_FOUND``) is not caught and propagates as is.
+    Only ``NoDataForYear``, core's class that the gateway returns on a data path, means "no
+    data for this market year"; any other ``NotFoundError`` (the gateway's ``NOT_FOUND``)
+    is not caught and propagates as is.
     """
     return NoDataForYear(
         exc.path,
         f"PSD has no data for commodity {commodity_code}, {country}, market year "
         f"{market_year}: upstream answered HTTP 404 ({exc.message}). PSD has data for most "
         "commodities since 1960.",
+        source=exc.source,
     )
 
 
@@ -388,7 +390,7 @@ async def get_balance_sheet_async(
     revised the figures (``"2026-07"``); ``meta.published_at`` stays empty, since PSD
     gives no day. Codes and the year are checked before the call. Valid codes without
     data (PSD answers an empty list) raise ``NotFoundError``, a market year without data
-    ``errors.NoDataForYear``, both naming commodity, country and year.
+    ``NoDataForYear``, a ``NotFoundError`` too, both naming commodity, country and year.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),

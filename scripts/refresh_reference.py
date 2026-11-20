@@ -127,7 +127,6 @@ def render() -> None:
     """Regenerate ``enums.py`` from the packaged files and format it as it is committed."""
     lists: dict[str, Sequence[str] | Sequence[tuple[int, str]]] = {}
     fetched: dict[str, str] = {}
-    class_names: dict[str, str] = {}
     keys = [*LISTS, *(id_field for _, _, id_field, _ in ID_LISTS.values())]
     if len(set(keys)) < len(keys):
         raise SystemExit("an id field of ID_LISTS names a list of LISTS: one enum each")
@@ -139,8 +138,7 @@ def render() -> None:
         ids = read(name)
         lists[id_field] = id_name_pairs(ids.records, id_field=id_field, name_field=name_field)
         fetched[id_field] = f"{ids.fetched:%Y-%m-%d}"
-        class_names[id_field] = id_field[:1].upper() + id_field[1:]
-    module = render_enums(lists, fetched=fetched, class_names=class_names, generator=GENERATOR)
+    module = render_enums(lists, fetched=fetched, generator=GENERATOR)
     ENUMS.write_text(module, encoding="utf-8")
     sys.stdout.flush()
     for command in (["format"], ["check", "--fix"]):
