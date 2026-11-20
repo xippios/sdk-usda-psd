@@ -289,8 +289,8 @@ totals, no unit conversion, no gap filling, nothing renamed (sdk-core ADR-0028).
   `"attribute <id>"`; records that one entry each cannot hold (a repeated id, mixed
   keys, two records with the same key) are a `ValidationError`, never merged. A
   reference refresh that renames an attribute or adds an id under an existing name
-  changes public keys: a breaking change, recorded in `CHANGELOG.md` when the lists are
-  refreshed (conventions §12). Each `BalanceSheetEntry` is a
+  changes public keys: a breaking change, recorded in a `breaking` fragment under
+  `changelog/` when the lists are refreshed (conventions §12). Each `BalanceSheetEntry` is a
   projection of the record (`attribute_id`, `unit_id`, `value`, `calendar_year`,
   `month`); units differ per attribute (wheat US: 4, 8 and 26). An empty answer (200
   `[]`) is `NotFoundError`, unlike `get_data`'s empty list: a balance sheet is one record.
@@ -398,5 +398,5 @@ as plain `int` (the NASS pattern), and members compare equal to them.
 - The reference guard: `test_balance_sheet_keys_of_every_packaged_attribute_are_pinned`
   in `tests/test_slices.py` writes out the key `get_balance_sheet` gives each packaged
   attribute id; when a reference refresh fails it, the refresh PR updates the mapping and
-  records every changed or newly suffixed key in `CHANGELOG.md` as a breaking change
+  records every changed or newly suffixed key in a `breaking` fragment under `changelog/`
   (conventions §12).
