@@ -18,13 +18,13 @@ compare each packaged list with the live one (`test_packaged_list_equals_the_liv
 in `tests/test_live.py`, one keyed call per list) and name the records that are gone and
 those that are new: the signal to run `/refresh-reference-data`.
 
-| File | Origin | Fetched (UTC) | Records |
-| --- | --- | --- | --- |
-| `commodities.json` | `GET https://api.fas.usda.gov/api/psd/commodities` (`PSDData_GetCommodities`) | 2026-10-28T21:42:03Z | 63 |
-| `countries.json` | `GET https://api.fas.usda.gov/api/psd/countries` (`PSDData_GetCountries`) | 2026-10-28T21:42:03Z | 251 |
-| `regions.json` | `GET https://api.fas.usda.gov/api/psd/regions` (`PSDData_GetRegions`) | 2026-10-28T21:42:04Z | 15 |
-| `unitsOfMeasure.json` | `GET https://api.fas.usda.gov/api/psd/unitsOfMeasure` (`PSDData_GetUnitsOfMeasure`) | 2026-10-28T21:42:05Z | 42 |
-| `commodityAttributes.json` | `GET https://api.fas.usda.gov/api/psd/commodityAttributes` (`PSDData_GetCommodityAttributes`) | 2026-10-28T21:42:06Z | 85 |
+| File | Origin | Fetched |
+| --- | --- | --- |
+| `commodities.json` | `GET https://api.fas.usda.gov/api/psd/commodities` (`PSDData_GetCommodities`) | 2026-10-28T21:42:03Z |
+| `countries.json` | `GET https://api.fas.usda.gov/api/psd/countries` (`PSDData_GetCountries`) | 2026-10-28T21:42:03Z |
+| `regions.json` | `GET https://api.fas.usda.gov/api/psd/regions` (`PSDData_GetRegions`) | 2026-10-28T21:42:04Z |
+| `unitsOfMeasure.json` | `GET https://api.fas.usda.gov/api/psd/unitsOfMeasure` (`PSDData_GetUnitsOfMeasure`) | 2026-10-28T21:42:05Z |
+| `commodityAttributes.json` | `GET https://api.fas.usda.gov/api/psd/commodityAttributes` (`PSDData_GetCommodityAttributes`) | 2026-10-28T21:42:06Z |
 
 The 2026-10-28 files were written by `scripts/refresh_reference.py` from one live request
 per list (five keyed calls), each file's `fetched` the UTC time of its fetch to the second,
