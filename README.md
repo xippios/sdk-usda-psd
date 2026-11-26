@@ -15,7 +15,7 @@ lists of codes, which the package ships and refreshes before each release. PSD d
 path parameters alone, `commodityCode`, `countryCode` and `marketYear`, and the tasks take
 every one. The documentation lists XML beside JSON among the forms that each operation
 produces; the package asks for JSON, so XML is the one documented choice that a caller cannot
-make. PSD Online's downloadable files, which no page of the API's documentation describes,
+make (https://github.com/xippios/sdk-usda-psd/issues/61). PSD Online's downloadable files, which no page of the API's documentation describes,
 are outside the package (https://github.com/xippios/sdk-usda-psd/issues/37). What the package
 adds is one country's series over market years and filters that select records of the release
 list and of the packaged lists. It ranks no country, pivots no record into a table and picks
