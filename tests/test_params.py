@@ -1,15 +1,25 @@
-"""Packaged reference lists, their enums and the argument checks built on them."""
+"""Packaged reference lists, their enums, the argument checks built on them and the script
+that refreshes them."""
 
+import ast
+import importlib.util
+import inspect
 import json
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from xippios.core import InvalidRequestError, PackagedList, UnknownCode, parse
 from xippios.core.http import status_for
+from xippios.core.refresh import Lists
 from xippios.core.testing import load_fixture
+from xippios.usda.fas import REMAINING_HEADER
 
 from xippios.usda.psd import enums
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import (
     Commodity,
     CommodityAttribute,
@@ -31,6 +41,7 @@ from xippios.usda.psd.params import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "refresh_reference.py"
 SOURCES = {
     # packaged list: operation it came from (meta.endpoint, verbatim), its wrapper and
     # fixture directory, record model
@@ -73,6 +84,62 @@ def test_packaged_lists_are_the_recorded_answers_verbatim() -> None:
 
 def _records(name: str) -> list[dict[str, object]]:
     return PackagedList.load(PACKAGE, name).records
+
+
+def _refresh_script() -> ModuleType:
+    """``scripts/refresh_reference.py``, loaded without running it: no request, no key."""
+    spec = importlib.util.spec_from_file_location("refresh_reference", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _endpoint_literals(wrapper: Callable[[], object]) -> list[object]:
+    """Every ``endpoint=`` the wrapper's module passes, read from its source."""
+    tree = ast.parse(inspect.getsource(sys.modules[wrapper.__module__]))
+    return [
+        keyword.value.value if isinstance(keyword.value, ast.Constant) else keyword.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == "endpoint"
+    ]
+
+
+def test_the_refresh_script_declares_one_lists_on_cores_frame() -> None:
+    """The script declares one ``Lists`` of core's frame, one ``Listed`` per packaged list
+    (conventions §3; https://github.com/xippios/sdk-core/issues/482), and the frame writes a
+    list's ``endpoint`` from the operation its ``Listed`` names, not from the wrapper's name
+    (conventions §2): the declared operation is the packaged file's ``endpoint``, the one
+    ``endpoint=`` literal its wrapper passes and the first line of the wrapper's docstring.
+    ``unitsOfMeasure`` and ``commodityAttributes`` make the two enums, and the quota left is
+    read from the gateway's header, the shared package's ``REMAINING_HEADER``."""
+    lists = _refresh_script().LISTS
+    assert isinstance(lists, Lists)
+    assert (lists.package, set(lists.packaged)) == (PACKAGE, set(PACKAGED_LISTS))
+    assert lists.client is client
+    assert lists.quota_header == REMAINING_HEADER == "x-ratelimit-remaining"
+    enums_made = {listed.name: listed.enum for listed in lists.lists if listed.enum is not None}
+    assert {name: (enum.ids, enum.names) for name, enum in enums_made.items()} == {
+        "unitsOfMeasure": ("unitId", "unitDescription"),
+        "commodityAttributes": ("attributeId", "attributeName"),
+    }
+    entries = {listed.name: (listed.endpoint, listed.fetch) for listed in lists.lists}
+    assert set(entries) == set(PACKAGED_LISTS) == set(SOURCES)
+    for name, (operation, fetch) in entries.items():
+        assert (operation, fetch.__name__) == SOURCES[name][:2], name
+        assert operation == PackagedList.load(PACKAGE, name).endpoint, name
+        assert _endpoint_literals(fetch) == [operation], name
+        assert (fetch.__doc__ or "").splitlines()[0] == f"Call ``{operation}``.", name
+
+
+def test_the_provenance_table_takes_the_frames_header() -> None:
+    """Core's frame knows one header of the provenance table and writes its rows (sdk-template
+    0.5.0's Hand-apply note on ``reference/README.md``)."""
+    readme = (Path(enums.__file__).parent / "reference" / "README.md").read_text()
+    assert "| File | Origin | Fetched |\n| --- | --- | --- |\n" in readme
 
 
 def test_enums_match_the_packaged_id_lists() -> None:
