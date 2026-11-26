@@ -12,7 +12,7 @@ over MCP among them, sends no request. The gateway is the shared package's,
 decision 1): ``gateway.auth`` sends the key from ``DATA_GOV_API_KEY`` in the ``X-Api-Key``
 header; ``Gateway.policy``, the one ``QuotaPolicy`` per process for that key, keeps
 api.data.gov's hourly quota from every answer from the wire and never fires a request into a
-spent one, waiting within the policy's ``pause_cap`` or refusing without sending, a refusal
+spent one, waiting where the quota is back within 30 s or refusing without sending, a refusal
 that speaks for ``api.data.gov`` (sdk-core ADR-0033, sdk-core ADR-0037); and
 ``gateway.classify`` maps the gateway's ``API_KEY_*`` answers to ``AuthError``, its 429 to
 ``RateLimitError``, its ``NOT_FOUND`` to ``NotFoundError`` and, since
