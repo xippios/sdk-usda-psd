@@ -464,12 +464,12 @@ def test_a_filter_by_position_is_refused_before_any_request(
     """Python refuses a filter passed by position, as the tasks' signatures take them by
     keyword alone; respx has no route mounted, so nothing is sent."""
     calls: list[Callable[[], object]] = [
-        lambda: tasks.get_data(WHEAT, 2023, "US"),  # type: ignore[misc]
-        lambda: tasks.get_release_dates(WHEAT, 2023),  # type: ignore[misc]
-        lambda: tasks.get_time_series(WHEAT, "US", 2021, 2023),  # type: ignore[misc]
-        lambda: tasks.list_countries("R01"),  # type: ignore[misc]
-        lambda: tasks.list_commodities("wheat"),  # type: ignore[misc]
-        lambda: tasks.list_commodity_attributes("stocks"),  # type: ignore[misc]
+        lambda: tasks.get_data(WHEAT, 2023, "US"),  # type: ignore[call-arg]
+        lambda: tasks.get_release_dates(WHEAT, 2023),  # type: ignore[call-arg]
+        lambda: tasks.get_time_series(WHEAT, "US", 2021, 2023),  # type: ignore[call-arg]
+        lambda: tasks.list_countries("R01"),  # type: ignore[call-arg]
+        lambda: tasks.list_commodities("wheat"),  # type: ignore[call-arg]
+        lambda: tasks.list_commodity_attributes("stocks"),  # type: ignore[call-arg]
     ]
     for call in calls:
         with pytest.raises(TypeError, match="positional argument"):
