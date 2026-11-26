@@ -23,7 +23,7 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from xippios.core import InvalidRequestError, PackagedCodes, PackagedList, UnknownCode, closest
+from xippios.core import InvalidRequestError, PackagedCodes, PackagedList, closest
 
 from xippios.usda.psd._client import SOURCE
 
@@ -117,28 +117,8 @@ COUNTRY_HINTS: dict[str, str] = {
 """Values agents pass for a country that are not country codes, with what to do instead."""
 
 
-def _validate_code(
-    param: str,
-    value: str,
-    list_name: str,
-    code_field: str,
-    name_field: str,
-    hints: dict[str, str] | None = None,
-) -> str:
-    fetched, codes = _codes(list_name, code_field, name_field)
-    if value in codes:
-        return value
-    hint = (hints or {}).get(value.strip().lower())
-    raise UnknownCode(
-        param,
-        value,
-        list_name=list_name,
-        fetched=fetched,
-        closest=() if hint else closest(value, codes),
-        hint=hint,
-        reason="PSD answers unknown codes with an empty result, so the package refuses them.",
-        source=SOURCE,
-    )
+_REASON = "PSD answers unknown codes with an empty result, so the package refuses them."
+"""Why a code the packaged list lacks is refused before the call, for core's ``check``."""
 
 
 def validate_commodity_code(commodity_code: str) -> str:
@@ -158,9 +138,7 @@ def validate_commodity_code(commodity_code: str) -> str:
     Raises:
         UnknownCode: Naming up to three close codes with their upstream names.
     """
-    return _validate_code(
-        "commodity_code", commodity_code, "commodities", "commodityCode", "commodityName"
-    )
+    return COMMODITIES.check("commodity_code", commodity_code, reason=_REASON)
 
 
 def validate_country_code(country_code: str) -> str:
@@ -180,9 +158,7 @@ def validate_country_code(country_code: str) -> str:
         UnknownCode: Naming up to three close codes with their upstream names; for
             ``"all"`` saying to omit the country, for ``"00"`` to use ``get_world_data``.
     """
-    return _validate_code(
-        "country_code", country_code, "countries", "countryCode", "countryName", COUNTRY_HINTS
-    )
+    return COUNTRIES.check("country_code", country_code, hints=COUNTRY_HINTS, reason=_REASON)
 
 
 def validate_market_year(market_year: int) -> int:
@@ -269,6 +245,42 @@ def validate_attribute_id[V: (int, Sequence[int])](attribute_id: V) -> V:
     )
 
 
+@functools.cache
+def _carried_regions() -> PackagedCodes:
+    """The region codes the packaged countries carry, each named by the packaged regions list.
+
+    The list that ``list_countries``' filter is checked against, in place of the packaged
+    ``regions``, which lacks ``"R15"`` and holds ``"R00"``, which no country carries: ``"R15"``
+    is named by its countries, ``"Africa, NEC; Fernando Po; French Equatorial Africa;
+    Other"``, and the refusal names the packaged countries list and its fetch date, the list
+    the codes come from (sdk-core ADR-0045).
+    """
+    countries = PackagedList.load(PACKAGE, "countries")
+    names = {
+        str(record["regionCode"]): str(record["regionName"])
+        for record in PackagedList.load(PACKAGE, "regions").records
+    }
+    carried: dict[str, list[str]] = {}
+    for record in countries.records:
+        carried.setdefault(str(record["regionCode"]), []).append(str(record["countryName"]))
+    records: list[dict[str, object]] = [
+        {"regionCode": code, "regionName": names.get(code) or "; ".join(members)}
+        for code, members in sorted(carried.items())
+    ]
+    return countries.model_copy(update={"records": records}).codes(
+        "regionCode", "regionName", list_name="countries", source=SOURCE
+    )
+
+
+_REGION_HINTS: dict[str, str] = {
+    "r00": "R00 (World) is in list_regions, but no country belongs to it: the world total is "
+    "get_world_data's (over MCP, the tool usda_psd_get_world_data), and region_code takes a "
+    "region countries belong to, as list_countries gives it, e.g. R04 (South America); omit "
+    "it for every country."
+}
+"""A region of the packaged regions list that no country carries, with what to do instead."""
+
+
 def validate_region_code(region_code: str) -> str:
     """Check a region code against the ``regionCode`` values the packaged countries carry.
 
@@ -300,36 +312,13 @@ def validate_region_code(region_code: str) -> str:
             f"{region_code!r}. Nothing was sent. {REGION_LISTS} name the regions.",
             source=SOURCE,
         )
-    fetched, regions = _codes("countries", "countryCode", "regionCode")
-    carried = set(regions.values())
-    if region_code in carried:
-        return region_code
-    _, names = _codes("regions", "regionCode", "regionName")
-    _, countries = _codes("countries", "countryCode", "countryName")
-    known = {
-        code: names.get(code)
-        or "; ".join(countries[country] for country, region in regions.items() if region == code)
-        for code in sorted(carried)
-    }
-    hint = (
-        f"{region_code} ({names[region_code]}) is in list_regions, but no country belongs "
-        "to it: the world total is get_world_data's (over MCP, the tool "
-        "usda_psd_get_world_data), and region_code takes a region countries belong to, as "
-        "list_countries gives it, e.g. R04 (South America); omit it for every country."
-        if region_code in names
-        else None
-    )
-    raise UnknownCode(
+    return _carried_regions().check(
         "region_code",
         region_code,
-        list_name="countries",
-        fetched=fetched,
-        closest=() if hint else closest(region_code, known),
-        hint=hint,
+        hints=_REGION_HINTS,
         reason="list_countries keeps the countries whose packaged regionCode equals it, so "
         "a code no country carries would list none, and the package refuses it. "
         f"{REGION_LISTS} name the regions.",
-        source=SOURCE,
     )
 
 

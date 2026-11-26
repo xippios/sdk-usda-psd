@@ -48,6 +48,7 @@ from xippios.core import (
     fetch_periods,
     matches,
     names_codes,
+    newer_than,
     sync,
 )
 from xippios.usda.fas import NoDataForYear
@@ -339,14 +340,14 @@ async def get_release_dates_async(
         validate_market_year(market_year)
     if country_code is not None:
         validate_country_code(country_code)
-    after = None if since is None else validate_since(since)
+    if since is not None:
+        validate_since(since)  # refused before the request
     answer = await api.get_data_release_info(commodity_code)
     selected = [
         release
-        for release in answer.payload
+        for release in newer_than(since, answer.payload, released=_release, read=validate_since)
         if (market_year is None or release.market_year == market_year)
         and (country_code is None or release.country_code == country_code)
-        and (after is None or _release(release) > after)
     ]
     meta = ResultMeta(
         source=SOURCE,
