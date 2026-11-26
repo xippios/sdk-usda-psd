@@ -24,7 +24,6 @@ from xippios.usda.fas import Gateway
 
 from xippios.usda.psd import api, tasks
 from xippios.usda.psd.enums import AttributeId
-from xippios.usda.psd.params import country_regions
 
 pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
@@ -59,20 +58,6 @@ async def test_get_release_dates_live() -> None:
     assert result.meta.published_at is None
 
 
-async def test_get_balance_sheet_live(record_property: Callable[[str, object], None]) -> None:
-    result = await tasks.get_balance_sheet_async(WHEAT, "US", 2023)
-    sheet = result.data
-    assert (sheet.commodity_code, sheet.country_code, sheet.market_year) == (WHEAT, "US", 2023)
-    assert sheet.attributes["Production"].attribute_id == AttributeId.PRODUCTION
-    ids = [entry.attribute_id for entry in sheet.attributes.values()]
-    assert len(ids) == len(set(ids)), "one entry per record"
-    assert result.meta.vintage is not None
-    assert VINTAGE.match(result.meta.vintage)
-    assert result.meta.published_at is None
-    record_property("attributes", list(sheet.attributes))
-    record_property("vintage", result.meta.vintage)
-
-
 async def test_get_time_series_live(record_property: Callable[[str, object], None]) -> None:
     result = await tasks.get_time_series_async(
         CORN, "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION
@@ -96,61 +81,12 @@ async def test_get_time_series_of_several_attributes_live() -> None:
     assert VINTAGE.match(result.meta.vintage)
 
 
-async def test_get_top_countries_live(record_property: Callable[[str, object], None]) -> None:
-    result = await tasks.get_top_countries_async(SOYBEANS, 2023, AttributeId.PRODUCTION, n=5)
-    assert len(result.data) == 5
-    values = [r.value for r in result.data]
-    assert values == sorted(values, reverse=True)
-    assert {r.attribute_id for r in result.data} == {28}
-    assert result.meta.vintage is not None
-    assert VINTAGE.match(result.meta.vintage)
-    record_property("top", [(r.country_code, str(r.value), r.unit_id) for r in result.data])
-    record_property("vintage", result.meta.vintage)
-
-
-async def test_get_top_countries_of_a_region_without_groupings_live() -> None:
-    """``region_code`` and ``exclude_groupings``: one keyed call."""
-    result = await tasks.get_top_countries_async(
-        SOYBEANS, 2023, AttributeId.PRODUCTION, n=5, region_code="R04", exclude_groupings=True
-    )
-    assert 0 < len(result.data) <= 5
-    regions = country_regions()
-    assert {regions.get(r.country_code) for r in result.data} == {"R04"}
-    assert not {r.country_code for r in result.data} & tasks.GROUPINGS
-    values = [r.value for r in result.data]
-    assert values == sorted(values, reverse=True)
-    assert result.meta.vintage is not None
-    assert VINTAGE.match(result.meta.vintage)
-
-
-async def test_get_latest_release_live(record_property: Callable[[str, object], None]) -> None:
-    result = await tasks.get_latest_release_async(WHEAT)
-    releases = {(r.release_year, r.release_month) for r in result.data}
-    assert len(releases) == 1
-    ((year, month),) = releases
-    assert result.meta.vintage == f"{year:04d}-{month:02d}"
-    assert result.meta.published_at is None
-    record_property("vintage", result.meta.vintage)
-    record_property("records", len(result.data))
-
-
 async def test_get_release_dates_since_live() -> None:
     """``since``: one keyed call, the whole wheat list filtered after it."""
     result = await tasks.get_release_dates_async(WHEAT, since="2020-01")
     assert result.data
     assert all((r.release_year, r.release_month) > (2020, 1) for r in result.data)
     assert result.meta.request == {"commodity_code": WHEAT, "since": "2020-01"}
-
-
-async def test_get_latest_release_since_live() -> None:
-    """``since`` far back: the newest release comes back whole; one keyed call."""
-    result = await tasks.get_latest_release_async(WHEAT, since="2000-01")
-    releases = {(r.release_year, r.release_month) for r in result.data}
-    assert len(releases) == 1
-    ((year, month),) = releases
-    assert (year, month) > (2000, 1)
-    assert result.meta.vintage == f"{year:04d}-{month:02d}"
-    assert result.meta.request == {"commodity_code": WHEAT, "since": "2000-01"}
 
 
 LISTS = [

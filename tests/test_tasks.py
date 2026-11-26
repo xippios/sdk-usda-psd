@@ -332,6 +332,29 @@ async def test_value_is_a_json_number_through_both_adapters(
     assert rejected.json()["title"] == "UnknownCode"
 
 
+def test_the_package_serves_the_nine_tasks_the_boundary_keeps() -> None:
+    """The ranking, the pivot and the pick of the newest release leave by the boundary of a
+    source package (sdk-core ADR-0060), with the models and the list of groupings of their
+    own: a caller reads the same records from ``get_data`` and ``get_release_dates``."""
+    from xippios.usda.psd import models
+
+    assert sorted(tasks.__all__) == [
+        "get_data",
+        "get_release_dates",
+        "get_time_series",
+        "get_world_data",
+        "list_commodities",
+        "list_commodity_attributes",
+        "list_countries",
+        "list_regions",
+        "list_units_of_measure",
+    ]
+    for name in ("get_balance_sheet", "get_top_countries", "get_latest_release", "GROUPINGS"):
+        assert not hasattr(tasks, name), name
+    for name in ("BalanceSheet", "BalanceSheetEntry"):
+        assert not hasattr(models, name), name
+
+
 def test_build_returns_the_tool_set_the_entry_point_serves() -> None:
     """``mcp.build()`` carries what ``tasks.py`` declares for the server, its caps and its
     instructions, with the package's version (conventions §8; sdk-core ADR-0063, decision 7);

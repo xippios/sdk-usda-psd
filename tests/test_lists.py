@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 import pytest
 import respx
+from xippios.core import UnknownCode
 from pydantic import BaseModel
 from xippios.core import PackagedList
 from xippios.core.testing import mcp_call
@@ -204,14 +205,22 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     assert not respx_mock.calls
 
 
-def test_an_unknown_region_is_an_empty_list(respx_mock: respx.MockRouter) -> None:
-    """No validation: a region no country carries has no countries, a correct answer."""
-    unknown = tasks.list_countries(region_code="R99")
-    assert unknown.data == []
-    assert unknown.meta.request == {"region_code": "R99"}
-    assert unknown.meta.retrieved_at == FETCHED["countries"]
-    assert unknown.meta.vintage is None
-    assert tasks.list_countries(region_code="r01").data == [], "exact, as list_regions spells it"
+def test_a_region_no_packaged_country_carries_is_refused(respx_mock: respx.MockRouter) -> None:
+    """A region code that no packaged country carries would list none, so the filter refuses
+    it, naming the closest codes, and ``R00`` (World), which the regions list holds and no
+    country carries, with its hint that the world total is ``get_world_data``'s; ``R15``,
+    which four countries carry and the regions list lacks, passes (the maintainer's decision
+    of 2026-11-26). The codes compare exactly, as ``list_regions`` spells them."""
+    with pytest.raises(UnknownCode, match="'R99' is not a region_code") as unknown:
+        tasks.list_countries(region_code="R99")
+    assert unknown.value.closest == (("R09", "Middle East"),)
+    assert "Nothing was sent." in unknown.value.message
+    with pytest.raises(UnknownCode, match="the world total is get_world_data's") as world:
+        tasks.list_countries(region_code="R00")
+    assert world.value.closest == ()
+    with pytest.raises(UnknownCode, match="'r01' is not a region_code"):
+        tasks.list_countries(region_code="r01")
+    assert len(tasks.list_countries(region_code="R15").data) == 4
     assert not respx_mock.calls
 
 

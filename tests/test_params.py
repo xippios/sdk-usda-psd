@@ -22,7 +22,6 @@ from xippios.usda.psd.params import (
     PACKAGE,
     PACKAGED_LISTS,
     attribute_names,
-    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
@@ -294,13 +293,6 @@ def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -
     assert "Did you mean" not in info.value.message
 
 
-def test_country_regions_are_the_packaged_list() -> None:
-    records = _records("countries")
-    regions = country_regions()
-    assert regions == {r["countryCode"]: r["regionCode"] for r in records}
-    assert (regions["US"], regions["BR"], regions["E4"]) == ("R01", "R04", "R05")
-
-
 @pytest.mark.parametrize("code", ["R01", "R04", "R18", "R15"])
 def test_region_codes_the_packaged_countries_carry_pass(code: str) -> None:
     """``R15`` too: four countries carry it although ``PSDData_GetRegions`` lacks it."""
@@ -353,7 +345,8 @@ def test_other_release_months_are_refused(since: str) -> None:
 
 def test_the_world_region_is_refused_with_a_hint() -> None:
     """``R00`` (World) is in the packaged regions list, but no packaged country belongs to
-    it: the refusal says where the world total is, and what ``region_code`` takes."""
+    it: the refusal of ``list_countries``' filter says where the world total is, and what
+    ``region_code`` takes."""
     with pytest.raises(UnknownCode) as info:
         validate_region_code("R00")
     error = info.value
@@ -362,10 +355,10 @@ def test_the_world_region_is_refused_with_a_hint() -> None:
     assert "Did you mean" not in error.message
     assert error.message.startswith(
         "'R00' is not a region_code in the packaged countries list (fetched 2026-10-28). "
-        "R00 (World) is in list_regions, but no country belongs to it: the world total is "
-        "get_world_data's (over MCP, the tool usda_psd_get_world_data), and region_code takes "
-        "a region countries belong to, as list_countries gives it, e.g. R04 (South America); "
-        "omit it to rank every country."
+        "Nothing was sent. R00 (World) is in list_regions, but no country belongs to it: the "
+        "world total is get_world_data's (over MCP, the tool usda_psd_get_world_data), and "
+        "region_code takes a region countries belong to, as list_countries gives it, e.g. R04 "
+        "(South America); omit it for every country."
     ), "names the task to call instead and its tool (conventions §8)"
 
 
