@@ -2,14 +2,14 @@
 
 Recorded answers come from ``tests/fixtures``, the gateway's 429 included
 (``get_commodities/over_rate_limit.json``, recorded after spending the key's hourly quota on
-2026-10-23). The cases the recordings do not cover are of two kinds that conventions §10
-names, and each says so: the recorded empty 404 with its content type changed, and the same
-answer at a path that no route of PSD serves. The gateway and its quota policy are the shared
-package's (``xippios.usda.fas``'s ``Gateway``, sdk-core ADR-0032, sdk-core ADR-0037), whose
-tests hold its own answers: the key's codes, its ``NOT_FOUND``, a 429 classified on its own and
-core's retries of a 429. This module checks that the package installs them, that the policy
-reads the recorded 429 through the package's client, that ``classify`` keeps PSD's own answer
-after the gateway's, and that the client keeps answers in core's response cache.
+2026-10-23). The one case the recordings do not cover, the recorded empty 404 with its content
+type changed, is of conventions §10's fourth kind, and each test says so. The gateway and its
+quota policy are the shared package's (``xippios.usda.fas``'s ``Gateway``, sdk-core ADR-0032,
+sdk-core ADR-0037), whose tests hold its own answers: the key's codes, its ``NOT_FOUND``, a 429
+classified on its own and core's retries of a 429. This module checks that the package installs
+them, that the policy reads the recorded 429 through the package's client, that ``classify``
+keeps PSD's own answer after the gateway's, and that the client keeps answers in core's
+response cache.
 """
 
 import json
@@ -27,7 +27,6 @@ from xippios.usda.fas import Gateway, NoDataForYear
 from xippios.usda.psd import api
 from xippios.usda.psd._client import (
     API_KEY_ENV,
-    BASE_URL,
     DATA_PATH,
     ENV_VARS,
     RATE_LIMIT,
@@ -141,8 +140,9 @@ def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
 
 
 def test_the_content_type_is_compared_without_case() -> None:
-    """NOT RECORDED as such: the recorded empty 404 with its content type upper-cased.
-    Media types are case-insensitive (RFC 9110), so it is still PSD's empty year."""
+    """NOT RECORDED as such: the recorded empty 404 at its own URL, its content type
+    upper-cased (conventions §10, kind 4: a header replaced). Media types are case-insensitive
+    (RFC 9110), so it is still PSD's empty year."""
     fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
     response = httpx.Response(
         404,
@@ -153,27 +153,37 @@ def test_the_content_type_is_compared_without_case() -> None:
     assert isinstance(classify(response), NoDataForYear)
 
 
-def test_an_empty_404_is_no_data_for_year_only_on_a_data_path_as_text() -> None:
-    """NOT RECORDED: the recorded empty 404 moved to a path that PSD serves but that is no
-    data path, or kept at its path without its ``text/plain``, two inputs no route of PSD
-    answers so (conventions §10). Neither is PSD's answer for an empty year, so neither is
-    passed over by a series: both stay a plain ``NotFoundError``, which names the request by
-    core's ``request_description`` and says that it named no data path, never that the year
-    holds no data (https://github.com/xippios/sdk-usda-psd/issues/50)."""
-    fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
-    for url, headers in [
-        (f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates", fixture.response.headers),
-        (fixture.request.url, [("content-type", "application/json")]),
-    ]:
-        response = httpx.Response(
-            404, headers=headers, content=b"", request=httpx.Request("GET", url)
-        )
-        error = classify(response)
-        assert isinstance(error, NotFoundError)
-        assert not isinstance(error, NoDataForYear), url
-        assert f"GET {httpx.URL(url).path}" in error.message
-        assert "no data" not in error.message
-        assert "api.fas.usda.gov" not in error.message, "host-free (conventions §5)"
+def test_the_data_path_covers_the_three_data_forms_only() -> None:
+    """The gateway says that a year holds no data only on a path of ``DATA_PATH``: one
+    country, every country and the world, by market year, never the release list."""
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/country/US/year/1900")
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/country/all/year/1900")
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/world/year/1900")
+    assert not DATA_PATH.fullmatch("/api/psd/commodity/0410000/dataReleaseDates")
+    assert not DATA_PATH.fullmatch("/api/psd/commodities")
+
+
+def test_an_empty_404_without_text_plain_is_psds_own_not_found() -> None:
+    """NOT RECORDED as such: the recorded empty 404 of 1900 at its own URL, its ``text/plain``
+    replaced (conventions §10, kind 4: a header replaced). It is not PSD's answer for an empty
+    year, so a series does not pass it over: a plain ``NotFoundError`` that names the request
+    by core's ``request_description`` and says the request is wrong, never that the year holds
+    no data (https://github.com/xippios/sdk-usda-psd/issues/50). Off a data path nothing is
+    served: no other operation was seen answering an empty 404, so that half rests on the
+    gateway's ``data_path`` above."""
+    response = response_from_fixture(load_fixture(FIXTURES / DATA / "unknown_year.json"))
+    response.headers["content-type"] = "application/json"
+    error = classify(response)
+    assert isinstance(error, NotFoundError)
+    assert not isinstance(error, NoDataForYear)
+    assert error.source == SOURCE
+    assert error.message == (
+        "PSD Online answered GET /api/psd/commodity/0410000/country/US/year/1900 with HTTP 404 "
+        "and an empty body, not as it answers a market year without data on a data path: the "
+        "request is wrong, not the year."
+    )
+    assert "no data" not in error.message
+    assert "api.fas.usda.gov" not in error.message, "host-free (conventions §5)"
 
 
 def test_the_client_keeps_answers_in_cores_cache() -> None:

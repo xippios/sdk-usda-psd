@@ -165,6 +165,7 @@ def test_enum_members_are_named_after_upstream_names() -> None:
 
 
 def test_enum_members_compare_equal_to_upstream_ints() -> None:
+    """The record is an input of the test, not an answer from USDA FAS PSD Online."""
     record = CommodityAttribute.model_validate({"attributeId": 28, "attributeName": "Production"})
     assert record.attribute_id == enums.AttributeId.PRODUCTION
     assert enums.AttributeId(28) is enums.AttributeId.PRODUCTION
@@ -339,6 +340,8 @@ def test_every_recorded_id_is_in_the_packaged_lists() -> None:
 
 
 def test_an_id_the_lists_lack_still_parses() -> None:
+    """An id that no packaged list holds parses all the same; the record is an input of the
+    test, not an answer from USDA FAS PSD Online."""
     record = CommodityData.model_validate(
         {
             "commodityCode": "0410000",

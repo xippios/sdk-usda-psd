@@ -506,8 +506,8 @@ GATEWAY_NOT_FOUND = {
         "message": "The requested URL was not found on this server.",
     }
 }
-"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, as ``test_client.py``
-builds it."""
+"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, composed in the shape the
+gateway documents and the shared package's tests hold (conventions §10, kind 2)."""
 
 
 @pytest.mark.parametrize(
@@ -523,7 +523,8 @@ def test_the_gateways_not_found_propagates_unchanged(
     respx_mock: respx.MockRouter, path: str, call: Callable[[], object]
 ) -> None:
     """Only PSD's empty 404 means "no data for this market year"; the gateway's 404 says
-    the route is wrong and reaches the caller as classify raised it."""
+    the route is wrong and reaches the caller as classify raised it. NOT RECORDED: the body is
+    composed from api.data.gov's documented answer (conventions §10, kind 2)."""
     path = f"/api/psd/commodity/{WHEAT}/{path}"
     respx_mock.get(f"{BASE_URL}{path}").mock(
         return_value=httpx.Response(404, json=GATEWAY_NOT_FOUND)

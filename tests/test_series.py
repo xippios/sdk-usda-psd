@@ -99,8 +99,9 @@ def test_time_series_leaves_a_year_without_data_out(
     respx_mock: respx.MockRouter,
 ) -> None:
     """2022 answers PSD's 404 for a year without data: the recorded 1900 answer (empty
-    body, ``text/plain``), served at the 2022 path, a recorded answer moved, not a
-    hand-written one. The year is absent, nothing filled."""
+    body, ``text/plain``), NOT RECORDED at the 2022 path (conventions §10, kind 3), a state
+    PSD answers alike at any market year it holds no data for, within one operation. The year
+    is passed over, nothing filled."""
     absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
     assert (absent.response.status, absent.response.content) == (404, b""), "PSD's empty 404"
     replay_fixture(DATA, "wheat_us_2021")
@@ -121,8 +122,10 @@ def test_time_series_leaves_a_year_without_data_out(
 
 
 def test_a_series_without_any_record_is_empty_not_an_error(replay_fixture: ReplayFixture) -> None:
-    """The recorded empty 404 for 1900 at the 1960 path: the first year a series may ask
-    for is accepted, it is absent, and the series is a valid empty list."""
+    """The recorded empty 404 for 1900, NOT RECORDED at the 1960 path (conventions §10, kind
+    3), a state PSD answers alike at any market year it holds no data for, within one
+    operation: the first year a series may ask for is accepted, it is passed over, and the
+    series is a valid empty list."""
     absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
     assert (absent.response.status, absent.response.content) == (404, b""), "PSD's empty 404"
     route = replay_fixture(DATA, "unknown_year", url=f"https://api.fas.usda.gov{_path(1960)}")
@@ -137,9 +140,8 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
 ) -> None:
-    """NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body at the 2022 path, an
-    input of the test in the shape the shared package's tests hold (conventions §10). It says
-    the request is wrong, not that the year is empty, so the series stops there instead of
+    """NOT RECORDED: api.data.gov's documented ``NOT_FOUND`` body at the 2022 path, composed in
+    the shape the gateway documents (conventions §10, kind 2). It says the request is wrong, not that the year is empty, so the series stops there instead of
     passing the year over, names the market years answered before it and returns nothing
     (core's ``fetch_periods``; https://github.com/xippios/sdk-usda-psd/issues/32)."""
     replay_fixture(DATA, "wheat_us_2021")
