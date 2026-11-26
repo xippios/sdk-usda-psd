@@ -6,6 +6,7 @@ way the wrapper does, without a call, so a test can compare with what upstream s
 still counting the task's own requests.
 """
 
+import argparse
 import dataclasses
 import json
 from collections.abc import Callable
@@ -88,6 +89,9 @@ def test_get_time_series_one_request_per_year_in_order(
         "attribute_id": {"28": "Production"},
         "unit_id": {"8": "(1000 MT)"},
     }, "the codes asked for and those of the rows"
+    assert result.meta.notes == [
+        "Market years in the order of the rows: 2021 with 1 row, 2022 with 1 row, 2023 with 1 row."
+    ]
 
 
 def test_time_series_leaves_a_year_without_data_out(
@@ -110,6 +114,10 @@ def test_time_series_leaves_a_year_without_data_out(
         (2023, Decimal("19212.0")),
     ]
     assert result.meta.vintage == "2026-07"
+    assert result.meta.notes == [
+        "Market years in the order of the rows: 2021 with 1 row, 2023 with 1 row; passed over, "
+        "without data in PSD: 2022."
+    ], "https://github.com/xippios/sdk-usda-psd/issues/26"
 
 
 def test_a_series_without_any_record_is_empty_not_an_error(replay_fixture: ReplayFixture) -> None:
@@ -121,6 +129,7 @@ def test_a_series_without_any_record_is_empty_not_an_error(replay_fixture: Repla
     result = tasks.get_time_series(WHEAT, "US", 1960, 1960, AttributeId.PRODUCTION)
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
+    assert result.meta.notes == ["Market years passed over, without data in PSD: 1960."]
     assert route.call_count == 1
 
 
@@ -128,9 +137,11 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
 ) -> None:
-    """NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, the shape
-    ``test_client.py`` synthesises, at the 2022 path. It says the request is wrong, not
-    that the year is empty, so the series stops there instead of skipping the year."""
+    """NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body at the 2022 path, an
+    input of the test in the shape the shared package's tests hold (conventions §10). It says
+    the request is wrong, not that the year is empty, so the series stops there instead of
+    passing the year over, names the market years answered before it and returns nothing
+    (core's ``fetch_periods``; https://github.com/xippios/sdk-usda-psd/issues/32)."""
     replay_fixture(DATA, "wheat_us_2021")
     later = replay_fixture(DATA, "wheat_us_2023")
     gateway = respx_mock.get(f"https://api.fas.usda.gov{_path(2022)}").mock(
@@ -148,26 +159,117 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
         tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
     assert not isinstance(info.value, NoDataForYear)
     assert f"api.data.gov has no route for GET {_path(2022)}" in str(info.value)
+    assert str(info.value).endswith(
+        "The series stopped at 2022 after 1 period answered, 2021, and returns nothing."
+    )
     assert gateway.call_count == 1
     assert later.call_count == 0, "nothing after the error is requested"
 
 
-def test_a_series_may_span_exactly_the_bound(
+def test_a_series_may_span_exactly_the_ceiling(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bound counts market years, ends included: with it lowered to 3, 2021 to 2023 is
-    asked for and 2021 to 2024 refused before any request. The real bound is 100."""
-    assert tasks.SERIES_MAX_YEARS == 100
-    monkeypatch.setattr(tasks, "SERIES_MAX_YEARS", 3)
-    with pytest.raises(InvalidRequestError, match="2021 to 2024 is 4 market years"):
-        tasks.get_time_series(WHEAT, "US", 2021, 2024, AttributeId.PRODUCTION)
-    assert not respx_mock.calls
-    for year in (2021, 2022, 2023):
-        replay_fixture(DATA, f"wheat_us_{year}")
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
+    """The ceiling counts market years, ends included: set to 3 for the process, 2021 to 2023
+    is asked for and 2021 to 2024 refused before any request, in core's words. The ceiling is
+    100 in Python and over HTTP, core's ``Ceiling`` (the maintainer's decision of 2026-11-26)."""
+    assert (tasks.SERIES.most, tasks.SERIES.value, tasks.SERIES.unit) == (100, 100, "market years")
+    tasks.SERIES.set(3)
+    try:
+        with pytest.raises(InvalidRequestError) as refused:
+            tasks.get_time_series(WHEAT, "US", 2021, 2024, AttributeId.PRODUCTION)
+        assert not respx_mock.calls
+        for year in (2021, 2022, 2023):
+            replay_fixture(DATA, f"wheat_us_{year}")
+        result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
+    finally:
+        tasks.SERIES.set(100)
+    assert str(refused.value).startswith(
+        "2021 to 2024 is 4 market years; one call fetches at most 3 market years, the ceiling "
+        "set for this process (the MCP server starts with 24 by default; --series-years "
+        "raises it, up to 100). Nothing was sent."
+    )
     assert [r.market_year for r in result.data] == [2021, 2022, 2023]
+
+
+def test_the_mcp_server_starts_with_a_ceiling_of_24_market_years(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """A host that applies the tool set's hooks with their defaults serves the ceiling that
+    the entry point serves, 24 market years, and a range of 25 is refused before any request,
+    naming the ceiling and the option that raises it (sdk-core ADR-0054)."""
+    from xippios.usda.psd.mcp import build
+
+    tools = build()
+    assert tools.apply_options is not None
+    tools.apply_options(tools.option_defaults())
+    try:
+        assert tasks.SERIES.value == 24
+        with pytest.raises(InvalidRequestError) as refused:
+            tasks.get_time_series(WHEAT, "US", 2000, 2024)
+    finally:
+        tasks.SERIES.set(100)
+    assert "2000 to 2024 is 25 market years; one call fetches at most 24 market years" in str(
+        refused.value
+    )
+    assert "--series-years raises it, up to 100). Nothing was sent." in str(refused.value)
+    assert not respx_mock.calls
+
+
+@pytest.mark.parametrize(("argv", "value"), [([], 24), (["--series-years", "60"], 60)])
+def test_the_entry_point_applies_series_years(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], value: int
+) -> None:
+    """``--series-years`` sets the server's ceiling from 1 to 100, 24 by default; the server's
+    ``run`` is patched on its class, so nothing is served."""
+    from mcp.server.mcpserver import MCPServer
+    from xippios.core.mcp import main
+
+    from xippios.usda.psd.mcp import build
+
+    served: list[object] = []
+    monkeypatch.setattr(MCPServer, "run", lambda self, **kwargs: served.append(kwargs))
+    try:
+        main(build, argv=argv)
+        assert tasks.SERIES.value == value
+    finally:
+        tasks.SERIES.set(100)
+    assert served == [{"transport": "stdio"}]
+
+
+@pytest.mark.parametrize("given", ["0", "101"])
+def test_the_entry_point_refuses_a_ceiling_outside_1_to_100(
+    capsys: pytest.CaptureFixture[str], given: str
+) -> None:
+    from xippios.core.mcp import main
+
+    from xippios.usda.psd.mcp import build
+
+    with pytest.raises(SystemExit) as stopped:
+        main(build, argv=["--series-years", given])
+    assert stopped.value.code == 2
+    assert (
+        f"the series ceiling, --series-years on the MCP server, must be a whole number of "
+        f"market years from 1 to 100, got {given}." in capsys.readouterr().err
+    )
+    assert tasks.SERIES.value == 100
+
+
+def test_the_description_states_the_most_that_one_call_sends() -> None:
+    """Conventions §8 and sdk-core ADR-0061, decision 8: 100 requests in Python and over
+    HTTP, 24 over MCP, each with core's four attempts."""
+    description = (tasks.get_time_series.__doc__ or "").split("Args:")[0]
+    assert "at most 100 requests, 400" in description
+    assert "attempts with retries, and 24 and 96 over MCP" in description
+    assert len(description.strip()) < 1000
+
+
+def test_the_option_hooks_are_the_ceilings() -> None:
+    parser = argparse.ArgumentParser()
+    tasks.mcp_add_options(parser)
+    assert parser.parse_args([]).series_years == 24
+    assert tasks.mcp_add_options == tasks.SERIES.add_options
+    assert tasks.mcp_apply_options == tasks.SERIES.apply_options
 
 
 def test_a_series_of_an_attribute_the_answers_lack_is_empty(
@@ -180,6 +282,10 @@ def test_a_series_of_an_attribute_the_answers_lack_is_empty(
     result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.AREA_PLANTED)
     assert result.data == []
     assert result.meta.vintage is None
+    assert result.meta.notes == [
+        "Market years passed over, answered without a record of the attributes asked for: "
+        "2021, 2022, 2023."
+    ]
     assert len(respx_mock.calls) == 3
 
 
@@ -333,9 +439,10 @@ async def test_time_series_of_several_attributes_through_both_adapters(
 async def test_a_cut_series_names_the_filters_that_narrow_it(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """The tool's own note (conventions §8, sdk-core ADR-0038) on a server built for this test with
-    the package's cap for ``get_time_series``, its rows lowered to 20 so that three
-    recorded years of every attribute, 45 records, are cut. The real cap is 200 rows."""
+    """The tool's own note (conventions §8, sdk-core ADR-0038) on a server built for this test
+    with the package's cap for ``get_time_series``, its rows lowered to 20 so that three
+    recorded years of every attribute, 45 records, are cut: the newest rows are shown, oldest
+    first (sdk-core ADR-0047). The real cap is 200 rows."""
     from xippios.core.mcp import ToolSet, build_server
 
     cap = tasks.MCP_CAPS["get_time_series"]
@@ -355,9 +462,13 @@ async def test_a_cut_series_names_the_filters_that_narrow_it(
         {"commodity_code": WHEAT, "country_code": "US", "start_year": 2021, "end_year": 2023},
     )
     assert len(payload["data"]) == 20
-    assert payload["note"] == (
-        "showing 20 of 45 rows (cap: 20 rows or 65536 bytes); filter by attribute_id or "
-        "narrow start_year and end_year to see the rest"
+    every = tasks.get_time_series(WHEAT, "US", 2021, 2023).data
+    assert payload["data"] == [row.model_dump(mode="json") for row in every[-20:]], "the newest"
+    assert payload["note"].startswith("showing rows 26 to 45 of 45 (cap: 20 rows or 65536 bytes)")
+    assert payload["note"].endswith(
+        "the newest market years are shown; pass attribute_id or narrow start_year and "
+        "end_year to see the rest. One call sends one request per market year, at most 24 "
+        "requests and 96 attempts with retries unless --series-years sets another ceiling"
     )
 
 
@@ -369,7 +480,7 @@ def test_the_series_checks_its_arguments_before_any_request(respx_mock: respx.Mo
     with pytest.raises(InvalidRequestError, match="True is not an integer code"):
         tasks.get_time_series(WHEAT, "US", 2021, 2023, True)
     with pytest.raises(
-        InvalidRequestError, match="start_year 2023 is after end_year 2021. Nothing was sent."
+        InvalidRequestError, match=r"start_year 2023 is after end_year 2021\. Nothing was sent\."
     ):
         tasks.get_time_series(WHEAT, "US", 2023, 2021, 28)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
@@ -382,7 +493,7 @@ def test_the_series_checks_its_arguments_before_any_request(respx_mock: respx.Mo
         tasks.get_time_series(WHEAT, "US", 1900, 1900, 28)
     with pytest.raises(InvalidRequestError, match="1960 to 2060 is 101 market years"):
         tasks.get_time_series(WHEAT, "US", 1960, 2060, 28)
-    with pytest.raises(InvalidRequestError, match="spans at most 100"):
+    with pytest.raises(InvalidRequestError, match="one call fetches at most 100 market years"):
         tasks.get_time_series(WHEAT, "US", 1960, 9999, 28)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_time_series(WHEAT, "US", 2021, 20230, 28)
