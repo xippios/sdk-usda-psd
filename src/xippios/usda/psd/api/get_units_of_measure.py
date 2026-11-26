@@ -7,25 +7,26 @@ parsed into ``models.UnitOfMeasure``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
 
-from xippios.core import parse
+from xippios.core import Answer
 
-from xippios.usda.psd._client import SOURCE, client
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import UnitOfMeasure
 
 __all__ = ["get_units_of_measure"]
 
 
-async def get_units_of_measure() -> list[UnitOfMeasure]:
+async def get_units_of_measure() -> Answer[list[UnitOfMeasure]]:
     """Call ``PSDData_GetUnitsOfMeasure``.
 
     Returns:
-        Every PSD unit of measure with its id, in upstream order, one ``UnitOfMeasure`` per
-        record, e.g.
+        The ``Answer``, when it was retrieved and, as its payload, every PSD unit of measure
+            with its id, in upstream order, one ``UnitOfMeasure`` per record, e.g.
             ``UnitOfMeasure(unit_id=8, unit_description="(1000 MT)           ")``
 
     Raises:
         AuthError: api.data.gov refused the key in ``DATA_GOV_API_KEY``.
         RateLimitError: api.data.gov's hourly quota for the key is spent.
     """
-    raw = await client.get_json("/api/psd/unitsOfMeasure")
-    return parse(list[UnitOfMeasure], raw, source=SOURCE, endpoint="PSDData_GetUnitsOfMeasure")
+    return await client.get_answer(
+        "/api/psd/unitsOfMeasure", parse=list[UnitOfMeasure], endpoint="PSDData_GetUnitsOfMeasure"
+    )

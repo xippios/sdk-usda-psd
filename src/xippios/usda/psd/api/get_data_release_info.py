@@ -12,27 +12,29 @@ in ``xippios.usda.psd._client.classify``.
 
 from urllib.parse import quote
 
-from xippios.core import parse
+from xippios.core import Answer
 
-from xippios.usda.psd._client import SOURCE, client
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import DataReleaseInfo
 
 __all__ = ["get_data_release_info"]
 
 
-async def get_data_release_info(commodity_code: str) -> list[DataReleaseInfo]:
+async def get_data_release_info(commodity_code: str) -> Answer[list[DataReleaseInfo]]:
     """Call ``PSDData_GetDataReleaseInfo``.
 
     Args:
         commodity_code: ``commodityCode``, e.g. ``"0410000"`` (Wheat).
 
     Returns:
-        One ``DataReleaseInfo`` per country and market year, in upstream order.
+        The ``Answer``, when it was retrieved and, as its payload, one ``DataReleaseInfo`` per
+            country and market year, in upstream order.
 
     Raises:
         AuthError: api.data.gov refused the key in ``DATA_GOV_API_KEY``.
         RateLimitError: api.data.gov's hourly quota for the key is spent.
     """
     path = f"/api/psd/commodity/{quote(commodity_code, safe='')}/dataReleaseDates"
-    raw = await client.get_json(path)
-    return parse(list[DataReleaseInfo], raw, source=SOURCE, endpoint="PSDData_GetDataReleaseInfo")
+    return await client.get_answer(
+        path, parse=list[DataReleaseInfo], endpoint="PSDData_GetDataReleaseInfo"
+    )

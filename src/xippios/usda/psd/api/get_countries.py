@@ -7,20 +7,20 @@ parsed into ``models.Country``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
 
-from xippios.core import parse
+from xippios.core import Answer
 
-from xippios.usda.psd._client import SOURCE, client
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import Country
 
 __all__ = ["get_countries"]
 
 
-async def get_countries() -> list[Country]:
+async def get_countries() -> Answer[list[Country]]:
     """Call ``PSDData_GetCountries``.
 
     Returns:
-        Every PSD country with its region, in upstream order, one ``Country`` per
-        record, e.g.
+        The ``Answer``, when it was retrieved and, as its payload, every PSD country with its
+            region, in upstream order, one ``Country`` per record, e.g.
             ``Country(country_code="US", country_name="United States",
             region_code="R01", genc_code="USA")``
 
@@ -28,5 +28,6 @@ async def get_countries() -> list[Country]:
         AuthError: api.data.gov refused the key in ``DATA_GOV_API_KEY``.
         RateLimitError: api.data.gov's hourly quota for the key is spent.
     """
-    raw = await client.get_json("/api/psd/countries")
-    return parse(list[Country], raw, source=SOURCE, endpoint="PSDData_GetCountries")
+    return await client.get_answer(
+        "/api/psd/countries", parse=list[Country], endpoint="PSDData_GetCountries"
+    )

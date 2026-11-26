@@ -7,27 +7,28 @@ parsed into ``models.CommodityAttribute``. Error shapes are mapped once in
 ``xippios.usda.psd._client.classify``.
 """
 
-from xippios.core import parse
+from xippios.core import Answer
 
-from xippios.usda.psd._client import SOURCE, client
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import CommodityAttribute
 
 __all__ = ["get_commodity_attributes"]
 
 
-async def get_commodity_attributes() -> list[CommodityAttribute]:
+async def get_commodity_attributes() -> Answer[list[CommodityAttribute]]:
     """Call ``PSDData_GetCommodityAttributes``.
 
     Returns:
-        Every PSD commodity attribute with its id, in upstream order, one ``CommodityAttribute`` per
-        record, e.g.
+        The ``Answer``, when it was retrieved and, as its payload, every PSD commodity attribute
+            with its id, in upstream order, one ``CommodityAttribute`` per record, e.g.
             ``CommodityAttribute(attribute_id=28, attribute_name="Production")``
 
     Raises:
         AuthError: api.data.gov refused the key in ``DATA_GOV_API_KEY``.
         RateLimitError: api.data.gov's hourly quota for the key is spent.
     """
-    raw = await client.get_json("/api/psd/commodityAttributes")
-    return parse(
-        list[CommodityAttribute], raw, source=SOURCE, endpoint="PSDData_GetCommodityAttributes"
+    return await client.get_answer(
+        "/api/psd/commodityAttributes",
+        parse=list[CommodityAttribute],
+        endpoint="PSDData_GetCommodityAttributes",
     )

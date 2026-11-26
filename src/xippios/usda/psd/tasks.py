@@ -36,6 +36,7 @@ costs.
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from xippios.core import (
@@ -49,7 +50,7 @@ from xippios.core import (
     matches,
     sync,
 )
-from xippios.core.data_gov import NoDataForYear
+from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import SOURCE
@@ -90,6 +91,15 @@ __all__ = [
     "list_regions",
     "list_units_of_measure",
 ]
+
+MCP_INSTRUCTIONS = (
+    "USDA FAS PSD Online via xippios. "
+    "Tools are read-only. "
+    "Where list tools (usda_psd_list_*) exist, call them first to find valid values, "
+    "then query."
+)
+"""The read server's instructions for agents, which core's tool set reads from this module
+(conventions §8; sdk-core ADR-0063, decision 7)."""
 
 # A task named here is Python-only: no tool, no route; the adapters skip it (sdk-core ADR-0040,
 # decision 4).
@@ -147,8 +157,8 @@ def _absent(
 ) -> NoDataForYear:
     """PSD's empty 404 again, naming what was asked for, in the source's name.
 
-    Only ``NoDataForYear``, core's class that the gateway returns on a data path, means "no
-    data for this market year"; any other ``NotFoundError`` (the gateway's ``NOT_FOUND``)
+    Only ``NoDataForYear``, the shared package's class that the gateway returns on a data
+    path, means "no data for this market year"; any other ``NotFoundError`` (the gateway's ``NOT_FOUND``)
     is not caught and propagates as is.
     """
     return NoDataForYear(
@@ -199,16 +209,23 @@ async def get_data_async(
     try:
         if country_code is None:
             endpoint = "PSDData_GetCommodityDataByYear"
-            records = await api.get_commodity_data_by_year(commodity_code, market_year)
+            answer = await api.get_commodity_data_by_year(commodity_code, market_year)
         else:
             endpoint = "PSDData_GetCountryCommodityDataByYear"
-            records = await api.get_country_commodity_data_by_year(
+            answer = await api.get_country_commodity_data_by_year(
                 commodity_code, country_code, market_year
             )
     except NoDataForYear as exc:
         country = "every country" if country_code is None else f"country {country_code}"
         raise _absent(exc, commodity_code, country, market_year) from exc
-    meta = ResultMeta(source=SOURCE, endpoint=endpoint, vintage=_vintage(records), request=request)
+    records = answer.payload
+    meta = ResultMeta(
+        source=SOURCE,
+        endpoint=endpoint,
+        retrieved_at=answer.retrieved_at,
+        vintage=_vintage(records),
+        request=request,
+    )
     return Result(data=records, meta=meta)
 
 
@@ -240,12 +257,14 @@ async def get_world_data_async(
         "market_year": market_year,
     }
     try:
-        records = await api.get_world_commodity_data_by_year(commodity_code, market_year)
+        answer = await api.get_world_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "the world", market_year) from exc
+    records = answer.payload
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetWorldCommodityDataByYear",
+        retrieved_at=answer.retrieved_at,
         vintage=_vintage(records),
         request=request,
     )
@@ -289,10 +308,10 @@ async def get_release_dates_async(
     if country_code is not None:
         validate_country_code(country_code)
     after = None if since is None else validate_since(since)
-    releases = await api.get_data_release_info(commodity_code)
+    answer = await api.get_data_release_info(commodity_code)
     selected = [
         release
-        for release in releases
+        for release in answer.payload
         if (market_year is None or release.market_year == market_year)
         and (country_code is None or release.country_code == country_code)
         and (after is None or _release(release) > after)
@@ -300,6 +319,7 @@ async def get_release_dates_async(
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
+        retrieved_at=answer.retrieved_at,
         request={
             "commodity_code": commodity_code,
             "market_year": market_year,
@@ -410,11 +430,12 @@ async def get_balance_sheet_async(
         "market_year": market_year,
     }
     try:
-        records = await api.get_country_commodity_data_by_year(
+        answer = await api.get_country_commodity_data_by_year(
             commodity_code, country_code, market_year
         )
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, f"country {country_code}", market_year) from exc
+    records = answer.payload
     if not records:
         raise NotFoundError(
             f"PSD has no balance sheet for commodity {commodity_code}, country "
@@ -425,6 +446,7 @@ async def get_balance_sheet_async(
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetCountryCommodityDataByYear",
+        retrieved_at=answer.retrieved_at,
         vintage=_vintage(records),
         request=request,
     )
@@ -532,21 +554,25 @@ async def get_time_series_async(
         "attribute_id": list(attribute_id) if isinstance(attribute_id, Sequence) else attribute_id,
     }
     series: list[CommodityData] = []
+    retrieved: list[datetime] = []
     for market_year in range(start_year, end_year + 1):
         try:
-            records = await api.get_country_commodity_data_by_year(
+            answer = await api.get_country_commodity_data_by_year(
                 commodity_code, country_code, market_year
             )
         except NoDataForYear:
             continue  # PSD's empty 404: no data for this market year, the year is absent
+        retrieved.append(answer.retrieved_at)
         series.extend(
             record
-            for record in records
+            for record in answer.payload
             if attribute_ids is None or record.attribute_id in attribute_ids
         )
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetCountryCommodityDataByYear",
+        # the oldest answer assembled; now where every year answered PSD's empty 404 (§4)
+        retrieved_at=min(retrieved, default=datetime.now(UTC)),
         vintage=_vintage(series),
         request=request,
     )
@@ -626,9 +652,10 @@ async def get_top_countries_async(
         "exclude_groupings": exclude_groupings,
     }
     try:
-        records = await api.get_commodity_data_by_year(commodity_code, market_year)
+        answer = await api.get_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
         raise _absent(exc, commodity_code, "every country", market_year) from exc
+    records = answer.payload
     regions = country_regions() if region_code is not None else {}
     ranked = sorted(
         (
@@ -644,6 +671,7 @@ async def get_top_countries_async(
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetCommodityDataByYear",
+        retrieved_at=answer.retrieved_at,
         vintage=_vintage(ranked),
         request=request,
     )
@@ -696,13 +724,14 @@ async def get_latest_release_async(
     """
     validate_commodity_code(commodity_code)
     after = None if since is None else validate_since(since)
-    releases = await api.get_data_release_info(commodity_code)
-    latest, vintage = _latest(releases)
+    answer = await api.get_data_release_info(commodity_code)
+    latest, vintage = _latest(answer.payload)
     if after is not None and latest and _release(latest[0]) <= after:
         latest = []  # nothing newer than since; meta.vintage still names the newest release
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
+        retrieved_at=answer.retrieved_at,
         vintage=vintage,
         request={"commodity_code": commodity_code, "since": since},
     )
