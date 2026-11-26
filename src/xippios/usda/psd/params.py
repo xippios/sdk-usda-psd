@@ -6,7 +6,13 @@ lookups and argument checks need no network call. ``scripts/refresh_reference.py
 writes them through the ``api/`` wrappers, never by hand, and regenerates the
 ``AttributeId`` and ``UnitId`` enums in ``enums.py``; ``reference/README.md`` carries
 the provenance of every file. Each file keeps upstream's records verbatim, under
-upstream's field names; core's ``PackagedList.load(PACKAGE, name)`` reads one.
+upstream's field names; core's ``PackagedList.load(PACKAGE, name)`` reads one. Each list
+that names a record's codes is declared once, ``PackagedList.codes`` (sdk-core ADR-0045):
+``COMMODITIES``, ``COUNTRIES``, ``REGIONS``, ``UNITS`` and ``ATTRIBUTES``, the ``NamedBy`` of
+``models`` (sdk-core ADR-0067, decision 6), so every answer names the codes of its rows in
+``meta.names``; ``ATTRIBUTES.check`` refuses an attribute id, or a list of them, that the list
+lacks. Each refusal before a request says that nothing was sent, core's and the package's own
+(conventions §5).
 
 Refresh policy: ``/refresh-reference-data`` runs inside ``/release-prep``, and whenever
 a validation failure names a code the package lacks.
@@ -14,15 +20,21 @@ a validation failure names a code the package lacks.
 
 import functools
 import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from xippios.core import InvalidRequestError, PackagedList, UnknownCode, closest
+from xippios.core import InvalidRequestError, PackagedCodes, PackagedList, UnknownCode, closest
 
 from xippios.usda.psd._client import SOURCE
 
 __all__ = [
+    "ATTRIBUTES",
+    "COMMODITIES",
+    "COUNTRIES",
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
+    "REGIONS",
+    "UNITS",
     "attribute_names",
     "validate_attribute_id",
     "validate_commodity_code",
@@ -43,9 +55,40 @@ PACKAGED_LISTS: tuple[str, ...] = (
 )
 """Lists that ship inside the package, named as the upstream path names them.
 
-Keep in step with ``ID_LISTS`` and ``TABLES`` in ``scripts/refresh_reference.py``, which
-checks it before a refresh.
+Keep in step with the ``LISTS`` of ``scripts/refresh_reference.py``, one ``Listed`` each,
+which core's frame checks against it before a refresh (conventions §3).
 """
+
+COMMODITIES: PackagedCodes = PackagedList.load(PACKAGE, "commodities").codes(
+    "commodityCode", "commodityName", source=SOURCE
+)
+"""The packaged commodities by ``commodityCode``, each named by its ``commodityName``."""
+
+COUNTRIES: PackagedCodes = PackagedList.load(PACKAGE, "countries").codes(
+    "countryCode", "countryName", source=SOURCE
+)
+"""The packaged countries by ``countryCode``, each named by its ``countryName``. The world's
+``"00"``, the country of every record of ``get_world_data``, is no code of it, so such an
+answer says so in a note (sdk-core ADR-0067, decision 6)."""
+
+REGIONS: PackagedCodes = PackagedList.load(PACKAGE, "regions").codes(
+    "regionCode", "regionName", source=SOURCE
+)
+"""The packaged regions by ``regionCode``, each named by its ``regionName``. ``"R15"``, the
+region of four packaged countries, is no code of it, so ``list_countries`` says so in a note
+for those four."""
+
+UNITS: PackagedCodes = PackagedList.load(PACKAGE, "unitsOfMeasure").codes(
+    "unitId", "unitDescription", source=SOURCE
+)
+"""The packaged units by ``unitId``, each named by its ``unitDescription``, padded upstream: a
+refusal and ``meta.names`` show it with its runs of white space collapsed, ``"(1000 MT)"``
+(sdk-core ADR-0067, decision 2)."""
+
+ATTRIBUTES: PackagedCodes = PackagedList.load(PACKAGE, "commodityAttributes").codes(
+    "attributeId", "attributeName", source=SOURCE
+)
+"""The packaged commodity attributes by ``attributeId``, each named by its ``attributeName``."""
 
 
 @functools.cache
@@ -162,7 +205,7 @@ def validate_market_year(market_year: int) -> int:
     if isinstance(market_year, bool) or not 1000 <= market_year <= 9999:
         raise InvalidRequestError(
             f"market_year must be a four-digit year such as 2023, got {market_year!r}. "
-            "PSD has data for most commodities since 1960.",
+            "Nothing was sent. PSD has data for most commodities since 1960.",
             source=SOURCE,
         )
     return market_year
@@ -178,45 +221,51 @@ def attribute_names() -> dict[int, str]:
     return {int(code): name for code, name in codes.items()}
 
 
-def validate_attribute_id(attribute_id: int) -> int:
-    """Check an attribute id against the packaged ``commodityAttributes`` list.
+def _closest_ids(value: object, codes: Mapping[int, str]) -> list[tuple[int, str]]:
+    """Up to three packaged ids whose digits come close to ``value``'s, by core's ``closest``.
+
+    The ids are compared as text, so a stray or a missing digit finds its id: ``999`` leads to
+    ``99`` (Refined Exp.(Raw Val)), where the nearest by number would be ``195``, ``194`` and
+    ``192``, which say nothing of the id meant. Core's ``check`` asks it for a text that is no
+    number too, which it does not read, and then names the ids by name (sdk-core ADR-0045,
+    decision 4, amended 2026-11-22).
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return []
+    by_text = {str(code): name for code, name in codes.items()}
+    return [(int(code), name) for code, name in closest(str(value), by_text)]
+
+
+def validate_attribute_id[V: (int, Sequence[int])](attribute_id: V) -> V:
+    """Check an attribute id, or a list of them, against the packaged ``commodityAttributes``.
 
     The data operations take no attribute parameter; a task that keeps the records of
-    one attribute filters after the call, so an id the list lacks would select nothing.
-    The check runs before any upstream call.
+    some attributes filters after the call, so an id the list lacks would select nothing.
+    One call of core's ``check`` runs before any upstream call: it refuses the first id the
+    list lacks, a value that is no integer (``True`` is not ``1``) and an empty list, each
+    refusal saying that nothing was sent (conventions §5).
 
     Args:
         attribute_id: An integer, as ``PSDData_GetCommodityAttributes`` lists it, e.g.
-            ``28`` (Production), ``88`` (Exports), ``176`` (Ending Stocks);
-            ``enums.AttributeId`` members compare equal to them.
+            ``28`` (Production), ``88`` (Exports), ``176`` (Ending Stocks), or a list of
+            them, e.g. ``[28, 88]``; ``enums.AttributeId`` members compare equal to them.
 
     Returns:
-        The id, unchanged.
+        The id or the list, unchanged.
 
     Raises:
-        InvalidRequestError: When the id is not an integer (``True`` is not ``1``).
-        UnknownCode: When the list lacks the id, naming up to three close ids with their
+        InvalidRequestError: When an id is not an integer, naming the integer to pass for a
+            text of digits and the ids whose name holds another text, or the list is empty.
+        UnknownCode: When the list lacks an id, naming up to three close ids with their
             upstream names.
     """
-    if isinstance(attribute_id, bool) or not isinstance(attribute_id, int):
-        raise InvalidRequestError(
-            f"attribute_id must be an integer id such as 28 (Production), got "
-            f"{attribute_id!r}. {ATTRIBUTE_LIST} lists them.",
-            source=SOURCE,
-        )
-    fetched, codes = _codes("commodityAttributes", "attributeId", "attributeName")
-    if str(attribute_id) in codes:
-        return attribute_id
-    raise UnknownCode(
+    return ATTRIBUTES.check(
         "attribute_id",
         attribute_id,
-        list_name="commodityAttributes",
-        fetched=fetched,
-        closest=closest(str(attribute_id), codes),
-        reason="The data operations take no attribute; the task keeps this id's records "
+        closest=_closest_ids,
+        reason="The data operations take no attribute; the task keeps these ids' records "
         "after the call, so an id the packaged list lacks would give an empty result, and "
         f"the package refuses it. {ATTRIBUTE_LIST} lists the ids.",
-        source=SOURCE,
     )
 
 
@@ -248,7 +297,7 @@ def validate_region_code(region_code: str) -> str:
     if not isinstance(region_code, str):
         raise InvalidRequestError(
             f"region_code must be a PSD region code such as 'R04' (South America), got "
-            f"{region_code!r}. {REGION_LISTS} name the regions.",
+            f"{region_code!r}. Nothing was sent. {REGION_LISTS} name the regions.",
             source=SOURCE,
         )
     fetched, regions = _codes("countries", "countryCode", "regionCode")
@@ -309,7 +358,7 @@ def validate_since(since: str) -> tuple[int, int]:
     if not isinstance(since, str) or not RELEASE_MONTH.fullmatch(since):
         raise InvalidRequestError(
             f"since must be a PSD release month 'YYYY-MM' such as '2026-09', the form "
-            f"meta.vintage takes, got {since!r}.",
+            f"meta.vintage takes, got {since!r}. Nothing was sent.",
             source=SOURCE,
         )
     return int(since[:4]), int(since[5:])

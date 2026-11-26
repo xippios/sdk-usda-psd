@@ -44,6 +44,7 @@ from xippios.core import (
     ResultCap,
     ResultMeta,
     matches,
+    names_codes,
     sync,
 )
 from xippios.usda.fas import NoDataForYear
@@ -60,6 +61,9 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    ATTRIBUTES,
+    COMMODITIES,
+    COUNTRIES,
     PACKAGE,
     validate_attribute_id,
     validate_commodity_code,
@@ -151,6 +155,7 @@ def _absent(
     )
 
 
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_data_async(
     commodity_code: str, market_year: int, country_code: str | None = None
 ) -> Result[list[CommodityData]]:
@@ -210,6 +215,7 @@ async def get_data_async(
     return Result(data=records, meta=meta)
 
 
+@names_codes(commodity_code=COMMODITIES)
 async def get_world_data_async(
     commodity_code: str, market_year: int
 ) -> Result[list[CommodityData]]:
@@ -257,6 +263,7 @@ def _release(record: DataReleaseInfo) -> tuple[int, int]:
     return record.release_year, record.release_month
 
 
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_release_dates_async(
     commodity_code: str,
     market_year: int | None = None,
@@ -312,10 +319,11 @@ async def get_release_dates_async(
 
 
 def _attribute_ids(attribute_id: object) -> frozenset[int] | None:
-    """The ids ``get_time_series`` keeps, each checked; ``None`` keeps every attribute.
+    """The ids ``get_time_series`` keeps, checked by one call; ``None`` keeps every attribute.
 
-    An id or a sequence of ids; text is no sequence of ids here, so ``"28"`` is refused
-    as not an integer, like any other value ``validate_attribute_id`` refuses.
+    An id or a sequence of ids, checked as one list by ``validate_attribute_id``, core's
+    ``check``, which refuses the first id it refuses and an empty list; text is no sequence of
+    ids here, so ``"28"`` is refused as not an integer, naming the integer to pass.
 
     Raises:
         InvalidRequestError: An empty sequence, or a value that is not an integer id.
@@ -325,18 +333,13 @@ def _attribute_ids(attribute_id: object) -> frozenset[int] | None:
         return None
     ids: list[Any]
     if isinstance(attribute_id, Sequence) and not isinstance(attribute_id, str | bytes):
-        if not attribute_id:
-            raise InvalidRequestError(
-                "attribute_id must name at least one id, such as [28, 88] (Production, "
-                "Exports), or be omitted for every attribute; got an empty list.",
-                source=SOURCE,
-            )
         ids = list(attribute_id)
     else:
         ids = [attribute_id]
-    return frozenset(validate_attribute_id(each) for each in ids)
+    return frozenset(validate_attribute_id(ids))
 
 
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES, attribute_id=ATTRIBUTES)
 async def get_time_series_async(
     commodity_code: str,
     country_code: str,
@@ -386,15 +389,15 @@ async def get_time_series_async(
     validate_market_year(end_year)
     if start_year < SERIES_START:
         raise InvalidRequestError(
-            f"start_year must be {SERIES_START} or later, got {start_year}: the PSD API "
-            'documentation says "PSD Database has data for most commodities since year '
-            f'1960", so each year before it would spend a request on a 404.',
+            f"start_year must be {SERIES_START} or later, got {start_year}. Nothing was sent. "
+            'The PSD API documentation says "PSD Database has data for most commodities since '
+            f'year 1960", so each year before it would spend a request on a 404.',
             source=SOURCE,
         )
     if start_year > end_year:
         raise InvalidRequestError(
-            f"start_year {start_year} is after end_year {end_year}: pass the earlier market "
-            "year first, e.g. start_year=2021, end_year=2023.",
+            f"start_year {start_year} is after end_year {end_year}. Nothing was sent. Pass the "
+            "earlier market year first, e.g. start_year=2021, end_year=2023.",
             source=SOURCE,
         )
     if end_year - start_year + 1 > SERIES_MAX_YEARS:
