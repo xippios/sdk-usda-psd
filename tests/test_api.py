@@ -1,11 +1,17 @@
-"""Replay tests for the endpoint wrappers (layer 1), against recorded answers."""
+"""Replay tests for the endpoint wrappers (layer 1), against recorded answers.
+
+Each wrapper reads with core's ``get_answer`` and returns its ``Answer``: the parsed records
+as ``payload`` and the client's time of the answer as ``retrieved_at``, which the tasks put
+in ``meta.retrieved_at`` (conventions §4)."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 import respx
+from xippios.core import Answer
 from xippios.core.testing import fixture_path, load_fixture
 
 from xippios.usda.psd import api
@@ -25,11 +31,37 @@ pytestmark = pytest.mark.anyio
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.mark.parametrize(
+    ("wrapper", "case", "args"),
+    [
+        ("get_commodities", "all", ()),
+        ("get_countries", "all", ()),
+        ("get_regions", "all", ()),
+        ("get_units_of_measure", "all", ()),
+        ("get_commodity_attributes", "all", ()),
+        ("get_country_commodity_data_by_year", "wheat_us_2023", ("0410000", "US", 2023)),
+        ("get_commodity_data_by_year", "corn_all_2023", ("0440000", 2023)),
+        ("get_world_commodity_data_by_year", "soybeans_world_2023", ("2222000", 2023)),
+        ("get_data_release_info", "wheat", ("0410000",)),
+    ],
+)
+async def test_every_wrapper_returns_cores_answer_with_its_time(
+    replay_fixture: Callable[[str, str], respx.Route], wrapper: str, case: str, args: tuple[object]
+) -> None:
+    replay_fixture(wrapper, case)
+    before = datetime.now(UTC)
+    answer = await getattr(api, wrapper)(*args)
+    assert isinstance(answer, Answer)
+    assert isinstance(answer.payload, list)
+    assert answer.payload
+    assert before <= answer.retrieved_at <= datetime.now(UTC)
+
+
 async def test_get_commodities(
     replay_fixture: Callable[[str, str], respx.Route], placeholder_api_key: str
 ) -> None:
     route = replay_fixture("get_commodities", "all")
-    commodities = await api.get_commodities()
+    commodities = (await api.get_commodities()).payload
     assert len(commodities) == 63
     assert commodities[0] == Commodity(
         commodity_code="0577400", commodity_name="Almonds, Shelled Basis"
@@ -46,7 +78,7 @@ async def test_get_commodities(
 
 async def test_get_countries(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     replay_fixture("get_countries", "all")
-    countries = await api.get_countries()
+    countries = (await api.get_countries()).payload
     assert len(countries) == 251
     by_code = {c.country_code: c for c in countries}
     assert by_code["US"] == Country(
@@ -58,7 +90,7 @@ async def test_get_countries(replay_fixture: Callable[[str, str], respx.Route]) 
 
 async def test_get_regions(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     replay_fixture("get_regions", "all")
-    regions = await api.get_regions()
+    regions = (await api.get_regions()).payload
     assert len(regions) == 15
     assert regions[0] == Region(region_code="R00", region_name="World")
 
@@ -70,8 +102,8 @@ async def test_countries_name_one_region_the_regions_list_lacks(
     ``PSDData_GetRegions`` does not list. Kept as upstream sends it."""
     replay_fixture("get_countries", "all")
     replay_fixture("get_regions", "all")
-    regions = {r.region_code for r in await api.get_regions()}
-    countries = await api.get_countries()
+    regions = {r.region_code for r in (await api.get_regions()).payload}
+    countries = (await api.get_countries()).payload
     assert {c.region_code for c in countries} - regions == {"R15"}
     assert sorted(c.country_code for c in countries if c.region_code == "R15") == [
         "T3",
@@ -83,7 +115,7 @@ async def test_countries_name_one_region_the_regions_list_lacks(
 
 async def test_get_units_of_measure(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     replay_fixture("get_units_of_measure", "all")
-    units = await api.get_units_of_measure()
+    units = (await api.get_units_of_measure()).payload
     assert len(units) == 42
     assert units[7] == UnitOfMeasure(unit_id=8, unit_description="(1000 MT)           ")
     assert all(len(u.unit_description) == 20 for u in units), "upstream's padding is kept"
@@ -91,7 +123,7 @@ async def test_get_units_of_measure(replay_fixture: Callable[[str, str], respx.R
 
 async def test_get_commodity_attributes(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     replay_fixture("get_commodity_attributes", "all")
-    attributes = await api.get_commodity_attributes()
+    attributes = (await api.get_commodity_attributes()).payload
     assert len(attributes) == 85
     assert CommodityAttribute(attribute_id=28, attribute_name="Production") in attributes
     duplicates = [a.attribute_id for a in attributes if a.attribute_name == "Total Disappearance"]
@@ -102,7 +134,7 @@ async def test_models_serialise_snake_case(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     replay_fixture("get_countries", "all")
-    country = (await api.get_countries())[0]
+    country = ((await api.get_countries()).payload)[0]
     assert country.model_dump(mode="json") == {
         "country_code": "AF",
         "country_name": "Afghanistan",
@@ -115,7 +147,7 @@ async def test_get_country_commodity_data(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture("get_country_commodity_data_by_year", "wheat_us_2023")
-    records = await api.get_country_commodity_data_by_year("0410000", "US", 2023)
+    records = (await api.get_country_commodity_data_by_year("0410000", "US", 2023)).payload
     assert len(records) == 15
     assert records[2] == CommodityData(
         commodity_code="0410000",
@@ -142,7 +174,7 @@ async def test_get_commodity_data_for_every_country(
     assert recorded.response.truncated
     assert (recorded.response.original_count, recorded.response.original_bytes) == (1875, 275759)
     route = replay_fixture("get_commodity_data_by_year", "corn_all_2023")
-    records = await api.get_commodity_data_by_year("0440000", 2023)
+    records = (await api.get_commodity_data_by_year("0440000", 2023)).payload
     assert records
     assert {r.commodity_code for r in records} == {"0440000"}
     assert {r.market_year for r in records} == {2023}
@@ -155,7 +187,7 @@ async def test_get_world_commodity_data(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     route = replay_fixture("get_world_commodity_data_by_year", "soybeans_world_2023")
-    records = await api.get_world_commodity_data_by_year("2222000", 2023)
+    records = (await api.get_world_commodity_data_by_year("2222000", 2023)).payload
     assert len(records) == 13
     assert {(r.country_code, r.calendar_year, r.month) for r in records} == {("00", 2026, 10)}
     production = next(r for r in records if r.attribute_id == AttributeId.PRODUCTION)
@@ -173,7 +205,7 @@ async def test_get_data_release_info(
     assert recorded.response.truncated
     assert (recorded.response.original_count, recorded.response.original_bytes) == (7754, 837433)
     route = replay_fixture("get_data_release_info", "wheat")
-    releases = await api.get_data_release_info("0410000")
+    releases = (await api.get_data_release_info("0410000")).payload
     assert releases[0] == DataReleaseInfo(
         commodity_code="0410000",
         country_code="AF",

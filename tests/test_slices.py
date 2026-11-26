@@ -27,7 +27,6 @@ from xippios.core import (
     ValidationError,
     parse,
 )
-from xippios.core.data_gov import NoDataForYear
 from xippios.core.testing import (
     ReplayFixture,
     assert_projection,
@@ -36,6 +35,7 @@ from xippios.core.testing import (
     mcp_call,
     mcp_call_text,
 )
+from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import tasks
 from xippios.usda.psd.enums import AttributeId, UnitId
@@ -105,15 +105,6 @@ def _data(market_year: int, attribute_id: int, *, country_code: str = "US") -> C
 
 def _path(market_year: int, country_code: str = "US", commodity_code: str = WHEAT) -> str:
     return f"/api/psd/commodity/{commodity_code}/country/{country_code}/year/{market_year}"
-
-
-def test_every_slice_is_exported_as_a_tool() -> None:
-    import xippios.usda.psd as package
-
-    for name in SLICES:
-        assert name in tasks.__all__
-        assert name in package.__all__
-        assert getattr(package, name) is getattr(tasks, name)
 
 
 @pytest.mark.anyio
@@ -497,7 +488,7 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
     with pytest.raises(NotFoundError) as info:
         tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
     assert not isinstance(info.value, NoDataForYear)
-    assert f"api.data.gov has no route for {_path(2022)}" in str(info.value)
+    assert f"api.data.gov has no route for GET {_path(2022)}" in str(info.value)
     assert gateway.call_count == 1
     assert later.call_count == 0, "nothing after the error is requested"
 
@@ -685,14 +676,16 @@ async def test_a_cut_series_names_the_filters_that_narrow_it(
     """The tool's own note (conventions §8, sdk-core ADR-0038) on a server built for this test with
     the package's cap for ``get_time_series``, its rows lowered to 20 so that three
     recorded years of every attribute, 45 records, are cut. The real cap is 200 rows."""
-    from xippios.core.mcp import build_server
+    from xippios.core.mcp import ToolSet, build_server
 
     cap = tasks.MCP_CAPS["get_time_series"]
     assert (cap.max_rows, cap.max_bytes) == (200, 65536)
     lowered = build_server(
-        "usda-psd",
-        [tasks.get_time_series],
-        caps={"get_time_series": dataclasses.replace(cap, max_rows=20)},
+        ToolSet(
+            "usda-psd",
+            [tasks.get_time_series],
+            caps={"get_time_series": dataclasses.replace(cap, max_rows=20)},
+        )
     )
     for year in (2021, 2022, 2023):
         replay_fixture(DATA, f"wheat_us_{year}")

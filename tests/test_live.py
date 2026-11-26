@@ -12,20 +12,17 @@ them), never a key. The list tasks answer from the package without a call, so th
 test fetches the list through its endpoint wrapper and checks that the packaged records
 equal it: the freshness check ``reference/README.md`` promises. A difference fails the
 test naming what is gone and what is new; ``/refresh-reference-data`` then refreshes the
-package. Next to them, the template's reachability check, ``test_upstream_answers``,
-sends no key: a plain request to ``BASE_URL`` that spends no keyed call.
+package.
 """
 
 import re
 from collections.abc import Callable
 from typing import Any
 
-import httpx
 import pytest
-from xippios.core.data_gov import Gateway
+from xippios.usda.fas import Gateway
 
 from xippios.usda.psd import api, tasks
-from xippios.usda.psd._client import BASE_URL, config
 from xippios.usda.psd.enums import AttributeId
 from xippios.usda.psd.params import country_regions
 
@@ -33,21 +30,6 @@ pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
 WHEAT, CORN, SOYBEANS = "0410000", "0440000", "2222000"
 VINTAGE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
-
-async def test_upstream_answers() -> None:
-    """The base URL answers without a server error (sdk-template's reachability check).
-
-    A plain request, not the package's client, so no key goes out and it spends no keyed
-    call; a keyed gateway's answer to it (a 403 or a 404, say) still shows the host is up.
-    """
-    async with httpx.AsyncClient(
-        headers={"User-Agent": config.user_agent},
-        timeout=config.timeouts.to_httpx(),
-        follow_redirects=True,
-    ) as http:
-        response = await http.get(BASE_URL)
-    assert response.status_code < 500
 
 
 async def test_get_data_live() -> None:

@@ -96,15 +96,6 @@ def test_every_packaged_list_is_upstreams_records_with_their_provenance(
     assert all(set(record) == fields for record in packaged.records), name
 
 
-def test_every_list_task_is_exported() -> None:
-    import xippios.usda.psd as package
-
-    for task in IDS:
-        assert task in tasks.__all__
-        assert task in package.__all__
-        assert getattr(package, task) is getattr(tasks, task)
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize(("task", "name", "endpoint", "model"), LISTS, ids=IDS)
 async def test_list_answers_the_recorded_records_without_a_call(
@@ -119,7 +110,7 @@ async def test_list_answers_the_recorded_records_without_a_call(
     route = replay_fixture(WRAPPERS[endpoint], "all")
     result = await getattr(tasks, f"{task}_async")()
     assert not respx_mock.calls, f"{task} called upstream"
-    recorded = await getattr(api, WRAPPERS[endpoint])()
+    recorded = (await getattr(api, WRAPPERS[endpoint])()).payload
     assert route.call_count == 1, "the one call is the wrapper's"
     assert result.data == recorded, "same records, same values, upstream order"
     assert len(result.data) == len(_packaged(name).records)

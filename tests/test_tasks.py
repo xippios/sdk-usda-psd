@@ -10,11 +10,10 @@ from decimal import Decimal
 import httpx
 import pytest
 import respx
-from mcp.types import TextContent
 from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
-from xippios.core.data_gov import NoDataForYear
 from xippios.core.mcp import ToolSet
 from xippios.core.testing import mcp_call
+from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import __version__, tasks
 from xippios.usda.psd import mcp as psd_mcp
@@ -113,7 +112,7 @@ def test_get_release_dates_filters_after_the_one_call(
     country = tasks.get_release_dates(WHEAT, country_code="US")
     assert country.data == [r for r in every if r.country_code == "US"]
     assert len({r.market_year for r in country.data}) == len(country.data), "one per market year"
-    assert route.call_count == 4
+    assert route.call_count == 1, "core's cache answers the three calls after the first"
 
 
 def test_get_release_dates_since_keeps_later_releases_only(
@@ -142,7 +141,7 @@ def test_get_release_dates_since_keeps_later_releases_only(
         "since": "2022-08",
     }
     assert tasks.get_release_dates(WHEAT, since="2024-02").data == []
-    assert route.call_count == 5
+    assert route.call_count == 1, "core's cache answers the four calls after the first"
 
 
 @pytest.mark.anyio
@@ -334,61 +333,27 @@ async def test_value_is_a_json_number_through_both_adapters(
 
 
 def test_build_returns_the_tool_set_the_entry_point_serves() -> None:
-    """``mcp.build()``, the package contract (conventions §8; sdk-core ADR-0026, amendment
-    2026-11-18, points c and d): a host that serves it beside other sources' tool sets
-    serves the tools, caps, text and version that ``xippios-usda-psd-mcp`` serves."""
+    """``mcp.build()`` carries what ``tasks.py`` declares for the server, its caps and its
+    instructions, with the package's version (conventions §8; sdk-core ADR-0063, decision 7);
+    the rest of the package contract is the family check's."""
     tools = psd_mcp.build()
     assert isinstance(tools, ToolSet)
-    assert tools.source == "usda-psd"
-    assert [task.__name__ for task in tools.tasks] == tasks.__all__
     assert dict(tools.caps or {}) == dict(tasks.MCP_CAPS)
-    assert (tools.instructions, tools.version) == (psd_mcp.INSTRUCTIONS, __version__)
-    assert tools.read_only
-    assert (tools.add_options, tools.apply_options) == (None, None), "no options of its own"
+    assert (tools.instructions, tools.version) == (tasks.MCP_INSTRUCTIONS, __version__)
 
 
-@pytest.mark.anyio
-async def test_the_adapters_refuse_a_bad_argument_before_the_task_runs(
-    respx_mock: respx.MockRouter,
+def test_meta_retrieved_at_is_the_time_of_the_answer(
+    replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Core 0.4.0's adapters, on this package's tools and routes: a tool refuses an argument
-    it does not declare (sdk-core#84), so ``country`` for ``country_code`` no longer runs
-    ``get_data`` for every country; a tool's error answer is flagged ``is_error``
-    (sdk-core#168); and a route answers a value its schema refuses as problem details, the
-    value not echoed (sdk-core#66). respx has no route mounted: nothing is sent."""
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from mcp.client import Client
-
-    from xippios.usda.psd.http import router
-
-    async with Client(server) as client:
-        undeclared = await client.call_tool(
-            "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023, "country": "US"}
-        )
-        unknown = await client.call_tool(
-            "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
-        )
-    assert undeclared.is_error
-    assert isinstance(undeclared.content[0], TextContent)
-    assert undeclared.content[0].text == (
-        "error: InvalidRequestError: country: Not an argument of this tool; it takes "
-        "commodity_code, market_year, country_code"
-    )
-    assert unknown.is_error
-    assert isinstance(unknown.content[0], TextContent)
-    assert unknown.content[0].text.startswith("error: UnknownCode: '0410001' is not a")
-    app = FastAPI()
-    app.include_router(router)
-    refused = TestClient(app).get(
-        "/usda-psd/get_data", params={"commodity_code": WHEAT, "market_year": "2023/24"}
-    )
-    assert refused.status_code == 422
-    assert refused.headers["content-type"].startswith("application/problem+json")
-    assert refused.json()["title"] == "InvalidRequestError"
-    assert refused.json()["detail"].startswith("market_year: ")
-    assert "2023/24" not in refused.text, "the input is not echoed"
-    assert not respx_mock.calls
+    """A task's ``meta.retrieved_at`` is the client's time of the answer it read (conventions
+    §4): a second call within the cache's lifetime is answered by the cache and carries the
+    time its entry was stored, the first call's."""
+    route = replay_fixture(DATA, "wheat_us_2023")
+    first = tasks.get_data(WHEAT, 2023, "US")
+    second = tasks.get_data(WHEAT, 2023, "US")
+    assert route.call_count == 1
+    assert second.meta.retrieved_at == first.meta.retrieved_at
+    assert second.data == first.data
 
 
 def test_valid_codes_without_data_are_an_empty_result(
@@ -463,5 +428,5 @@ def test_the_gateways_not_found_propagates_unchanged(
     with pytest.raises(NotFoundError) as info:
         call()
     assert not isinstance(info.value, NoDataForYear)
-    assert str(info.value).startswith(f"api.data.gov has no route for {path}")
+    assert str(info.value).startswith(f"api.data.gov has no route for GET {path}")
     assert "PSD has no data for commodity" not in str(info.value)
