@@ -125,13 +125,13 @@ def test_unknown_commodity_code_names_the_closest() -> None:
     assert ("0410000", "Wheat") in error.closest
     assert error.message.startswith(
         "'0410001' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-28). Did you mean "
+        "2026-10-28). Nothing was sent. Did you mean "
     )
     assert "0410000 (Wheat)" in error.message
     assert error.message.endswith(
         " PSD answers unknown codes with an empty result, so the package refuses them. If "
         "upstream added it since, the packaged list is out of date."
-    ), "core 0.4.0's tail names no maintainer's command (sdk-core#111)"
+    ), "core's tail names no maintainer's command (sdk-core#111)"
 
 
 def test_a_commodity_name_leads_to_its_code() -> None:
@@ -177,8 +177,9 @@ def test_four_digit_market_years_pass(year: int) -> None:
 
 @pytest.mark.parametrize("year", [23, 999, 10000, -2023, True])
 def test_other_market_years_are_refused(year: int) -> None:
-    with pytest.raises(InvalidRequestError, match="four-digit year"):
+    with pytest.raises(InvalidRequestError, match="four-digit year") as info:
         validate_market_year(year)
+    assert f"got {year!r}. Nothing was sent. PSD has data" in info.value.message
 
 
 def test_attribute_names_are_the_packaged_list() -> None:
@@ -206,12 +207,12 @@ def test_unknown_attribute_id_names_the_closest() -> None:
         999,
         "commodityAttributes",
     )
-    assert error.closest == (("99", "Refined Exp.(Raw Val)"),)
+    assert error.closest == ((99, "Refined Exp.(Raw Val)"),), "by its digits, not by number"
     assert error.source == "usda-psd"
     assert error.message.startswith(
         "999 is not an attribute_id in the packaged commodityAttributes list (fetched "
-        "2026-10-28). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
-        "attribute"
+        "2026-10-28). Nothing was sent. Did you mean 99 (Refined Exp.(Raw Val))? The data "
+        "operations take no attribute"
     )
     assert error.message.endswith(
         "list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
@@ -222,12 +223,29 @@ def test_unknown_attribute_id_names_the_closest() -> None:
 
 @pytest.mark.parametrize("attribute_id", [True, False, "28", 28.0])
 def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -> None:
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer") as info:
-        validate_attribute_id(attribute_id)  # type: ignore[arg-type]
+    """Core's ``check`` refuses a value of another type than the list's integer ids, in its
+    words, before any request (sdk-core ADR-0045)."""
+    with pytest.raises(InvalidRequestError, match="is not an integer code") as info:
+        validate_attribute_id(attribute_id)  # type: ignore[type-var]
+    assert not isinstance(info.value, UnknownCode)
+    assert "Nothing was sent." in info.value.message
     assert info.value.message.endswith(
-        ". list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
-        "lists them."
+        " list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
+        "lists the ids."
     ), "names the task and its tool (conventions §8)"
+
+
+def test_a_list_of_attribute_ids_is_checked_by_one_call() -> None:
+    """One call of core's ``check`` with the list: the list passes as given, its first id the
+    list lacks is refused, and an empty list is refused, since it names no attribute
+    (https://github.com/xippios/sdk-core/issues/481)."""
+    ids = [28, enums.AttributeId.EXPORTS]
+    assert validate_attribute_id(ids) is ids
+    with pytest.raises(UnknownCode, match="999 is not an attribute_id"):
+        validate_attribute_id([28, 999, 998])
+    with pytest.raises(InvalidRequestError, match="attribute_id lists no code") as empty:
+        validate_attribute_id([])
+    assert "Nothing was sent." in empty.value.message
 
 
 DATA_FIXTURES = [
@@ -276,8 +294,8 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
     assert info.value.closest == ()
     assert info.value.message == (
         "'0000000x' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-28). PSD answers unknown codes with an empty result, so the package refuses "
-        "them. If upstream added it since, the packaged list is out of date."
+        "2026-10-28). Nothing was sent. PSD answers unknown codes with an empty result, so the "
+        "package refuses them. If upstream added it since, the packaged list is out of date."
     )
 
 
@@ -339,8 +357,9 @@ def test_a_release_month_reads_as_year_and_month(since: str, month: tuple[int, i
     "since", ["2026-13", "2026-00", "2026-9", "2026-09-01", "\uff12\uff10\uff12\uff16-09", ""]
 )
 def test_other_release_months_are_refused(since: str) -> None:
-    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'"):
+    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'") as info:
         validate_since(since)
+    assert info.value.message.endswith(f"got {since!r}. Nothing was sent.")
 
 
 def test_the_world_region_is_refused_with_a_hint() -> None:
@@ -367,6 +386,7 @@ def test_a_region_code_that_is_not_text_is_refused(region_code: object) -> None:
     with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code") as info:
         validate_region_code(region_code)  # type: ignore[arg-type]
     assert not isinstance(info.value, UnknownCode)
+    assert f"got {region_code!r}. Nothing was sent. " in info.value.message
     assert info.value.message.endswith(
         ". list_regions and list_countries (over MCP, the tools usda_psd_list_regions and "
         "usda_psd_list_countries) name the regions."

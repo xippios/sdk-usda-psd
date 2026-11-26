@@ -48,6 +48,16 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
     assert result.meta.vintage == "2026-07"
     assert result.meta.published_at is None
     assert data.calls.last.request.headers["Accept"] == "application/json"
+    names = result.meta.names
+    assert set(names) == {"commodity_code", "country_code", "attribute_id", "unit_id"}
+    assert (names["commodity_code"], names["country_code"]) == (
+        {WHEAT: "Wheat"},
+        {"US": "United States"},
+    )
+    assert names["attribute_id"]["28"] == "Production"
+    assert len(names["attribute_id"]) == 15, "every attribute of the rows"
+    assert names["unit_id"]["8"] == "(1000 MT)", "upstream's padding collapsed"
+    assert result.meta.notes == [], "every code of the rows is in its packaged list"
 
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -63,6 +73,8 @@ def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.R
     assert len({(r.calendar_year, r.month) for r in result.data}) > 1
     assert result.meta.vintage == "2026-10"
     assert result.meta.published_at is None
+    assert set(result.meta.names["country_code"]) == {r.country_code for r in result.data}
+    assert result.meta.names["country_code"]["AR"] == "Argentina"
 
 
 def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -76,6 +88,12 @@ def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> No
     assert {(r.calendar_year, r.month) for r in result.data} == {(2026, 10)}
     assert result.meta.vintage == "2026-10"
     assert result.meta.published_at is None
+    assert "country_code" not in result.meta.names, "the world's 00 is no packaged country"
+    assert result.meta.names["commodity_code"] == {WHEAT: "Wheat"}
+    assert result.meta.notes == [
+        "The packaged countries list (fetched 2026-10-28) holds no name for country_code 00 "
+        "of this answer, so meta.names leaves it out."
+    ]
 
 
 def test_vintage_is_none_for_an_empty_answer() -> None:
@@ -92,6 +110,8 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
     assert result.meta.published_at is None
     assert result.meta.vintage is None
     assert route.call_count == 1
+    assert result.meta.names["commodity_code"] == {WHEAT: "Wheat"}
+    assert set(result.meta.names["country_code"]) == {r.country_code for r in result.data}
 
 
 def test_get_release_dates_filters_after_the_one_call(
@@ -302,7 +322,9 @@ async def test_value_is_a_json_number_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """``Decimal`` in Python, a JSON number on the wire, never a string (sdk-core ADR-0031,
-    decision 1)."""
+    decision 1): a JSON integer where upstream sends no fractional digit, else a JSON float,
+    as core reads the decimal's exponent (sdk-core ADR-0067, decision 10). PSD's recorded
+    answers carry four fractional digits, ``222218.0000``, so their values stay floats."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -314,7 +336,12 @@ async def test_value_is_a_json_number_through_both_adapters(
     )
     values = [row["value"] for row in payload["data"]]
     assert values
-    assert all(isinstance(value, float) for value in values)
+    recorded = tasks.get_world_data(WHEAT, 2023).data
+    exponents = [record.value.as_tuple().exponent for record in recorded]
+    assert [type(value) for value in values] == [
+        int if isinstance(exponent, int) and exponent >= 0 else float for exponent in exponents
+    ]
+    assert {type(value) for value in values} == {float}, "upstream sends fractional digits"
     app = FastAPI()
     app.include_router(router)
     http = TestClient(app)
@@ -393,6 +420,10 @@ def test_valid_codes_without_data_are_an_empty_result(
         "market_year": 2023,
         "country_code": "BD",
     }
+    assert result.meta.names == {
+        "commodity_code": {WHEAT: "Wheat"},
+        "country_code": {"BD": "Bermuda"},
+    }, "an answer without rows names what was asked for"
     assert route.call_count == 1
 
 

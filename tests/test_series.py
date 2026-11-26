@@ -82,6 +82,12 @@ def test_get_time_series_one_request_per_year_in_order(
     }
     assert result.meta.vintage == "2026-07"
     assert result.meta.published_at is None
+    assert result.meta.names == {
+        "commodity_code": {WHEAT: "Wheat"},
+        "country_code": {"US": "United States"},
+        "attribute_id": {"28": "Production"},
+        "unit_id": {"8": "(1000 MT)"},
+    }, "the codes asked for and those of the rows"
 
 
 def test_time_series_leaves_a_year_without_data_out(
@@ -270,12 +276,13 @@ def test_time_series_checks_every_attribute_id_before_any_request(
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="999 is not an attribute_id") as unknown:
         tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[28, 999])
-    assert unknown.value.closest == (("99", "Refined Exp.(Raw Val)"),)
-    with pytest.raises(InvalidRequestError, match="attribute_id must name at least one id"):
+    assert unknown.value.closest == ((99, "Refined Exp.(Raw Val)"),)
+    with pytest.raises(InvalidRequestError, match="attribute_id lists no code") as empty:
         tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[])
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
+    assert "Nothing was sent." in empty.value.message
+    with pytest.raises(InvalidRequestError, match="True is not an integer code"):
         tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[28, True])
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
+    with pytest.raises(InvalidRequestError, match="Pass it as the integer 28"):
         tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id="28")  # type: ignore[arg-type]
     assert not respx_mock.calls
 
@@ -358,15 +365,18 @@ def test_the_series_checks_its_arguments_before_any_request(respx_mock: respx.Mo
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="999 is not an attribute_id") as unknown:
         tasks.get_time_series(WHEAT, "US", 2021, 2023, 999)
-    assert unknown.value.closest == (("99", "Refined Exp.(Raw Val)"),)
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer"):
+    assert unknown.value.closest == ((99, "Refined Exp.(Raw Val)"),)
+    with pytest.raises(InvalidRequestError, match="True is not an integer code"):
         tasks.get_time_series(WHEAT, "US", 2021, 2023, True)
-    with pytest.raises(InvalidRequestError, match="start_year 2023 is after end_year 2021"):
+    with pytest.raises(
+        InvalidRequestError, match="start_year 2023 is after end_year 2021. Nothing was sent."
+    ):
         tasks.get_time_series(WHEAT, "US", 2023, 2021, 28)
     with pytest.raises(InvalidRequestError, match="four-digit year"):
         tasks.get_time_series(WHEAT, "US", 21, 2023, 28)
     with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later") as early:
         tasks.get_time_series(WHEAT, "US", 1959, 2023, 28)
+    assert "got 1959. Nothing was sent." in str(early.value)
     assert "PSD Database has data for most commodities since year 1960" in str(early.value)
     with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later"):
         tasks.get_time_series(WHEAT, "US", 1900, 1900, 28)

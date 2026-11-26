@@ -180,6 +180,7 @@ def test_list_countries_by_region(respx_mock: respx.MockRouter) -> None:
     assert [c.country_code for c in north_america.data] == ["CA", "GL", "MX", "SB", "US"]
     assert north_america.data == [c for c in every if c.region_code == "R01"], "upstream order"
     assert north_america.meta.request == {"region_code": "R01"}
+    assert north_america.meta.names == {"region_code": {"R01": "North America"}}
     by_region = {
         code: tasks.list_countries(region_code=code).data for code in {c.region_code for c in every}
     }
@@ -202,6 +203,11 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     assert {c.genc_code for c in r15.data} == {None}
     assert "R15" not in {r.region_code for r in tasks.list_regions().data}
     assert r15.meta.request == {"region_code": "R15"}
+    assert r15.meta.names == {}, "the packaged regions list holds no name for R15"
+    assert r15.meta.notes == [
+        "The packaged regions list (fetched 2026-10-28) holds no name for region_code R15 of "
+        "this answer, so meta.names leaves it out."
+    ]
     assert not respx_mock.calls
 
 
