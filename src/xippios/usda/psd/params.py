@@ -340,7 +340,7 @@ RELEASE_MONTH = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])")
 def validate_since(since: str) -> tuple[int, int]:
     """Check a release month ``"YYYY-MM"`` and return it as ``(year, month)``.
 
-    The form ``meta.vintage`` of the data tasks and of ``get_latest_release`` takes, so a
+    The form ``meta.vintage`` of the data tasks takes, so a
     stored vintage passes as it is. Nothing else is read as a month: no day, no other
     separator, no unpadded month.
 
