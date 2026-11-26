@@ -57,48 +57,23 @@ list_commodities(search="soybean").data  # meal, oil and oilseed, each also "(Lo
 `None`, since upstream gives these lists no version. Over MCP `usda_psd_list_countries`
 returns all 251 countries through a cap of its own.
 
-The slices answer the common questions from the same operations. They select, order or
-pivot upstream's records and change none: no derived totals, no unit conversion, no gap
-filling.
+`get_time_series` puts together one country's records of a commodity over a range of
+market years, one request per market year, and changes none: no derived totals, no unit
+conversion, no gap filling.
 
 ```python
-from xippios.usda.psd import (
-    get_balance_sheet,
-    get_latest_release,
-    get_time_series,
-    get_top_countries,
-)
+from xippios.usda.psd import get_time_series
 from xippios.usda.psd.enums import AttributeId
-
-sheet = get_balance_sheet("0410000", "US", 2023).data  # wheat, United States, one request
-list(sheet.attributes)  # ["Area Harvested", "Beginning Stocks", "Production", ...], 15
-sheet.attributes["Production"]  # attribute_id=28, unit_id=8 (1000 MT), value=Decimal("49095.0")
 
 series = get_time_series("0440000", "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION)
 [(r.market_year, r.value) for r in series.data]  # 3 requests; one record per year with data
 get_time_series("0440000", "US", 2023, 2023, attribute_id=[28, 88])  # production and exports
 get_time_series("0440000", "US", 2023, 2023)  # every attribute of 2023
-
-top = get_top_countries("2222000", 2023, AttributeId.PRODUCTION, n=5)  # soybeans, one request
-[r.country_code for r in top.data]  # largest first; "E4" (EU) and aggregates rank too
-get_top_countries("2222000", 2023, 28, n=5, region_code="R04", exclude_groupings=True)
-
-latest = get_latest_release("0410000")  # the countries and market years of the newest release
-latest.meta.vintage  # "2026-10", comparable with get_data's meta.vintage
-get_latest_release("0410000", since=latest.meta.vintage).data  # [] until a newer release
 ```
 
-`get_balance_sheet` keys each entry by the attribute's upstream name; an id whose name
-upstream gives to several ids (`"Total Disappearance"` is 126 and 173) always carries the
-id, `"Total Disappearance (126)"`, and each entry keeps its own `unit_id`.
-`get_time_series` starts at 1960 at the earliest, spans at most 100 market years per
-call, spends one request per market year,
+`get_time_series` starts at 1960 at the earliest, spends one request per market year,
 leaves a year without data out, and counts against the hourly quota like every other
 request; without `attribute_id` it keeps every attribute.
-`get_top_countries` ranks PSD's groupings (`E4` European Union, `T3` Africa, NEC, ...)
-alongside countries unless `exclude_groupings=True`, and `region_code` ranks one PSD
-region. `get_latest_release(..., since=...)` answers an empty list while nothing newer
-than `since` was released, `meta.vintage` still naming the newest release.
 
 ## MCP
 
@@ -126,6 +101,7 @@ instead of stdio.
 | `PSDData_GetCountryCommodityDataByYear` (`commodity/{commodityCode}/country/{countryCode}/year/{marketYear}`) | `get_data(commodity_code, market_year, country_code)` | `usda_psd_get_data` | alpha |
 | `PSDData_GetCommodityDataByYear` (`commodity/{commodityCode}/country/all/year/{marketYear}`) | `get_data(commodity_code, market_year)` | `usda_psd_get_data` | alpha |
 | `PSDData_GetWorldCommodityDataByYear` (`commodity/{commodityCode}/world/year/{marketYear}`) | `get_world_data(commodity_code, market_year)` | `usda_psd_get_world_data` | alpha |
+| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, start_year, end_year, attribute_id=None)` | `usda_psd_get_time_series` | alpha |
 | `PSDData_GetDataReleaseInfo` (`commodity/{commodityCode}/dataReleaseDates`) | `get_release_dates(commodity_code, market_year, country_code, since)` | `usda_psd_get_release_dates` | alpha |
 | `PSDData_GetCommodities` (`commodities`) | `list_commodities(search)` | `usda_psd_list_commodities` | packaged; `list_*` task |
 | `PSDData_GetCountries` (`countries`) | `list_countries(region_code, search)` | `usda_psd_list_countries` | packaged; `list_*` task |
@@ -133,18 +109,12 @@ instead of stdio.
 | `PSDData_GetUnitsOfMeasure` (`unitsOfMeasure`) | `list_units_of_measure()` | `usda_psd_list_units_of_measure` | packaged; `list_*` task |
 | `PSDData_GetCommodityAttributes` (`commodityAttributes`) | `list_commodity_attributes(search)` | `usda_psd_list_commodity_attributes` | packaged; `list_*` task |
 
-The slices: task-shaped functions over the operations above, no new endpoint.
-
-| Upstream operation | Task function | MCP tool | Example | Status |
-| --- | --- | --- | --- | --- |
-| `PSDData_GetCountryCommodityDataByYear`, one request | `get_balance_sheet(commodity_code, country_code, market_year)` | `usda_psd_get_balance_sheet` | `get_balance_sheet("0410000", "US", 2023)`: wheat US 2023 as one record, 15 attributes | alpha |
-| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, start_year, end_year, attribute_id=None)` | `usda_psd_get_time_series` | `get_time_series("0440000", "US", 2021, 2023, attribute_id=28)`: US corn production, three years | alpha |
-| `PSDData_GetCommodityDataByYear`, one request | `get_top_countries(commodity_code, market_year, attribute_id, n=10, region_code=None, exclude_groupings=False)` | `usda_psd_get_top_countries` | `get_top_countries("2222000", 2023, 28, n=5)`: the five largest soybean producers | alpha |
-| `PSDData_GetDataReleaseInfo`, one request | `get_latest_release(commodity_code, since=None)` | `usda_psd_get_latest_release` | `get_latest_release("0410000")`: what wheat's newest release revised; MCP returns at most 200 rows, a release that adds a market year and revises earlier ones can exceed that (the September 2026 wheat answer held between 130 and 276), `get_release_dates(commodity_code, market_year=..., country_code=..., since=...)` returns any part in full | alpha |
-
-0.4.0 covers the same twelve tasks as 0.3.0 and requires xippios-core 0.4.x (`~=0.4.0`);
-0.3.0 does not work with core 0.4.0. Alpha until 1.0: the public surface may change in a
-minor version (conventions §12); `CHANGELOG.md` lists every change.
+0.5.0 covers nine tasks and requires xippios-core 0.5.x (`~=0.5.0`) and xippios-usda-fas
+0.1.x (`~=0.1.0`); the ranking `get_top_countries`, the pivot `get_balance_sheet` and the
+pick of the newest release `get_latest_release` of 0.4.0 left it, since a source package
+answers upstream's records and none of them, and 0.4.0 does not work with core 0.5.0.
+Alpha until 1.0: the public surface may change in a minor version (conventions §12);
+`CHANGELOG.md` lists every change.
 
 Every request counts against api.data.gov's quota of 1,000 requests per hour per key,
 shared by every package using the same `DATA_GOV_API_KEY`; the `list_*` tasks spend none.

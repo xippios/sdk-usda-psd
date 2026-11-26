@@ -13,10 +13,7 @@ descriptions padded with spaces to 20 characters). `commodityAttributes` and
 `unitsOfMeasure`, lists of integer ids, make `enums.AttributeId` and `enums.UnitId`; the
 commodity, country and region codes stay tables. The `list_*` tasks answer from these
 files without an upstream call, and `params` checks codes and attribute ids against them.
-`get_balance_sheet` keys its entries by the names in `commodityAttributes.json`, with the
-id where the list gives one name to several ids, so a refresh that renames an attribute,
-or adds an id under an existing name, changes those keys: a breaking change, recorded in
-`CHANGELOG.md` when the lists are refreshed (conventions §12). The nightly live tests
+The nightly live tests
 compare each packaged list with the live one (`test_packaged_list_equals_the_live_list`
 in `tests/test_live.py`, one keyed call per list) and name the records that are gone and
 those that are new: the signal to run `/refresh-reference-data`.

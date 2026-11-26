@@ -24,7 +24,6 @@ __all__ = [
     "COUNTRY_HINTS",
     "PACKAGED_LISTS",
     "attribute_names",
-    "country_regions",
     "validate_attribute_id",
     "validate_commodity_code",
     "validate_country_code",
@@ -221,26 +220,15 @@ def validate_attribute_id(attribute_id: int) -> int:
     )
 
 
-def country_regions() -> dict[str, str]:
-    """``{countryCode: regionCode}`` of the packaged ``countries`` list, in upstream order.
-
-    PSD's data records carry no region; a task that selects by region maps each record's
-    ``countryCode`` through this. Four countries sit in ``"R15"``, which the packaged
-    ``regions`` list lacks.
-    """
-    _, regions = _codes("countries", "countryCode", "regionCode")
-    return dict(regions)
-
-
 def validate_region_code(region_code: str) -> str:
     """Check a region code against the ``regionCode`` values the packaged countries carry.
 
-    The data operations take no region: a task that keeps one region's countries maps
-    each record through the packaged ``countries`` list after the call, so a code no
-    country carries would select nothing. The check runs before any upstream call.
-    ``"R15"`` passes, carried by four countries although ``PSDData_GetRegions`` lacks
-    it; ``"R00"`` (World), a region of the packaged ``regions`` list that no country
-    belongs to, is refused with a hint instead of close codes.
+    ``list_countries`` keeps the packaged countries whose ``regionCode`` equals it, so a
+    code no country carries would list none, and it is refused instead (the maintainer's
+    decision of 2026-11-26, https://github.com/xippios/sdk-usda-psd/issues/30). ``"R15"``
+    passes, carried by four countries although ``PSDData_GetRegions`` lacks it; ``"R00"``
+    (World), a region of the packaged ``regions`` list that no country belongs to, is
+    refused with a hint instead of close codes.
 
     Args:
         region_code: A region code as ``list_countries`` gives it, e.g. ``"R01"`` (North
@@ -278,7 +266,7 @@ def validate_region_code(region_code: str) -> str:
         f"{region_code} ({names[region_code]}) is in list_regions, but no country belongs "
         "to it: the world total is get_world_data's (over MCP, the tool "
         "usda_psd_get_world_data), and region_code takes a region countries belong to, as "
-        "list_countries gives it, e.g. R04 (South America); omit it to rank every country."
+        "list_countries gives it, e.g. R04 (South America); omit it for every country."
         if region_code in names
         else None
     )
@@ -289,9 +277,9 @@ def validate_region_code(region_code: str) -> str:
         fetched=fetched,
         closest=() if hint else closest(region_code, known),
         hint=hint,
-        reason="The data operations take no region; the task keeps the countries whose "
-        "packaged regionCode equals it, so a code no country carries would rank nothing, "
-        f"and the package refuses it. {REGION_LISTS} name the regions.",
+        reason="list_countries keeps the countries whose packaged regionCode equals it, so "
+        "a code no country carries would list none, and the package refuses it. "
+        f"{REGION_LISTS} name the regions.",
         source=SOURCE,
     )
 
