@@ -140,10 +140,11 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
     replay_fixture: Callable[[str, str], respx.Route],
     respx_mock: respx.MockRouter,
 ) -> None:
-    """NOT RECORDED: api.data.gov's documented ``NOT_FOUND`` body at the 2022 path, composed in
-    the shape the gateway documents (conventions §10, kind 2). It says the request is wrong, not that the year is empty, so the series stops there instead of
-    passing the year over, names the market years answered before it and returns nothing
-    (core's ``fetch_periods``; https://github.com/xippios/sdk-usda-psd/issues/32)."""
+    """NOT RECORDED: api.data.gov's documented ``NOT_FOUND`` body at the 2022 path, composed in the
+    shape the gateway documents (conventions §10, kind 2). It says the request is wrong, not
+    that the year is empty, so the series stops there instead of passing the year over,
+    names the market years answered before it and returns nothing (core's ``fetch_periods``;
+    https://github.com/xippios/sdk-usda-psd/issues/32)."""
     replay_fixture(DATA, "wheat_us_2021")
     later = replay_fixture(DATA, "wheat_us_2023")
     gateway = respx_mock.get(f"https://api.fas.usda.gov{_path(2022)}").mock(

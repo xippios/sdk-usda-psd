@@ -13,10 +13,10 @@ descriptions padded with spaces to 20 characters). `commodityAttributes` and
 `unitsOfMeasure`, lists of integer ids, make `enums.AttributeId` and `enums.UnitId`; the
 commodity, country and region codes stay tables. The `list_*` tasks answer from these
 files without an upstream call, and `params` checks codes and attribute ids against them.
-The nightly live tests
-compare each packaged list with the live one (`test_packaged_list_equals_the_live_list`
-in `tests/test_live.py`, one keyed call per list) and name the records that are gone and
-those that are new: the signal to run `/refresh-reference-data`.
+Core's nightly comparison of the packaged lists, which `tests/test_live.py` collects with
+`LIVE_LISTS`, compares each packaged list with the live one, one keyed call per list, and
+names the records that are gone and those that are new: the signal to run
+`/refresh-reference-data`.
 
 | File | Origin | Fetched |
 | --- | --- | --- |

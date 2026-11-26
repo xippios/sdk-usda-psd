@@ -18,7 +18,7 @@ from xippios.core.refresh import Lists
 from xippios.core.testing import load_fixture
 from xippios.usda.fas import REMAINING_HEADER
 
-from xippios.usda.psd import enums
+from xippios.usda.psd import api, enums
 from xippios.usda.psd._client import client
 from xippios.usda.psd.models import (
     Commodity,
@@ -29,8 +29,13 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    ATTRIBUTES,
+    COMMODITIES,
+    COUNTRIES,
     PACKAGE,
     PACKAGED_LISTS,
+    REGIONS,
+    UNITS,
     attribute_names,
     validate_attribute_id,
     validate_commodity_code,
@@ -133,6 +138,35 @@ def test_the_refresh_script_declares_one_lists_on_cores_frame() -> None:
         assert operation == PackagedList.load(PACKAGE, name).endpoint, name
         assert _endpoint_literals(fetch) == [operation], name
         assert (fetch.__doc__ or "").splitlines()[0] == f"Call ``{operation}``.", name
+
+
+def test_each_list_is_fetched_by_its_wrapper_itself() -> None:
+    """Core's reference frame and its nightly comparison take a wrapper's ``Answer`` and read
+    its payload (conventions §3, §10): each ``Listed`` of the script and each entry of
+    ``LIVE_LISTS`` in ``tests/test_live.py`` fetches by the ``api/`` wrapper itself, the same
+    one for a list, and declares the packaged list that ``params`` names the codes with."""
+    lists = {listed.name: listed.fetch for listed in _refresh_script().LISTS.lists}
+    spec = importlib.util.spec_from_file_location(
+        "live_lists", Path(__file__).parent / "test_live.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    declared = {
+        "commodities": COMMODITIES,
+        "countries": COUNTRIES,
+        "regions": REGIONS,
+        "unitsOfMeasure": UNITS,
+        "commodityAttributes": ATTRIBUTES,
+    }
+    assert set(lists) == set(live.LIVE_LISTS) == set(SOURCES)
+    assert live.NO_LIVE_LIST == {}
+    for name, (_, wrapper, _) in SOURCES.items():
+        assert lists[name] is getattr(api, wrapper), name
+        codes, fetch = live.LIVE_LISTS[name]
+        assert fetch is getattr(api, wrapper), name
+        assert codes is declared[name], name
 
 
 def test_the_provenance_table_takes_the_frames_header() -> None:
