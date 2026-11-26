@@ -38,5 +38,6 @@ tests/
   test_refresh_upstream.py  the snapshot script's own pages, note and paragraph on the kit
                    of the FAS portal, offline
 docs/
-  upstream/        also openapi/, the PSD parts of the portal's and the backend's documents
+  upstream/        also openapi/, the PSD parts of the portal's and the backend's documents,
+                   and OBSERVED.md, the notes by hand on what PSD does but never documents
 ```
