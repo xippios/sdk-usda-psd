@@ -194,7 +194,7 @@ def _no_data(exc: NoDataForYear) -> str:
 
 @names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_data_async(
-    commodity_code: str, market_year: int, country_code: str | None = None
+    commodity_code: str, market_year: int, *, country_code: str | None = None
 ) -> Result[list[CommodityData]]:
     """PSD supply and distribution forecasts for one commodity and market year, by country.
 
@@ -204,10 +204,11 @@ async def get_data_async(
     Codes and the year are checked before any request, an unknown code refused naming the
     closest ones. Each record's
     ``calendar_year`` and ``month`` name the PSD release that last revised it;
-    ``meta.vintage`` is the latest of them (``"2026-07"``), and ``meta.published_at`` stays
-    empty, since PSD gives no day. An empty list means PSD holds no records for that
-    combination; a market year PSD holds no data for, or has not released, answers the
-    empty list with a note, and ``get_release_dates`` names the market years that hold data.
+    ``meta.vintage`` is the latest of them (``"2026-07"``), empty where no record names one,
+    and ``meta.published_at`` stays empty, since PSD gives no day. An empty list means PSD
+    holds no records for that combination; a market year PSD holds no data for, or has not
+    released, answers the empty list with a note, and ``get_release_dates`` names the market
+    years that hold data.
     Every country at once is up to about 1,900 rows.
 
     Args:
@@ -263,8 +264,8 @@ async def get_world_data_async(
     which ``enums.AttributeId`` and ``enums.UnitId`` name; ``value`` is in that unit.
     ``meta.vintage`` is the PSD release that last revised the figures, as upstream names
     it (``"2026-10"``), the latest release of any country for this commodity and market
-    year (in the whole answers recorded on 2026-10-23, commit ``07b88ad``);
-    ``meta.published_at`` stays empty, since PSD gives no day. The world's ``"00"`` is no
+    year, empty where no record names one; ``meta.published_at`` stays empty, since PSD
+    gives no day. The world's ``"00"`` is no
     code of the packaged countries list, so a note says that ``meta.names`` leaves it out.
     The code and the year are checked before any request; a market year PSD holds no data
     for, or has not released, answers the empty list with a note, and ``get_release_dates``
@@ -311,6 +312,7 @@ def _release(record: DataReleaseInfo) -> tuple[int, int]:
 @names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_release_dates_async(
     commodity_code: str,
+    *,
     market_year: int | None = None,
     country_code: str | None = None,
     since: str | None = None,
@@ -323,6 +325,9 @@ async def get_release_dates_async(
     Upstream answers every country and every market year since 1960 at once (7,754
     records for wheat), ordered by market year; ``market_year``, ``country_code`` and
     ``since`` keep only the matching records, after the one call, in upstream's order.
+    ``meta.vintage`` is the newest release of the whole list, ``"YYYY-MM"``, also where the
+    filters keep no record, so the next poll passes it as ``since``; it is empty only where
+    PSD lists no release for the commodity, since no record then names one.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -349,10 +354,13 @@ async def get_release_dates_async(
         if (market_year is None or release.market_year == market_year)
         and (country_code is None or release.country_code == country_code)
     ]
+    newest = max((_release(release) for release in answer.payload), default=None)
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
         retrieved_at=answer.retrieved_at,
+        # the newest release of the whole list, filtered or not, the marker of the next poll
+        vintage=None if newest is None else f"{newest[0]:04d}-{newest[1]:02d}",
         request={
             "commodity_code": commodity_code,
             "market_year": market_year,
@@ -455,6 +463,7 @@ def _years_note(
 async def get_time_series_async(
     commodity_code: str,
     country_code: str,
+    *,
     start_year: int,
     end_year: int,
     attribute_id: int | Sequence[int] | None = None,
@@ -466,11 +475,11 @@ async def get_time_series_async(
     api.data.gov's hourly quota: at most 100 market years in Python and over HTTP and 24 over
     MCP, unless ``--series-years`` sets another, so one call sends at most 100 requests, 400
     attempts with retries, and 24 and 96 over MCP. The records of the attributes asked for,
-    or all, are kept as upstream sent them, by market year and within a year in upstream's
-    order. ``meta.notes`` names each market year answered with its count of rows and each
-    passed over, one PSD holds no data for or whose answer has no record kept; no gap is
-    filled. Any other error stops the call and returns nothing. ``meta.vintage`` is the
-    latest release of the records; ``meta.published_at`` stays empty.
+    or all, are kept as upstream sent them, by market year, then in upstream's order.
+    ``meta.notes`` names each market year answered with its count of rows and each passed
+    over, one PSD holds no data for or whose answer has no record kept; no gap is filled.
+    Any other error stops the call and returns nothing. ``meta.vintage`` is the latest
+    release of the records, empty where none is kept; ``meta.published_at`` stays empty.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -492,8 +501,8 @@ async def get_time_series_async(
     validate_commodity_code(commodity_code)
     validate_country_code(country_code)
     attribute_ids = _attribute_ids(attribute_id)
-    validate_market_year(start_year)
-    validate_market_year(end_year)
+    validate_market_year(start_year, name="start_year")
+    validate_market_year(end_year, name="end_year")
     _series_range(start_year, end_year)
     request: dict[str, Any] = {
         "commodity_code": commodity_code,
@@ -532,7 +541,7 @@ async def get_time_series_async(
     return Result(data=series, meta=meta)
 
 
-async def list_commodities_async(search: str | None = None) -> Result[list[Commodity]]:
+async def list_commodities_async(*, search: str | None = None) -> Result[list[Commodity]]:
     """List PSD's commodities with their codes, the values commodity_code takes.
 
     Answered from ``PSDData_GetCommodities`` as packaged with this version
@@ -554,7 +563,7 @@ async def list_commodities_async(search: str | None = None) -> Result[list[Commo
 
 
 async def list_countries_async(
-    region_code: str | None = None, search: str | None = None
+    *, region_code: str | None = None, search: str | None = None
 ) -> Result[list[Country]]:
     """List PSD's countries with their codes and regions, the values country_code takes.
 
@@ -625,7 +634,7 @@ async def list_units_of_measure_async() -> Result[list[UnitOfMeasure]]:
 
 
 async def list_commodity_attributes_async(
-    search: str | None = None,
+    *, search: str | None = None
 ) -> Result[list[CommodityAttribute]]:
     """List PSD's commodity attributes with their ids, the attribute_id of every data record.
 

@@ -44,7 +44,7 @@ VINTAGE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 async def test_get_data_live() -> None:
-    result = await tasks.get_data_async(WHEAT, 2023, "US")
+    result = await tasks.get_data_async(WHEAT, 2023, country_code="US")
     assert result.data
     assert {r.country_code for r in result.data} == {"US"}
     assert any(r.attribute_id == AttributeId.PRODUCTION for r in result.data)
@@ -72,7 +72,7 @@ async def test_get_release_dates_live() -> None:
 
 async def test_get_time_series_live(record_property: Callable[[str, object], None]) -> None:
     result = await tasks.get_time_series_async(
-        CORN, "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION
+        CORN, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.PRODUCTION
     )
     assert [r.market_year for r in result.data] == [2021, 2022, 2023]
     assert {(r.country_code, r.attribute_id) for r in result.data} == {("US", 28)}
@@ -88,7 +88,9 @@ async def test_get_time_series_of_several_attributes_live() -> None:
     """``attribute_id`` as a list, one market year, which core's cache answers where the series
     above read it within its lifetime."""
     ids = [AttributeId.PRODUCTION, AttributeId.EXPORTS]
-    result = await tasks.get_time_series_async(CORN, "US", 2023, 2023, attribute_id=ids)
+    result = await tasks.get_time_series_async(
+        CORN, "US", start_year=2023, end_year=2023, attribute_id=ids
+    )
     assert {(r.country_code, r.market_year) for r in result.data} == {("US", 2023)}
     assert {r.attribute_id for r in result.data} == {28, 88}
     assert result.meta.request["attribute_id"] == [28, 88]

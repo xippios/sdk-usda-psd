@@ -3,6 +3,7 @@
 ``/add-endpoint`` and ``/record-fixture`` add them.
 """
 
+import inspect
 import re
 from collections.abc import Callable
 from decimal import Decimal
@@ -12,7 +13,7 @@ import pytest
 import respx
 from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
 from xippios.core.mcp import ToolSet
-from xippios.core.testing import mcp_call
+from xippios.core.testing import mcp_call, mcp_call_text
 from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import __version__, tasks
@@ -41,7 +42,7 @@ def no_data(path: str) -> str:
 
 def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
     data = replay_fixture(DATA, "wheat_us_2023")
-    result = tasks.get_data(WHEAT, 2023, "US")
+    result = tasks.get_data(WHEAT, 2023, country_code="US")
     assert data.call_count == 1, "one call: vintage comes from the records"
     assert len(result.data) == 15
     production = next(r for r in result.data if r.attribute_id == AttributeId.PRODUCTION)
@@ -117,10 +118,42 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
     assert result.meta.endpoint == "PSDData_GetDataReleaseInfo"
     assert result.meta.request == {"commodity_code": WHEAT}, "filters left None are left out"
     assert result.meta.published_at is None
-    assert result.meta.vintage is None
+    assert result.meta.vintage == "2024-02", "the newest release of the cut list, Pakistan's"
     assert route.call_count == 1
     assert result.meta.names["commodity_code"] == {WHEAT: "Wheat"}
     assert set(result.meta.names["country_code"]) == {r.country_code for r in result.data}
+
+
+def test_release_dates_vintage_is_the_newest_release_of_the_whole_list(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """``meta.vintage`` of ``get_release_dates`` is the newest release of upstream's whole
+    list, ``"YYYY-MM"`` as the data tasks write it, also where the filters or ``since`` keep
+    none of it, so a stored vintage polls for a newer release with one request (conventions
+    §4: the newest where an answer holds several, that of the whole upstream answer)."""
+    route = replay_fixture(RELEASES, "wheat")
+    every = tasks.get_release_dates(WHEAT)
+    newest = max((r.release_year, r.release_month) for r in every.data)
+    assert every.meta.vintage == f"{newest[0]:04d}-{newest[1]:02d}" == "2024-02"
+    one = tasks.get_release_dates(WHEAT, market_year=1960, country_code="US")
+    assert [(r.release_year, r.release_month) for r in one.data] == [(2006, 7)]
+    assert one.meta.vintage == "2024-02", "the whole list's, not the record's"
+    polled = tasks.get_release_dates(WHEAT, since=every.meta.vintage)
+    assert polled.data == []
+    assert polled.meta.vintage == "2024-02", "nothing newer, and the marker to store again"
+    assert route.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_the_release_list_tool_carries_its_vintage(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    replay_fixture(RELEASES, "wheat")
+    payload = await mcp_call(
+        server, "usda_psd_get_release_dates", {"commodity_code": WHEAT, "since": "2024-02"}
+    )
+    assert payload["data"] == []
+    assert payload["meta"]["vintage"] == "2024-02"
 
 
 def test_get_release_dates_filters_after_the_one_call(
@@ -285,7 +318,7 @@ def test_a_market_year_without_data_answers_the_empty_list_with_a_note(
     second request (https://github.com/xippios/sdk-usda-esr/issues/88, the maintainer's
     decision of 2026-11-26)."""
     route = replay_fixture(DATA, "unknown_year")
-    result = tasks.get_data(WHEAT, 1900, "US")
+    result = tasks.get_data(WHEAT, 1900, country_code="US")
     assert result.data == []
     assert result.meta.notes == [no_data("/api/psd/commodity/0410000/country/US/year/1900")]
     assert result.meta.endpoint == "PSDData_GetCountryCommodityDataByYear"
@@ -305,20 +338,20 @@ def test_a_market_year_without_data_answers_the_empty_list_with_a_note(
 def test_unknown_codes_are_refused_before_any_request(respx_mock: respx.MockRouter) -> None:
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="0410000 \\(Wheat\\)"):
-        tasks.get_data("0410001", 2023, "US")
+        tasks.get_data("0410001", 2023, country_code="US")
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):
-        tasks.get_data(WHEAT, 2023, "XX")
+        tasks.get_data(WHEAT, 2023, country_code="XX")
     with pytest.raises(UnknownCode, match=re.escape(WORLD_HINT)) as world:
-        tasks.get_data(WHEAT, 2023, "00")
+        tasks.get_data(WHEAT, 2023, country_code="00")
     assert world.value.closest == ()
     with pytest.raises(UnknownCode, match="Omit country_code for every country"):
-        tasks.get_data(WHEAT, 2023, "all")
+        tasks.get_data(WHEAT, 2023, country_code="all")
     with pytest.raises(UnknownCode):
         tasks.get_world_data("9999999", 2023)
     with pytest.raises(UnknownCode):
         tasks.get_release_dates("wheat")
     with pytest.raises(InvalidRequestError, match="four-digit year"):
-        tasks.get_data(WHEAT, 23, "US")
+        tasks.get_data(WHEAT, 23, country_code="US")
     assert not respx_mock.calls
 
 
@@ -393,6 +426,119 @@ async def test_value_is_a_json_number_through_both_adapters(
     assert rejected.json()["title"] == "UnknownCode"
 
 
+SIGNATURES = {
+    "get_data": (["commodity_code", "market_year"], ["country_code"]),
+    "get_world_data": (["commodity_code", "market_year"], []),
+    "get_time_series": (
+        ["commodity_code", "country_code"],
+        ["start_year", "end_year", "attribute_id"],
+    ),
+    "get_release_dates": (["commodity_code"], ["market_year", "country_code", "since"]),
+    "list_countries": ([], ["region_code", "search"]),
+    "list_commodities": ([], ["search"]),
+    "list_commodity_attributes": ([], ["search"]),
+    "list_regions": ([], []),
+    "list_units_of_measure": ([], []),
+}
+"""Each task's arguments that identify a record, positional in the order of upstream's path,
+and its filters and arguments of the package's own, keyword-only
+(https://github.com/xippios/sdk-usda-esr/issues/60, part 1)."""
+
+
+@pytest.mark.parametrize("name", sorted(SIGNATURES))
+def test_a_task_takes_what_identifies_a_record_by_position_and_the_rest_by_keyword(
+    name: str,
+) -> None:
+    """The sync task and its async twin alike, so that one concept stands at one position in
+    every task (sdk-core ADR-0061, decision 5)."""
+    positional, keyword = SIGNATURES[name]
+    for task in (getattr(tasks, name), getattr(tasks, f"{name}_async")):
+        parameters = inspect.signature(task).parameters.values()
+        assert [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD] == positional
+        assert [p.name for p in parameters if p.kind is p.KEYWORD_ONLY] == keyword
+
+
+def test_a_filter_by_position_is_refused_before_any_request(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """Python refuses a filter passed by position, as the tasks' signatures take them by
+    keyword alone; respx has no route mounted, so nothing is sent."""
+    calls: list[Callable[[], object]] = [
+        lambda: tasks.get_data(WHEAT, 2023, "US"),  # type: ignore[call-arg]
+        lambda: tasks.get_release_dates(WHEAT, 2023),  # type: ignore[call-arg]
+        lambda: tasks.get_time_series(WHEAT, "US", 2021, 2023),  # type: ignore[call-arg]
+        lambda: tasks.list_countries("R01"),  # type: ignore[call-arg]
+        lambda: tasks.list_commodities("wheat"),  # type: ignore[call-arg]
+        lambda: tasks.list_commodity_attributes("stocks"),  # type: ignore[call-arg]
+    ]
+    for call in calls:
+        with pytest.raises(TypeError, match="positional argument"):
+            call()
+    assert not respx_mock.calls
+
+
+@pytest.mark.anyio
+async def test_the_adapters_take_the_arguments_by_name_as_before(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Over MCP every argument is named, so the order changes nothing there."""
+    replay_fixture(DATA, "wheat_us_2023")
+    payload = await mcp_call(
+        server,
+        "usda_psd_get_data",
+        {"country_code": "US", "market_year": 2023, "commodity_code": WHEAT},
+    )
+    assert len(payload["data"]) == 15
+
+
+@pytest.mark.parametrize("value", [2023.5, 2023.0, "2023"])
+def test_a_market_year_that_is_no_whole_number_is_refused_before_any_request(
+    respx_mock: respx.MockRouter, value: object
+) -> None:
+    """A float or a text is no market year, so every task refuses it before any request with
+    ``InvalidRequestError`` that names the argument and the value, where ``2023.5`` passed the
+    range check and reached the path as ``/year/2023.5``
+    (https://github.com/xippios/sdk-usda-psd/issues/27)."""
+    calls: list[tuple[str, Callable[[], object]]] = [
+        ("market_year", lambda: tasks.get_data(WHEAT, value)),  # type: ignore[arg-type]
+        ("market_year", lambda: tasks.get_world_data(WHEAT, value)),  # type: ignore[arg-type]
+        ("market_year", lambda: tasks.get_release_dates(WHEAT, market_year=value)),  # type: ignore[arg-type]
+        ("start_year", lambda: tasks.get_time_series(WHEAT, "US", start_year=value, end_year=2023)),  # type: ignore[arg-type]
+        ("end_year", lambda: tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=value)),  # type: ignore[arg-type]
+    ]
+    for param, call in calls:
+        with pytest.raises(InvalidRequestError) as refused:
+            call()
+        assert str(refused.value).startswith(
+            f"{param} must be a four-digit year such as 2023, got {value!r}. Nothing was sent."
+        ), str(refused.value)
+    assert not respx_mock.calls
+
+
+@pytest.mark.anyio
+async def test_the_adapters_refuse_a_fractional_market_year_before_any_request(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """Over MCP and HTTP the schema of ``market_year``, an integer, refuses ``2023.5`` before
+    the task runs (https://github.com/xippios/sdk-usda-psd/issues/27)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from xippios.usda.psd.http import router
+
+    text = await mcp_call_text(
+        server, "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023.5}
+    )
+    assert text.startswith("error: InvalidRequestError"), text
+    app = FastAPI()
+    app.include_router(router)
+    refused = TestClient(app).get(
+        "/usda-psd/get_data", params={"commodity_code": WHEAT, "market_year": "2023.5"}
+    )
+    assert refused.status_code == 422
+    assert not respx_mock.calls
+
+
 def test_the_package_serves_the_nine_tasks_the_boundary_keeps() -> None:
     """The ranking, the pivot and the pick of the newest release leave by the boundary of a
     source package (sdk-core ADR-0060), with the models and the list of groupings of their
@@ -433,8 +579,8 @@ def test_meta_retrieved_at_is_the_time_of_the_answer(
     §4): a second call within the cache's lifetime is answered by the cache and carries the
     time its entry was stored, the first call's."""
     route = replay_fixture(DATA, "wheat_us_2023")
-    first = tasks.get_data(WHEAT, 2023, "US")
-    second = tasks.get_data(WHEAT, 2023, "US")
+    first = tasks.get_data(WHEAT, 2023, country_code="US")
+    second = tasks.get_data(WHEAT, 2023, country_code="US")
     assert route.call_count == 1
     assert second.meta.retrieved_at == first.meta.retrieved_at
     assert second.data == first.data
@@ -446,7 +592,7 @@ def test_valid_codes_without_data_are_an_empty_result(
     """Recorded: wheat for Bermuda (BD; PSD's BM is Burma) in 2023 answers 200 with ``[]``.
     Empty means empty, not an error: no vintage, nothing else fetched."""
     route = replay_fixture(DATA, "no_data_valid_codes")
-    result = tasks.get_data(WHEAT, 2023, "BD")
+    result = tasks.get_data(WHEAT, 2023, country_code="BD")
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
     assert result.meta.request == {
@@ -513,7 +659,7 @@ gateway documents and the shared package's tests hold (conventions §10, kind 2)
 @pytest.mark.parametrize(
     ("path", "call"),
     [
-        ("country/US/year/2023", lambda: tasks.get_data(WHEAT, 2023, "US")),
+        ("country/US/year/2023", lambda: tasks.get_data(WHEAT, 2023, country_code="US")),
         ("country/all/year/2023", lambda: tasks.get_data(WHEAT, 2023)),
         ("world/year/2023", lambda: tasks.get_world_data(WHEAT, 2023)),
     ],

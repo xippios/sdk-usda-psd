@@ -161,7 +161,7 @@ def validate_country_code(country_code: str) -> str:
     return COUNTRIES.check("country_code", country_code, hints=COUNTRY_HINTS, reason=_REASON)
 
 
-def validate_market_year(market_year: int) -> int:
+def validate_market_year(market_year: int, *, name: str = "market_year") -> int:
     """Check that a market year is a four-digit integer.
 
     The snapshot types ``marketYear`` as ``int32`` and says "PSD Database has data for
@@ -171,16 +171,25 @@ def validate_market_year(market_year: int) -> int:
 
     Args:
         market_year: The market year, e.g. ``2023``, ``1960``.
+        name: The caller's parameter the year came in, which a refusal names: e.g.
+            ``"start_year"`` or ``"end_year"`` for ``get_time_series``; ``"market_year"`` by
+            default, the parameter of every other task.
 
     Returns:
         The year, unchanged.
 
     Raises:
-        InvalidRequestError: When the year is not an integer from 1000 to 9999.
+        InvalidRequestError: When the year is not an integer from 1000 to 9999: a float,
+            ``2023.5`` or ``2023.0``, a text and ``True`` are refused like ``23``
+            (https://github.com/xippios/sdk-usda-psd/issues/27).
     """
-    if isinstance(market_year, bool) or not 1000 <= market_year <= 9999:
+    if (
+        isinstance(market_year, bool)
+        or not isinstance(market_year, int)
+        or not 1000 <= market_year <= 9999
+    ):
         raise InvalidRequestError(
-            f"market_year must be a four-digit year such as 2023, got {market_year!r}. "
+            f"{name} must be a four-digit year such as 2023, got {market_year!r}. "
             "Nothing was sent. PSD has data for most commodities since 1960.",
             source=SOURCE,
         )

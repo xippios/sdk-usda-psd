@@ -25,7 +25,7 @@ documentation.
 from xippios.usda.psd import get_data
 from xippios.usda.psd.enums import AttributeId
 
-result = get_data("0410000", 2023, "US")  # wheat, market year 2023, United States
+result = get_data("0410000", 2023, country_code="US")  # wheat, 2023, United States
 production = next(r for r in result.data if r.attribute_id == AttributeId.PRODUCTION)
 production.value, production.unit_id  # Decimal('49095.0'), 8 (UnitId._1000_MT)
 result.meta.vintage  # "2026-07": the PSD release that last revised these figures
@@ -37,13 +37,14 @@ Codes are PSD's own (commodity `0410000` wheat, `0440000` corn, `2222000` soybea
 country `US`, `BR`, `E4`), checked against the lists packaged in `reference/` before any
 call. Leave out the country for every country at once, or use `get_world_data` for the
 world total; a market year PSD holds no data for answers the empty list with a note in
-`meta.notes`, and `meta.names` names the codes of the rows. `attribute_id` and `unit_id` are
-PSD's integer ids; `enums.AttributeId` and
-`enums.UnitId` name the packaged ones and compare equal to them. The MCP server returns
-at most 200 rows per call, and every country at once is up to about 1,900 rows, so pass a
-country there or continue with `offset`, which the response cache answers. `get_release_dates` tells when PSD last revised each country and market
-year; compare it with a stored `meta.vintage`, or pass that vintage as `since`, to fetch
-only what changed.
+`meta.notes`, and `meta.names` names the codes of the rows. `attribute_id` and `unit_id`
+are PSD's integer ids; `enums.AttributeId` and `enums.UnitId` name the packaged ones and
+compare equal to them. The MCP server returns at most 200 rows per call, and every country
+at once is up to about 1,900 rows, so pass a country there or continue with `offset`,
+which the response cache answers. `get_release_dates` tells when PSD last revised each
+country and market year, and its `meta.vintage` the newest release of the whole list;
+compare it with a stored `meta.vintage`, or pass that vintage as `since`, to fetch only
+what changed.
 
 The `list_*` tasks look codes up in the packaged lists, without a call:
 
@@ -70,10 +71,12 @@ conversion, no gap filling.
 from xippios.usda.psd import get_time_series
 from xippios.usda.psd.enums import AttributeId
 
-series = get_time_series("0440000", "US", 2021, 2023, attribute_id=AttributeId.PRODUCTION)
+series = get_time_series(
+    "0440000", "US", start_year=2021, end_year=2023, attribute_id=AttributeId.PRODUCTION
+)
 [(r.market_year, r.value) for r in series.data]  # 3 requests; one record per year with data
-get_time_series("0440000", "US", 2023, 2023, attribute_id=[28, 88])  # production and exports
-get_time_series("0440000", "US", 2023, 2023)  # every attribute of 2023
+get_time_series("0440000", "US", start_year=2023, end_year=2023, attribute_id=[28, 88])
+get_time_series("0440000", "US", start_year=2023, end_year=2023)  # every attribute
 ```
 
 `get_time_series` starts at 1960 at the earliest, spends one request per market year, at
@@ -105,16 +108,16 @@ instead of stdio, and `--series-years N` sets the most market years one
 
 | Upstream operation | Task function | MCP tool | Status |
 | --- | --- | --- | --- |
-| `PSDData_GetCountryCommodityDataByYear` (`commodity/{commodityCode}/country/{countryCode}/year/{marketYear}`) | `get_data(commodity_code, market_year, country_code)` | `usda_psd_get_data` | alpha |
+| `PSDData_GetCountryCommodityDataByYear` (`commodity/{commodityCode}/country/{countryCode}/year/{marketYear}`) | `get_data(commodity_code, market_year, *, country_code)` | `usda_psd_get_data` | alpha |
 | `PSDData_GetCommodityDataByYear` (`commodity/{commodityCode}/country/all/year/{marketYear}`) | `get_data(commodity_code, market_year)` | `usda_psd_get_data` | alpha |
 | `PSDData_GetWorldCommodityDataByYear` (`commodity/{commodityCode}/world/year/{marketYear}`) | `get_world_data(commodity_code, market_year)` | `usda_psd_get_world_data` | alpha |
-| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, start_year, end_year, attribute_id=None)` | `usda_psd_get_time_series` | alpha |
-| `PSDData_GetDataReleaseInfo` (`commodity/{commodityCode}/dataReleaseDates`) | `get_release_dates(commodity_code, market_year, country_code, since)` | `usda_psd_get_release_dates` | alpha |
-| `PSDData_GetCommodities` (`commodities`) | `list_commodities(search)` | `usda_psd_list_commodities` | packaged; `list_*` task |
-| `PSDData_GetCountries` (`countries`) | `list_countries(region_code, search)` | `usda_psd_list_countries` | packaged; `list_*` task |
+| `PSDData_GetCountryCommodityDataByYear`, one request per market year | `get_time_series(commodity_code, country_code, *, start_year, end_year, attribute_id=None)` | `usda_psd_get_time_series` | alpha |
+| `PSDData_GetDataReleaseInfo` (`commodity/{commodityCode}/dataReleaseDates`) | `get_release_dates(commodity_code, *, market_year, country_code, since)` | `usda_psd_get_release_dates` | alpha |
+| `PSDData_GetCommodities` (`commodities`) | `list_commodities(*, search)` | `usda_psd_list_commodities` | packaged; `list_*` task |
+| `PSDData_GetCountries` (`countries`) | `list_countries(*, region_code, search)` | `usda_psd_list_countries` | packaged; `list_*` task |
 | `PSDData_GetRegions` (`regions`) | `list_regions()` | `usda_psd_list_regions` | packaged; `list_*` task |
 | `PSDData_GetUnitsOfMeasure` (`unitsOfMeasure`) | `list_units_of_measure()` | `usda_psd_list_units_of_measure` | packaged; `list_*` task |
-| `PSDData_GetCommodityAttributes` (`commodityAttributes`) | `list_commodity_attributes(search)` | `usda_psd_list_commodity_attributes` | packaged; `list_*` task |
+| `PSDData_GetCommodityAttributes` (`commodityAttributes`) | `list_commodity_attributes(*, search)` | `usda_psd_list_commodity_attributes` | packaged; `list_*` task |
 
 0.5.0 covers nine tasks and requires xippios-core 0.5.x (`~=0.5.0`) and xippios-usda-fas
 0.1.x (`~=0.1.0`); the ranking `get_top_countries`, the pivot `get_balance_sheet` and the

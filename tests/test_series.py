@@ -53,7 +53,9 @@ def test_get_time_series_one_request_per_year_in_order(
     respx_mock: respx.MockRouter,
 ) -> None:
     routes = {year: replay_fixture(DATA, f"wheat_us_{year}") for year in (2021, 2022, 2023)}
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
+    result = tasks.get_time_series(
+        WHEAT, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.PRODUCTION
+    )
     assert {year: route.call_count for year, route in routes.items()} == {
         2021: 1,
         2022: 1,
@@ -107,7 +109,9 @@ def test_time_series_leaves_a_year_without_data_out(
     replay_fixture(DATA, "wheat_us_2021")
     replay_fixture(DATA, "wheat_us_2023")
     missing = replay_fixture(DATA, "unknown_year", url=f"https://api.fas.usda.gov{_path(2022)}")
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.EXPORTS)
+    result = tasks.get_time_series(
+        WHEAT, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.EXPORTS
+    )
     assert missing.call_count == 1
     assert len(respx_mock.calls) == 3
     assert [(r.market_year, r.value) for r in result.data] == [
@@ -129,7 +133,9 @@ def test_a_series_without_any_record_is_empty_not_an_error(replay_fixture: Repla
     absent = load_fixture(fixture_path(FIXTURES, DATA, "unknown_year"))
     assert (absent.response.status, absent.response.content) == (404, b""), "PSD's empty 404"
     route = replay_fixture(DATA, "unknown_year", url=f"https://api.fas.usda.gov{_path(1960)}")
-    result = tasks.get_time_series(WHEAT, "US", 1960, 1960, AttributeId.PRODUCTION)
+    result = tasks.get_time_series(
+        WHEAT, "US", start_year=1960, end_year=1960, attribute_id=AttributeId.PRODUCTION
+    )
     assert result.data == []
     assert (result.meta.vintage, result.meta.published_at) == (None, None)
     assert result.meta.notes == ["Market years passed over, without data in PSD: 1960."]
@@ -159,7 +165,9 @@ def test_the_gateways_not_found_inside_a_series_is_raised(
         )
     )
     with pytest.raises(NotFoundError) as info:
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
+        tasks.get_time_series(
+            WHEAT, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.PRODUCTION
+        )
     assert not isinstance(info.value, NoDataForYear)
     assert f"api.data.gov has no route for GET {_path(2022)}" in str(info.value)
     assert str(info.value).endswith(
@@ -180,11 +188,15 @@ def test_a_series_may_span_exactly_the_ceiling(
     tasks.SERIES.set(3)
     try:
         with pytest.raises(InvalidRequestError) as refused:
-            tasks.get_time_series(WHEAT, "US", 2021, 2024, AttributeId.PRODUCTION)
+            tasks.get_time_series(
+                WHEAT, "US", start_year=2021, end_year=2024, attribute_id=AttributeId.PRODUCTION
+            )
         assert not respx_mock.calls
         for year in (2021, 2022, 2023):
             replay_fixture(DATA, f"wheat_us_{year}")
-        result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.PRODUCTION)
+        result = tasks.get_time_series(
+            WHEAT, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.PRODUCTION
+        )
     finally:
         tasks.SERIES.set(100)
     assert str(refused.value).startswith(
@@ -209,7 +221,7 @@ def test_the_mcp_server_starts_with_a_ceiling_of_24_market_years(
     try:
         assert tasks.SERIES.value == 24
         with pytest.raises(InvalidRequestError) as refused:
-            tasks.get_time_series(WHEAT, "US", 2000, 2024)
+            tasks.get_time_series(WHEAT, "US", start_year=2000, end_year=2024)
     finally:
         tasks.SERIES.set(100)
     assert "2000 to 2024 is 25 market years; one call fetches at most 24 market years" in str(
@@ -282,7 +294,9 @@ def test_a_series_of_an_attribute_the_answers_lack_is_empty(
     """Area Planted (1) is a packaged attribute that wheat US does not report."""
     for year in (2021, 2022, 2023):
         replay_fixture(DATA, f"wheat_us_{year}")
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023, AttributeId.AREA_PLANTED)
+    result = tasks.get_time_series(
+        WHEAT, "US", start_year=2021, end_year=2023, attribute_id=AttributeId.AREA_PLANTED
+    )
     assert result.data == []
     assert result.meta.vintage is None
     assert result.meta.notes == [
@@ -328,7 +342,7 @@ def test_time_series_of_two_attributes_by_year_then_upstream_order(
     for year in (2021, 2022, 2023):
         replay_fixture(DATA, f"wheat_us_{year}")
     ids = [AttributeId.EXPORTS, AttributeId.PRODUCTION]
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=ids)
+    result = tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=ids)
     assert len(respx_mock.calls) == 3
     assert [(r.market_year, r.attribute_id) for r in result.data] == [
         (2021, 28),
@@ -362,7 +376,7 @@ def test_time_series_without_attribute_id_keeps_every_record(
     order, and ``meta.request`` leaves the parameter out (conventions §4)."""
     for year in (2021, 2022, 2023):
         replay_fixture(DATA, f"wheat_us_{year}")
-    result = tasks.get_time_series(WHEAT, "US", 2021, 2023)
+    result = tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023)
     expected = [
         record
         for year in (2021, 2022, 2023)
@@ -384,15 +398,15 @@ def test_time_series_checks_every_attribute_id_before_any_request(
 ) -> None:
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="999 is not an attribute_id") as unknown:
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[28, 999])
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=[28, 999])
     assert unknown.value.closest == ((99, "Refined Exp.(Raw Val)"),)
     with pytest.raises(InvalidRequestError, match="attribute_id lists no code") as empty:
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[])
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=[])
     assert "Nothing was sent." in empty.value.message
     with pytest.raises(InvalidRequestError, match="True is not an integer code"):
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id=[28, True])
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=[28, True])
     with pytest.raises(InvalidRequestError, match="Pass it as the integer 28"):
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, attribute_id="28")  # type: ignore[arg-type]
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id="28")  # type: ignore[arg-type]
     assert not respx_mock.calls
 
 
@@ -465,7 +479,7 @@ async def test_a_cut_series_names_the_filters_that_narrow_it(
         {"commodity_code": WHEAT, "country_code": "US", "start_year": 2021, "end_year": 2023},
     )
     assert len(payload["data"]) == 20
-    every = tasks.get_time_series(WHEAT, "US", 2021, 2023).data
+    every = tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023).data
     assert payload["data"] == [row.model_dump(mode="json") for row in every[-20:]], "the newest"
     assert payload["note"].startswith("showing rows 26 to 45 of 45 (cap: 20 rows or 65536 bytes)")
     assert payload["note"].endswith(
@@ -478,28 +492,28 @@ async def test_a_cut_series_names_the_filters_that_narrow_it(
 def test_the_series_checks_its_arguments_before_any_request(respx_mock: respx.MockRouter) -> None:
     """respx is active with no routes mounted, so any upstream call would fail loudly."""
     with pytest.raises(UnknownCode, match="999 is not an attribute_id") as unknown:
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, 999)
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=999)
     assert unknown.value.closest == ((99, "Refined Exp.(Raw Val)"),)
     with pytest.raises(InvalidRequestError, match="True is not an integer code"):
-        tasks.get_time_series(WHEAT, "US", 2021, 2023, True)
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=2023, attribute_id=True)
     with pytest.raises(
         InvalidRequestError, match=r"start_year 2023 is after end_year 2021\. Nothing was sent\."
     ):
-        tasks.get_time_series(WHEAT, "US", 2023, 2021, 28)
-    with pytest.raises(InvalidRequestError, match="four-digit year"):
-        tasks.get_time_series(WHEAT, "US", 21, 2023, 28)
+        tasks.get_time_series(WHEAT, "US", start_year=2023, end_year=2021, attribute_id=28)
+    with pytest.raises(InvalidRequestError, match="start_year must be a four-digit year"):
+        tasks.get_time_series(WHEAT, "US", start_year=21, end_year=2023, attribute_id=28)
     with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later") as early:
-        tasks.get_time_series(WHEAT, "US", 1959, 2023, 28)
+        tasks.get_time_series(WHEAT, "US", start_year=1959, end_year=2023, attribute_id=28)
     assert "got 1959. Nothing was sent." in str(early.value)
     assert "PSD Database has data for most commodities since year 1960" in str(early.value)
     with pytest.raises(InvalidRequestError, match="start_year must be 1960 or later"):
-        tasks.get_time_series(WHEAT, "US", 1900, 1900, 28)
+        tasks.get_time_series(WHEAT, "US", start_year=1900, end_year=1900, attribute_id=28)
     with pytest.raises(InvalidRequestError, match="1960 to 2060 is 101 market years"):
-        tasks.get_time_series(WHEAT, "US", 1960, 2060, 28)
+        tasks.get_time_series(WHEAT, "US", start_year=1960, end_year=2060, attribute_id=28)
     with pytest.raises(InvalidRequestError, match="one call fetches at most 100 market years"):
-        tasks.get_time_series(WHEAT, "US", 1960, 9999, 28)
-    with pytest.raises(InvalidRequestError, match="four-digit year"):
-        tasks.get_time_series(WHEAT, "US", 2021, 20230, 28)
+        tasks.get_time_series(WHEAT, "US", start_year=1960, end_year=9999, attribute_id=28)
+    with pytest.raises(InvalidRequestError, match="end_year must be a four-digit year"):
+        tasks.get_time_series(WHEAT, "US", start_year=2021, end_year=20230, attribute_id=28)
     with pytest.raises(UnknownCode, match="'XX' is not a country_code"):
-        tasks.get_time_series(WHEAT, "XX", 2021, 2023, 28)
+        tasks.get_time_series(WHEAT, "XX", start_year=2021, end_year=2023, attribute_id=28)
     assert not respx_mock.calls
