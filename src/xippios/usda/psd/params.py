@@ -11,8 +11,9 @@ that names a record's codes is declared once, ``PackagedList.codes`` (sdk-core A
 ``COMMODITIES``, ``COUNTRIES``, ``REGIONS``, ``UNITS`` and ``ATTRIBUTES``, the ``NamedBy`` of
 ``models`` (sdk-core ADR-0067, decision 6), so every answer names the codes of its rows in
 ``meta.names``; ``ATTRIBUTES.check`` refuses an attribute id, or a list of them, that the list
-lacks. Each refusal before a request says that nothing was sent, core's and the package's own
-(conventions §5).
+lacks. ``_CARRIED_REGIONS``, the region codes the packaged countries carry, each named by the
+regions list, checks and names ``list_countries``' filter. Each refusal before a request says
+that nothing was sent, core's and the package's own (conventions §5).
 
 Refresh policy: ``/refresh-reference-data`` runs inside ``/release-prep``, and whenever
 a validation failure names a code the package lacks.
@@ -255,31 +256,30 @@ def validate_attribute_id[V: (int, Sequence[int])](attribute_id: V) -> V:
     )
 
 
-@functools.cache
 def _carried_regions() -> PackagedCodes:
     """The region codes the packaged countries carry, each named by the packaged regions list.
 
-    The list that ``list_countries``' filter is checked against, in place of the packaged
-    ``regions``, which lacks ``"R15"`` and holds ``"R00"``, which no country carries: ``"R15"``
-    is named by its countries, ``"Africa, NEC; Fernando Po; French Equatorial Africa;
-    Other"``, and the refusal names the packaged countries list and its fetch date, the list
-    the codes come from (sdk-core ADR-0045).
+    The package gives no code a name of its own: ``"R15"``, which the regions list lacks, has
+    no name, so core names it by its code (sdk-core ADR-0060, decision 3). The refusal names the
+    packaged countries list and its fetch date, the list the codes come from (sdk-core ADR-0045).
     """
     countries = PackagedList.load(PACKAGE, "countries")
-    names = {
-        str(record["regionCode"]): str(record["regionName"])
-        for record in PackagedList.load(PACKAGE, "regions").records
-    }
-    carried: dict[str, list[str]] = {}
-    for record in countries.records:
-        carried.setdefault(str(record["regionCode"]), []).append(str(record["countryName"]))
+    carried = sorted({str(record["regionCode"]) for record in countries.records})
     records: list[dict[str, object]] = [
-        {"regionCode": code, "regionName": names.get(code) or "; ".join(members)}
-        for code, members in sorted(carried.items())
+        {"regionCode": code, "regionName": REGIONS.name_of(code)} for code in carried
     ]
     return countries.model_copy(update={"records": records}).codes(
         "regionCode", "regionName", list_name="countries", source=SOURCE
     )
+
+
+_CARRIED_REGIONS: PackagedCodes = _carried_regions()
+"""The region codes the packaged countries carry, the values ``list_countries`` filters by: the
+list its ``region_code`` is checked against and the one ``names_codes`` names it by, in place of
+the packaged ``regions``, which lacks ``"R15"`` and holds ``"R00"``, which no country carries.
+Each code is named by the packaged regions list, and ``"R15"`` by its code alone. A constant of
+the module, kept for the process (sdk-core ADR-0045, decision 1), and no public name, since no
+caller asks for it: ``tasks`` reads it for ``names_codes``."""
 
 
 _REGION_HINTS: dict[str, str] = {
@@ -311,9 +311,9 @@ def validate_region_code(region_code: str) -> str:
     Raises:
         InvalidRequestError: When ``region_code`` is not text.
         UnknownCode: Naming up to three close codes with their names in the packaged
-            ``regions`` list, or for ``"R15"`` its countries' names; for a region of
-            that list no country belongs to (``"R00"``, World) saying that the world is
-            ``get_world_data``'s and that ``region_code`` takes a region countries
+            ``regions`` list, ``"R15"``, which that list lacks, by its code alone; for a
+            region of that list no country belongs to (``"R00"``, World) saying that the
+            world is ``get_world_data``'s and that ``region_code`` takes a region countries
             belong to.
     """
     if not isinstance(region_code, str):
@@ -322,7 +322,7 @@ def validate_region_code(region_code: str) -> str:
             f"{region_code!r}. Nothing was sent. {REGION_LISTS} name the regions.",
             source=SOURCE,
         )
-    return _carried_regions().check(
+    return _CARRIED_REGIONS.check(
         "region_code",
         region_code,
         hints=_REGION_HINTS,

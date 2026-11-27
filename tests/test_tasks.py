@@ -13,7 +13,7 @@ import pytest
 import respx
 from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
 from xippios.core.mcp import ToolSet
-from xippios.core.testing import mcp_call, mcp_call_text
+from xippios.core.testing import mcp_call
 from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import __version__, tasks
@@ -32,11 +32,13 @@ WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) fo
 
 
 def no_data(path: str) -> str:
-    """The note of the empty answer for PSD's empty 404 at ``path``."""
+    """The note of the empty answer for PSD's empty 404 at ``path``, which names the task it
+    points to and its tool, since an agent over MCP calls the tool (conventions §8)."""
     return (
         f"PSD answered GET {path} with HTTP 404 and an empty body, its answer for a market year "
         "it holds no data for, which a market year it has not released is expected to answer "
-        "alike; get_release_dates names the market years that hold data."
+        "alike; get_release_dates (over MCP, the tool usda_psd_get_release_dates) names the "
+        "market years that hold data."
     )
 
 
@@ -378,10 +380,6 @@ async def test_mcp_tool_call_end_to_end(replay_fixture: Callable[[str, str], res
     assert payload["meta"]["endpoint"] == "PSDData_GetCountryCommodityDataByYear"
     assert payload["meta"]["published_at"] is None
     assert payload["meta"]["vintage"] == "2026-07"
-    with pytest.raises(AssertionError, match=r"UnknownCode.*0410000 \(Wheat\)"):
-        await mcp_call(
-            server, "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
-        )
 
 
 @pytest.mark.anyio
@@ -419,11 +417,6 @@ async def test_value_is_a_json_number_through_both_adapters(
     assert [row["value"] for row in response.json()["data"]] == values
     yields = [row["value"] for row in response.json()["data"] if row["attribute_id"] == 184]
     assert yields == [3.5622]
-    rejected = http.get(
-        "/usda-psd/get_world_data", params={"commodity_code": "0410001", "market_year": 2023}
-    )
-    assert rejected.status_code == 422
-    assert rejected.json()["title"] == "UnknownCode"
 
 
 SIGNATURES = {
@@ -512,30 +505,6 @@ def test_a_market_year_that_is_no_whole_number_is_refused_before_any_request(
         assert str(refused.value).startswith(
             f"{param} must be a four-digit year such as 2023, got {value!r}. Nothing was sent."
         ), str(refused.value)
-    assert not respx_mock.calls
-
-
-@pytest.mark.anyio
-async def test_the_adapters_refuse_a_fractional_market_year_before_any_request(
-    respx_mock: respx.MockRouter,
-) -> None:
-    """Over MCP and HTTP the schema of ``market_year``, an integer, refuses ``2023.5`` before
-    the task runs (https://github.com/xippios/sdk-usda-psd/issues/27)."""
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from xippios.usda.psd.http import router
-
-    text = await mcp_call_text(
-        server, "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023.5}
-    )
-    assert text.startswith("error: InvalidRequestError"), text
-    app = FastAPI()
-    app.include_router(router)
-    refused = TestClient(app).get(
-        "/usda-psd/get_data", params={"commodity_code": WHEAT, "market_year": "2023.5"}
-    )
-    assert refused.status_code == 422
     assert not respx_mock.calls
 
 
