@@ -1,17 +1,17 @@
-"""The client's error mapping, and core's api.data.gov gateway wired to it.
+"""The client's wiring and error mapping, and the shared package's api.data.gov gateway on it.
 
 Recorded answers come from ``tests/fixtures``, the gateway's 429 included
-(``get_commodities/over_rate_limit.json``, recorded after spending the key's
-hourly quota on 2026-10-23). Cases the recordings do not cover (the gateway's
-``NOT_FOUND`` 404, the other ``API_KEY_*`` codes, a 429 without ``Retry-After``) are
-built in the recorded body's shape and say so. The gateway and its quota policy are
-core's (``xippios.core.data_gov.Gateway``, sdk-core ADR-0032, sdk-core ADR-0037) and are
-tested there; this module checks that the package installs them, that the policy reads the
-recorded 429 through the package's client, that ``classify`` keeps PSD's own answers after
-the gateway's, and that it shapes core's retries of a 429.
+(``get_commodities/over_rate_limit.json``, recorded after spending the key's hourly quota on
+2026-10-23). The one case the recordings do not cover, the recorded empty 404 with its content
+type changed, is of conventions §10's fourth kind, and each test says so. The gateway and its
+quota policy are the shared package's (``xippios.usda.fas``'s ``Gateway``, sdk-core ADR-0032,
+sdk-core ADR-0037), whose tests hold its own answers: the key's codes, its ``NOT_FOUND``, a 429
+classified on its own and core's retries of a 429. This module checks that the package installs
+them, that the policy reads the recorded 429 through the package's client, that ``classify``
+keeps PSD's own answer after the gateway's, and that the client keeps answers in core's
+response cache.
 """
 
-import dataclasses
 import json
 from collections.abc import Callable
 from datetime import timedelta
@@ -20,21 +20,13 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from xippios.core import (
-    AsyncClient,
-    AuthError,
-    EnvVar,
-    NotFoundError,
-    RateLimitError,
-    RetryPolicy,
-)
-from xippios.core.data_gov import Gateway, NoDataForYear
+from xippios.core import Answer, AuthError, EnvVar, MemoryCache, NotFoundError, RateLimitError
 from xippios.core.testing import CLOCK_SLACK, load_fixture, response_from_fixture
+from xippios.usda.fas import Gateway, NoDataForYear
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import (
     API_KEY_ENV,
-    BASE_URL,
     DATA_PATH,
     ENV_VARS,
     RATE_LIMIT,
@@ -50,22 +42,6 @@ FIXTURES = Path(__file__).parent / "fixtures"
 DATA = "get_country_commodity_data_by_year"
 SLACK = CLOCK_SLACK.total_seconds()
 """A wait read through the client counts from the snapshot to now, a moment later."""
-
-
-def synthesised(status: int, body: object, headers: dict[str, str] | None = None) -> httpx.Response:
-    """NOT RECORDED as such: an answer in the shape api.data.gov documents and sends."""
-    return httpx.Response(
-        status,
-        json=body,
-        headers=headers or {},
-        request=httpx.Request("GET", f"{BASE_URL}/api/psd/commodities"),
-    )
-
-
-RECORDED_429 = load_fixture(FIXTURES / "get_commodities" / "over_rate_limit.json").response
-"""The recorded 429: ``Retry-After: 3151``, ``x-ratelimit-remaining: 0``."""
-OVER_RATE_LIMIT = json.loads(RECORDED_429.body)
-"""The recorded 429 body, for the variants built around it."""
 
 
 def test_the_client_is_wired_for_the_gateway() -> None:
@@ -88,7 +64,7 @@ def test_the_client_is_wired_for_the_gateway() -> None:
     )
     assert (Gateway.policy.window, Gateway.policy.source) == (3600.0, "api.data.gov")
     assert auth is gateway.auth
-    assert auth.header == "X-Api-Key"
+    assert (auth.location, auth.name) == ("header", "X-Api-Key")
     assert auth.env_var == API_KEY_ENV == "DATA_GOV_API_KEY"  # pragma: allowlist secret
 
 
@@ -96,36 +72,6 @@ def test_env_vars_name_the_one_key_the_package_reads() -> None:
     """``ENV_VARS`` tells a host what to set: the gateway's key, secret and required, and
     nothing else, since the package reads no other variable (conventions §7)."""
     assert (EnvVar(API_KEY_ENV, secret=True, required=True),) == ENV_VARS
-
-
-def test_invalid_key_is_an_auth_error_naming_the_code_and_the_variable() -> None:
-    response = response_from_fixture(
-        load_fixture(FIXTURES / "get_commodities" / "invalid_key.json")
-    )
-    error = classify(response)
-    assert isinstance(error, AuthError)
-    assert error.status == 403
-    assert error.message.startswith(
-        f"api.data.gov refused the key in {API_KEY_ENV} (HTTP 403 API_KEY_INVALID: "
-    )
-    assert "An invalid api_key was supplied. Get one at <host>" in error.message
-    assert "api.fas.usda.gov" not in error.message, "host-free (conventions §5)"
-    assert error.source == "usda-psd"
-
-
-@pytest.mark.parametrize(
-    "code",
-    ["API_KEY_MISSING", "API_KEY_DISABLED", "API_KEY_UNAUTHORIZED", "API_KEY_UNVERIFIED"],
-)
-def test_every_documented_key_code_is_an_auth_error(code: str) -> None:
-    """NOT RECORDED: the other documented codes, in the recorded body's shape."""
-    error = classify(synthesised(403, {"error": {"code": code, "message": "documented"}}))
-    assert isinstance(error, AuthError)
-    assert code in error.message
-
-
-def test_a_403_without_a_gateway_code_falls_through_to_core() -> None:
-    assert classify(synthesised(403, {"Message": "Access denied"})) is None
 
 
 @pytest.mark.anyio
@@ -153,7 +99,7 @@ async def test_unknown_codes_answer_an_empty_list_not_an_error(
 ) -> None:
     replay_fixture(DATA, case)
     assert classify(response_from_fixture(load_fixture(FIXTURES / DATA / f"{case}.json"))) is None
-    assert await client.get_json(path) == []
+    assert (await client.get_answer(path)).payload == []
 
 
 @pytest.mark.anyio
@@ -164,10 +110,10 @@ async def test_a_year_without_data_answers_404_with_an_empty_body(
     assert (response.status_code, response.content) == (404, b"")
     error = classify(response)
     assert isinstance(error, NotFoundError)
-    assert "no data for /api/psd/commodity/0410000/country/US/year/1900" in error.message
+    assert "no data for GET /api/psd/commodity/0410000/country/US/year/1900" in error.message
     route = replay_fixture(DATA, "unknown_year")
     with pytest.raises(NotFoundError, match="empty body"):
-        await client.get_json("/api/psd/commodity/0410000/country/US/year/1900")
+        await client.get_answer("/api/psd/commodity/0410000/country/US/year/1900")
     assert route.call_count == 1
 
 
@@ -186,16 +132,17 @@ def test_every_data_form_answers_a_year_without_data_with_an_empty_404(
     assert (response.status_code, response.content) == (404, b"")
     assert response.headers["content-type"].startswith("text/plain")
     error = classify(response)
-    assert isinstance(error, NoDataForYear), "core's class, through the gateway's data_path"
+    assert isinstance(error, NoDataForYear), "the shared package's, by the data_path"
     assert isinstance(error, NotFoundError), "in the taxonomy, conventions §5"
     assert error.path == response.request.url.path
     assert error.source == SOURCE
-    assert f"no data for {error.path} (HTTP 404 with an empty body)" in error.message
+    assert f"no data for GET {error.path} (HTTP 404 with an empty body)" in error.message
 
 
 def test_the_content_type_is_compared_without_case() -> None:
-    """NOT RECORDED as such: the recorded empty 404 with its content type upper-cased.
-    Media types are case-insensitive (RFC 9110), so it is still PSD's empty year."""
+    """NOT RECORDED as such: the recorded empty 404 at its own URL, its content type
+    upper-cased (conventions §10, kind 4: a header replaced). Media types are case-insensitive
+    (RFC 9110), so it is still PSD's empty year."""
     fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
     response = httpx.Response(
         404,
@@ -206,68 +153,66 @@ def test_the_content_type_is_compared_without_case() -> None:
     assert isinstance(classify(response), NoDataForYear)
 
 
-def test_an_empty_404_is_no_data_for_year_only_on_a_data_path_as_text() -> None:
-    """NOT RECORDED: the recorded empty 404 moved off a data path, or without its
-    ``text/plain``. Neither is PSD's answer for an empty year, so neither is skipped by a
-    series: both stay a plain ``NotFoundError``."""
-    fixture = load_fixture(FIXTURES / DATA / "unknown_year.json")
-    for url, headers in [
-        (f"{BASE_URL}/api/psd/commodity/0410000/dataReleaseDates", fixture.response.headers),
-        (fixture.request.url, [("content-type", "application/json")]),
-    ]:
-        response = httpx.Response(
-            404, headers=headers, content=b"", request=httpx.Request("GET", url)
-        )
-        error = classify(response)
-        assert isinstance(error, NotFoundError)
-        assert not isinstance(error, NoDataForYear), url
+def test_the_data_path_covers_the_three_data_forms_only() -> None:
+    """The gateway says that a year holds no data only on a path of ``DATA_PATH``: one
+    country, every country and the world, by market year, never the release list."""
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/country/US/year/1900")
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/country/all/year/1900")
+    assert DATA_PATH.fullmatch("/api/psd/commodity/0410000/world/year/1900")
+    assert not DATA_PATH.fullmatch("/api/psd/commodity/0410000/dataReleaseDates")
+    assert not DATA_PATH.fullmatch("/api/psd/commodities")
+
+
+def test_an_empty_404_without_text_plain_is_psds_own_not_found() -> None:
+    """NOT RECORDED as such: the recorded empty 404 of 1900 at its own URL, its ``text/plain``
+    replaced (conventions §10, kind 4: a header replaced). It is not PSD's answer for an empty
+    year, so a series does not pass it over: a plain ``NotFoundError`` that names the request
+    by core's ``request_description`` and says the request is wrong, never that the year holds
+    no data (https://github.com/xippios/sdk-usda-psd/issues/50). Off a data path nothing is
+    served: no other operation was seen answering an empty 404, so that half rests on the
+    gateway's ``data_path`` above."""
+    response = response_from_fixture(load_fixture(FIXTURES / DATA / "unknown_year.json"))
+    response.headers["content-type"] = "application/json"
+    error = classify(response)
+    assert isinstance(error, NotFoundError)
+    assert not isinstance(error, NoDataForYear)
+    assert error.source == SOURCE
+    assert error.message == (
+        "PSD Online answered GET /api/psd/commodity/0410000/country/US/year/1900 with HTTP 404 "
+        "and an empty body, not as it answers a market year without data on a data path: the "
+        "request is wrong, not the year."
+    )
+    assert "no data" not in error.message
+    assert "api.fas.usda.gov" not in error.message, "host-free (conventions §5)"
+
+
+def test_the_client_keeps_answers_in_cores_cache() -> None:
+    """A read-only source of public data keeps upstream's answers in core's response cache,
+    at core's default lifetime, every path for 300 s (conventions §6; sdk-core ADR-0061,
+    decision 11)."""
+    assert isinstance(config.cache, MemoryCache)
+    assert dict(config.cache.lifetimes) == {"/": 300.0}
+
+
+@pytest.mark.anyio
+async def test_a_second_read_of_a_path_is_answered_from_the_cache(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    """Wheat's release list, the largest answer, is sent once: the second read is the
+    cache's, with the time its entry was stored (sdk-core ADR-0037, decision 5)."""
+    route = replay_fixture("get_data_release_info", "wheat")
+    first = await api.get_data_release_info("0410000")
+    second = await api.get_data_release_info("0410000")
+    assert isinstance(first, Answer)
+    assert route.call_count == 1
+    assert second.retrieved_at == first.retrieved_at
+    assert second.payload == first.payload
 
 
 def test_valid_codes_without_data_answer_200_with_an_empty_list() -> None:
     response = response_from_fixture(load_fixture(FIXTURES / DATA / "no_data_valid_codes.json"))
     assert (response.status_code, response.json()) == (200, [])
     assert classify(response) is None
-
-
-def test_the_gateway_not_found_is_a_not_found_error() -> None:
-    """NOT RECORDED: api.data.gov's documented NOT_FOUND body."""
-    body = {
-        "error": {
-            "code": "NOT_FOUND",
-            "message": "The requested URL was not found on this server.",
-        }
-    }
-    error = classify(synthesised(404, body))
-    assert isinstance(error, NotFoundError)
-    assert not isinstance(error, NoDataForYear), "a wrong request, not an empty year"
-    assert "no route for /api/psd/commodities" in error.message
-
-
-def test_other_statuses_fall_through_to_core() -> None:
-    listed = response_from_fixture(load_fixture(FIXTURES / "get_commodities" / "all.json"))
-    assert classify(synthesised(500, {"Message": "An error has occurred."})) is None
-    assert classify(listed) is None
-
-
-def test_the_recorded_429_is_a_rate_limit_error_with_its_retry_after() -> None:
-    """``classify`` called on its own gives the exact wait: no client has observed it."""
-    response = response_from_fixture(
-        load_fixture(FIXTURES / "get_commodities" / "over_rate_limit.json")
-    )
-    assert response.status_code == 429
-    assert response.headers["retry-after"] == "3151"
-    assert response.headers["x-ratelimit-limit"] == "1000"
-    assert response.headers["x-ratelimit-remaining"] == "0"
-    assert response.json()["error"]["code"] == "OVER_RATE_LIMIT"
-    error = classify(response)
-    assert isinstance(error, RateLimitError)
-    assert error.retry_after == 3151.0
-    assert "OVER_RATE_LIMIT: You have exceeded your rate limit" in error.message
-    assert "api.fas.usda.gov" not in error.message, "host-free (conventions §5)"
-    assert "expected back in 3151 s" in error.message, "no snapshot without the client"
-    assert "retry after" not in error.message, "core's adapters append the retry hint"
-    assert API_KEY_ENV in error.message
-    assert error.source == SOURCE
 
 
 @pytest.mark.anyio
@@ -296,71 +241,11 @@ async def test_the_policy_reads_the_recorded_429_through_core(
     with pytest.raises(RateLimitError, match="nothing was sent") as refused:
         await api.get_regions()
     assert refused.value.source == "api.data.gov", "the gateway's quota, not psd's"
-    assert refused.value.message.startswith(f"api.data.gov quota of the key in {API_KEY_ENV} spent")
+    assert "quota spent (" in refused.value.message, "core's words, the source the policy's"
+    assert API_KEY_ENV not in refused.value.message
     assert refused.value.retry_after is not None
     assert 3151 - SLACK <= refused.value.retry_after <= 3151
     assert route.call_count == 1
-
-
-def test_429_without_retry_after_falls_back_to_the_quota_window() -> None:
-    """NOT RECORDED: the recorded body without Retry-After or quota headers."""
-    error = classify(synthesised(429, OVER_RATE_LIMIT))
-    assert isinstance(error, RateLimitError)
-    assert error.retry_after == Gateway.policy.window == 3600.0
-    assert "an hourly quota per key" in error.message, "no limit known, none invented"
-    assert "expected back in 3600 s" in error.message
-
-
-def _recorded_429(retry_after: str | None) -> httpx.Response:
-    """The recorded 429 with ``Retry-After: 3151``; with ``None``, NOT A RECORDING: the same
-    answer, body and quota headers, with its ``Retry-After`` dropped."""
-    headers = [
-        (name, value)
-        for name, value in RECORDED_429.headers
-        if retry_after is not None or name.lower() != "retry-after"
-    ]
-    assert dict(headers).get("retry-after") == retry_after
-    return httpx.Response(RECORDED_429.status, headers=headers, content=RECORDED_429.content)
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("retry_after", "shaped", "attempts"),
-    [("3151", True, 1), (None, True, 1), (None, False, 4)],
-    ids=["recorded", "without_retry_after", "control_without_classify"],
-)
-async def test_core_retries_a_429_only_within_its_backoff(
-    respx_mock: respx.MockRouter, retry_after: str | None, shaped: bool, attempts: int
-) -> None:
-    """psd's ``classify`` shapes core's retries (sdk-core ADR-0037, decision 3): its
-    ``RateLimitError`` carries the wait, the recorded ``Retry-After`` or else the one-hour
-    window, beyond ``backoff_max`` (30 s), so a 429 is sent once, with or without the
-    header. The control drops ``classify``: core then retries the 429 without
-    ``Retry-After`` on its status alone, three more times at its short backoff, so this test
-    fails if ``classify`` stops shaping the retries."""
-    sleeps: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    route = respx_mock.get(f"{BASE_URL}/api/psd/commodities").mock(
-        return_value=_recorded_429(retry_after)
-    )
-    quick = dataclasses.replace(config, rate_limit=None)
-    if not shaped:
-        quick = dataclasses.replace(quick, classify=None)
-    with pytest.raises(RateLimitError) as info:
-        await AsyncClient(quick, sleep=fake_sleep).get_json("/api/psd/commodities")
-    assert route.call_count == attempts
-    assert len(sleeps) == attempts - 1
-    assert all(seconds <= RetryPolicy().backoff_max for seconds in sleeps)
-    if shaped:
-        # read through the client: the snapshot's wait from now, a moment under the header's
-        assert info.value.retry_after is not None
-        expected = float(retry_after or 3600)
-        assert expected - SLACK <= info.value.retry_after <= expected
-    else:
-        assert info.value.retry_after is None, "core's own mapping: no Retry-After, no wait"
 
 
 def test_the_recorded_bodies_are_the_documented_shapes() -> None:

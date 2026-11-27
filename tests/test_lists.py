@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 import pytest
 import respx
 from pydantic import BaseModel
-from xippios.core import PackagedList
+from xippios.core import PackagedList, UnknownCode
 from xippios.core.testing import mcp_call
 
 from xippios.usda.psd import api, tasks
@@ -96,15 +96,6 @@ def test_every_packaged_list_is_upstreams_records_with_their_provenance(
     assert all(set(record) == fields for record in packaged.records), name
 
 
-def test_every_list_task_is_exported() -> None:
-    import xippios.usda.psd as package
-
-    for task in IDS:
-        assert task in tasks.__all__
-        assert task in package.__all__
-        assert getattr(package, task) is getattr(tasks, task)
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize(("task", "name", "endpoint", "model"), LISTS, ids=IDS)
 async def test_list_answers_the_recorded_records_without_a_call(
@@ -119,7 +110,7 @@ async def test_list_answers_the_recorded_records_without_a_call(
     route = replay_fixture(WRAPPERS[endpoint], "all")
     result = await getattr(tasks, f"{task}_async")()
     assert not respx_mock.calls, f"{task} called upstream"
-    recorded = await getattr(api, WRAPPERS[endpoint])()
+    recorded = (await getattr(api, WRAPPERS[endpoint])()).payload
     assert route.call_count == 1, "the one call is the wrapper's"
     assert result.data == recorded, "same records, same values, upstream order"
     assert len(result.data) == len(_packaged(name).records)
@@ -188,6 +179,7 @@ def test_list_countries_by_region(respx_mock: respx.MockRouter) -> None:
     assert [c.country_code for c in north_america.data] == ["CA", "GL", "MX", "SB", "US"]
     assert north_america.data == [c for c in every if c.region_code == "R01"], "upstream order"
     assert north_america.meta.request == {"region_code": "R01"}
+    assert north_america.meta.names == {"region_code": {"R01": "North America"}}
     by_region = {
         code: tasks.list_countries(region_code=code).data for code in {c.region_code for c in every}
     }
@@ -210,17 +202,30 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     assert {c.genc_code for c in r15.data} == {None}
     assert "R15" not in {r.region_code for r in tasks.list_regions().data}
     assert r15.meta.request == {"region_code": "R15"}
+    assert r15.meta.names == {}, "the packaged regions list holds no name for R15"
+    assert r15.meta.notes == [
+        "The packaged regions list (fetched 2026-10-28) holds no name for region_code R15 of "
+        "this answer, so meta.names leaves it out."
+    ]
     assert not respx_mock.calls
 
 
-def test_an_unknown_region_is_an_empty_list(respx_mock: respx.MockRouter) -> None:
-    """No validation: a region no country carries has no countries, a correct answer."""
-    unknown = tasks.list_countries(region_code="R99")
-    assert unknown.data == []
-    assert unknown.meta.request == {"region_code": "R99"}
-    assert unknown.meta.retrieved_at == FETCHED["countries"]
-    assert unknown.meta.vintage is None
-    assert tasks.list_countries(region_code="r01").data == [], "exact, as list_regions spells it"
+def test_a_region_no_packaged_country_carries_is_refused(respx_mock: respx.MockRouter) -> None:
+    """A region code that no packaged country carries would list none, so the filter refuses
+    it, naming the closest codes, and ``R00`` (World), which the regions list holds and no
+    country carries, with its hint that the world total is ``get_world_data``'s; ``R15``,
+    which four countries carry and the regions list lacks, passes (the maintainer's decision
+    of 2026-11-26). The codes compare exactly, as ``list_regions`` spells them."""
+    with pytest.raises(UnknownCode, match="'R99' is not a region_code") as unknown:
+        tasks.list_countries(region_code="R99")
+    assert unknown.value.closest == (("R09", "Middle East"),)
+    assert "Nothing was sent." in unknown.value.message
+    with pytest.raises(UnknownCode, match="the world total is get_world_data's") as world:
+        tasks.list_countries(region_code="R00")
+    assert world.value.closest == ()
+    with pytest.raises(UnknownCode, match="'r01' is not a region_code"):
+        tasks.list_countries(region_code="r01")
+    assert len(tasks.list_countries(region_code="R15").data) == 4
     assert not respx_mock.calls
 
 

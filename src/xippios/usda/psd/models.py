@@ -9,17 +9,23 @@ docstring; every field is an assumption from that fixture, recorded 2026-10-23. 
 record carries a personal identifier. PSD's attribute and unit ids stay plain ``int``
 here, not ``IntEnum``: an id PSD adds before the packaged lists are refreshed must not
 fail an answer; ``enums.AttributeId`` and ``enums.UnitId`` name the packaged ids and
-compare equal to them.
+compare equal to them. A record's commodity, country, attribute, unit and region codes declare
+the packaged list that names them, ``NamedBy`` (sdk-core ADR-0067, decision 6), so every answer
+that holds the record names each code of its rows in ``meta.names``, and a code the list lacks
+is said in ``meta.notes`` rather than refused: the world's ``"00"`` and the region ``"R15"``
+(https://github.com/xippios/sdk-usda-psd/issues/21). A list's own code, whose name stands on
+its record beside it, takes no mark.
 """
 
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import Field
-from xippios.core import UpstreamModel
+from xippios.core import NamedBy, UpstreamModel
+
+from xippios.usda.psd.params import ATTRIBUTES, COMMODITIES, COUNTRIES, REGIONS, UNITS
 
 __all__ = [
-    "BalanceSheet",
-    "BalanceSheetEntry",
     "Commodity",
     "CommodityAttribute",
     "CommodityData",
@@ -53,14 +59,15 @@ class Country(UpstreamModel):
     Attributes:
         country_code: ``countryCode``, two characters, e.g. ``"US"``, ``"E4"``.
         country_name: ``countryName``, e.g. ``"United States"``.
-        region_code: ``regionCode``, a code of ``PSDData_GetRegions``, e.g. ``"R01"``.
+        region_code: ``regionCode``, a code of ``PSDData_GetRegions``, e.g. ``"R01"``;
+            ``"R15"`` for four countries, a region that list lacks, which a note says.
         genc_code: ``gencCode``, three letters, e.g. ``"USA"``; ``None`` where upstream
             sends ``null`` (aggregates such as ``"Africa, NEC"``).
     """
 
     country_code: str = Field(validation_alias="countryCode")
     country_name: str = Field(validation_alias="countryName")
-    region_code: str = Field(validation_alias="regionCode")
+    region_code: Annotated[str, NamedBy(REGIONS)] = Field(validation_alias="regionCode")
     genc_code: str | None = Field(validation_alias="gencCode")
 
 
@@ -134,7 +141,8 @@ class CommodityData(UpstreamModel):
 
     Attributes:
         commodity_code: ``commodityCode``, e.g. ``"0410000"`` (Wheat).
-        country_code: ``countryCode``, PSD's code, e.g. ``"US"``; ``"00"`` in world records.
+        country_code: ``countryCode``, PSD's code, e.g. ``"US"``; ``"00"`` in world records,
+            a code the packaged countries list lacks, which a note says.
         market_year: ``marketYear``, PSD's market year, e.g. ``2023``.
         calendar_year: ``calendarYear``, year of the release that last revised the
             record, e.g. ``2026``.
@@ -148,13 +156,13 @@ class CommodityData(UpstreamModel):
         value: ``value``, e.g. ``Decimal("49095.0")``, in the unit ``unit_id`` names.
     """
 
-    commodity_code: str = Field(validation_alias="commodityCode")
-    country_code: str = Field(validation_alias="countryCode")
+    commodity_code: Annotated[str, NamedBy(COMMODITIES)] = Field(validation_alias="commodityCode")
+    country_code: Annotated[str, NamedBy(COUNTRIES)] = Field(validation_alias="countryCode")
     market_year: int = Field(validation_alias="marketYear")
     calendar_year: int = Field(validation_alias="calendarYear")
     month: int = Field(validation_alias="month")
-    attribute_id: int = Field(validation_alias="attributeId")
-    unit_id: int = Field(validation_alias="unitId")
+    attribute_id: Annotated[int, NamedBy(ATTRIBUTES)] = Field(validation_alias="attributeId")
+    unit_id: Annotated[int, NamedBy(UNITS)] = Field(validation_alias="unitId")
     value: Decimal = Field(validation_alias="value")
 
 
@@ -186,61 +194,8 @@ class DataReleaseInfo(UpstreamModel):
         release_month: ``releaseMonth``, 1 to 12 (upstream ``"07"`` is ``7``).
     """
 
-    commodity_code: str = Field(validation_alias="commodityCode")
-    country_code: str = Field(validation_alias="countryCode")
+    commodity_code: Annotated[str, NamedBy(COMMODITIES)] = Field(validation_alias="commodityCode")
+    country_code: Annotated[str, NamedBy(COUNTRIES)] = Field(validation_alias="countryCode")
     market_year: int = Field(validation_alias="marketYear")
     release_year: int = Field(validation_alias="releaseYear")
     release_month: int = Field(validation_alias="releaseMonth")
-
-
-class BalanceSheetEntry(UpstreamModel):
-    """One attribute of a balance sheet: a ``CommodityData`` record without its keys.
-
-    A projection (sdk-core ADR-0028, ``UpstreamModel.project``): the record's own fields under
-    their names, values exactly as upstream sent them, nothing converted. The commodity,
-    country and market year the record also carried sit once on ``BalanceSheet``.
-
-    Attributes:
-        attribute_id: ``attributeId``, e.g. ``28`` (Production); ``enums.AttributeId``
-            names it.
-        unit_id: ``unitId``, the unit of ``value``, e.g. ``8`` (1000 MT), ``4``
-            (1000 HA), ``26`` (MT/HA); it differs per attribute, ``enums.UnitId`` names it.
-        value: ``value``, e.g. ``Decimal("49095.0")``, in the unit ``unit_id`` names.
-        calendar_year: ``calendarYear``, year of the release that last revised the
-            record, e.g. ``2026``.
-        month: ``month``, month of that release, 1 to 12.
-    """
-
-    attribute_id: int
-    unit_id: int
-    value: Decimal
-    calendar_year: int
-    month: int
-
-
-class BalanceSheet(UpstreamModel):
-    """The records of one commodity, country and market year, pivoted into one record.
-
-    Built by ``get_balance_sheet`` from one answer of
-    ``PSDData_GetCountryCommodityDataByYear``, losslessly: every record of the answer is
-    one entry of ``attributes``, in upstream order, and the three fields every record
-    shares are kept once here. No totals are derived, no unit converted, nothing renamed.
-
-    Attributes:
-        commodity_code: ``commodityCode`` of the records, e.g. ``"0410000"`` (Wheat).
-        country_code: ``countryCode`` of the records, PSD's code, e.g. ``"US"``.
-        market_year: ``marketYear`` of the records, e.g. ``2023``.
-        attributes: One entry per record, keyed by the attribute's upstream name as the
-            packaged ``commodityAttributes`` list spells it (``"Production"``,
-            ``"Ending Stocks"``). A name the list gives to several ids always carries the
-            id, ``"Total Disappearance (126)"`` (today 126, 173, 133 and 135), so an id
-            has the same key in every answer of a package version; an id the packaged
-            list lacks is keyed ``"attribute <id>"``. A reference refresh that renames an
-            attribute or adds an id under an existing name changes keys: a breaking
-            change (conventions §12), recorded in the CHANGELOG.
-    """
-
-    commodity_code: str
-    country_code: str
-    market_year: int
-    attributes: dict[str, BalanceSheetEntry]

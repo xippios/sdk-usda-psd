@@ -10,11 +10,10 @@ from decimal import Decimal
 import httpx
 import pytest
 import respx
-from mcp.types import TextContent
 from xippios.core import InvalidRequestError, NotFoundError, ResultCap, UnknownCode
-from xippios.core.data_gov import NoDataForYear
 from xippios.core.mcp import ToolSet
 from xippios.core.testing import mcp_call
+from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import __version__, tasks
 from xippios.usda.psd import mcp as psd_mcp
@@ -29,6 +28,15 @@ WORLD = "get_world_commodity_data_by_year"
 RELEASES = "get_data_release_info"
 WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) for world data"
 """How a refusal names the task to call instead and its tool (conventions §8)."""
+
+
+def no_data(path: str) -> str:
+    """The note of the empty answer for PSD's empty 404 at ``path``."""
+    return (
+        f"PSD answered GET {path} with HTTP 404 and an empty body, its answer for a market year "
+        "it holds no data for, which a market year it has not released is expected to answer "
+        "alike; get_release_dates names the market years that hold data."
+    )
 
 
 def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -49,6 +57,16 @@ def test_get_data_for_one_country(replay_fixture: Callable[[str, str], respx.Rou
     assert result.meta.vintage == "2026-07"
     assert result.meta.published_at is None
     assert data.calls.last.request.headers["Accept"] == "application/json"
+    names = result.meta.names
+    assert set(names) == {"commodity_code", "country_code", "attribute_id", "unit_id"}
+    assert (names["commodity_code"], names["country_code"]) == (
+        {WHEAT: "Wheat"},
+        {"US": "United States"},
+    )
+    assert names["attribute_id"]["28"] == "Production"
+    assert len(names["attribute_id"]) == 15, "every attribute of the rows"
+    assert names["unit_id"]["8"] == "(1000 MT)", "upstream's padding collapsed"
+    assert result.meta.notes == [], "every code of the rows is in its packaged list"
 
 
 def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -64,6 +82,8 @@ def test_get_data_for_every_country(replay_fixture: Callable[[str, str], respx.R
     assert len({(r.calendar_year, r.month) for r in result.data}) > 1
     assert result.meta.vintage == "2026-10"
     assert result.meta.published_at is None
+    assert set(result.meta.names["country_code"]) == {r.country_code for r in result.data}
+    assert result.meta.names["country_code"]["AR"] == "Argentina"
 
 
 def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> None:
@@ -77,6 +97,12 @@ def test_get_world_data(replay_fixture: Callable[[str, str], respx.Route]) -> No
     assert {(r.calendar_year, r.month) for r in result.data} == {(2026, 10)}
     assert result.meta.vintage == "2026-10"
     assert result.meta.published_at is None
+    assert "country_code" not in result.meta.names, "the world's 00 is no packaged country"
+    assert result.meta.names["commodity_code"] == {WHEAT: "Wheat"}
+    assert result.meta.notes == [
+        "The packaged countries list (fetched 2026-10-28) holds no name for country_code 00 "
+        "of this answer, so meta.names leaves it out."
+    ]
 
 
 def test_vintage_is_none_for_an_empty_answer() -> None:
@@ -93,6 +119,8 @@ def test_get_release_dates(replay_fixture: Callable[[str, str], respx.Route]) ->
     assert result.meta.published_at is None
     assert result.meta.vintage is None
     assert route.call_count == 1
+    assert result.meta.names["commodity_code"] == {WHEAT: "Wheat"}
+    assert set(result.meta.names["country_code"]) == {r.country_code for r in result.data}
 
 
 def test_get_release_dates_filters_after_the_one_call(
@@ -113,7 +141,7 @@ def test_get_release_dates_filters_after_the_one_call(
     country = tasks.get_release_dates(WHEAT, country_code="US")
     assert country.data == [r for r in every if r.country_code == "US"]
     assert len({r.market_year for r in country.data}) == len(country.data), "one per market year"
-    assert route.call_count == 4
+    assert route.call_count == 1, "core's cache answers the three calls after the first"
 
 
 def test_get_release_dates_since_keeps_later_releases_only(
@@ -142,7 +170,7 @@ def test_get_release_dates_since_keeps_later_releases_only(
         "since": "2022-08",
     }
     assert tasks.get_release_dates(WHEAT, since="2024-02").data == []
-    assert route.call_count == 5
+    assert route.call_count == 1, "core's cache answers the four calls after the first"
 
 
 @pytest.mark.anyio
@@ -171,11 +199,10 @@ async def test_release_dates_since_through_the_tool(
 def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> None:
     """``get_data``, ``get_release_dates`` and ``get_time_series`` keep 200 rows or 64 KB,
     ``ResultCap``'s defaults, and name their filters; ``list_countries`` has 300 rows;
-    every other tool has no entry, so core's default cap and note apply to it, the note
-    promising no filter the tool lacks (conventions §8, sdk-core ADR-0038). It succeeds the
-    end-to-end test of core's default note: the recorded answers over 200 rows, wheat's
-    release list and every country's data, now come through tools with a note of their
-    own, so no recorded answer shows the default note any more."""
+    every other tool has no entry, so core's default cap and note apply to it (conventions
+    §8, sdk-core ADR-0038). The two tools of one request each are paged, since core's cache
+    answers a continuation (sdk-core ADR-0061, decision 9), and the series keeps its newest
+    market years and states the most that one call sends on the MCP server."""
     default = ResultCap()
     assert (default.max_rows, default.max_bytes, default.note) == (200, 65536, None)
     noted = ("get_data", "get_release_dates", "get_time_series")
@@ -183,41 +210,56 @@ def test_the_cut_tools_keep_the_familys_limits_with_a_note_of_their_own() -> Non
         cap = tasks.MCP_CAPS[name]
         assert (cap.max_rows, cap.max_bytes) == (default.max_rows, default.max_bytes), name
         assert cap.note is not None, name
+    assert tasks.MCP_CAPS["get_data"].paged
+    assert tasks.MCP_CAPS["get_release_dates"].paged
+    series = tasks.MCP_CAPS["get_time_series"]
+    assert (series.paged, series.keep) == (False, "last")
+    assert series.note is not None
+    assert "at most 24 requests and 96 attempts with retries" in series.note
     assert tasks.MCP_CAPS["list_countries"].max_rows == 300
     assert set(tasks.MCP_CAPS) == {"list_countries", *noted}
     assert set(tasks.MCP_CAPS) < set(tasks.__all__)
 
 
 @pytest.mark.anyio
-async def test_a_cut_release_list_names_the_filters_that_narrow_it(
+async def test_a_cut_release_list_continues_from_the_cache(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Wheat's release list over MCP, every country and market year: cut at 200 rows with
-    a note naming the tool's own filters, never one it lacks (sdk-core ADR-0038)."""
-    replay_fixture(RELEASES, "wheat")
+    """Wheat's release list over MCP, every country and market year: cut at 200 rows with a
+    note naming the tool's own filters and the ``offset`` to continue with, and the second
+    page is the cache's, so the list is sent once (sdk-core ADR-0038, ADR-0061, decision 9;
+    https://github.com/xippios/sdk-usda-psd/issues/31)."""
+    route = replay_fixture(RELEASES, "wheat")
     every = tasks.get_release_dates(WHEAT).data
     payload = await mcp_call(server, "usda_psd_get_release_dates", {"commodity_code": WHEAT})
     assert len(payload["data"]) == 200
     assert payload["note"] == (
-        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
-        "market_year, country_code or since to see the rest"
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); pass market_year, "
+        "country_code or since to narrow the list; continue with offset=200"
     )
+    second = await mcp_call(
+        server, "usda_psd_get_release_dates", {"commodity_code": WHEAT, "offset": 200}
+    )
+    assert second["data"] == [row.model_dump(mode="json") for row in every[200:400]]
+    assert route.call_count == 1, "the first call's answer, kept in core's cache"
 
 
 @pytest.mark.anyio
-async def test_a_cut_answer_for_every_country_names_country_code(
+async def test_a_cut_answer_for_every_country_names_country_code_and_continues(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    replay_fixture(ALL, "wheat_all_2023")
+    route = replay_fixture(ALL, "wheat_all_2023")
     every = tasks.get_data(WHEAT, 2023).data
-    payload = await mcp_call(
-        server, "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023}
-    )
+    arguments = {"commodity_code": WHEAT, "market_year": 2023}
+    payload = await mcp_call(server, "usda_psd_get_data", arguments)
     assert len(payload["data"]) == 200
     assert payload["note"] == (
-        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); filter by "
-        "country_code to see the rest"
+        f"showing 200 of {len(every)} rows (cap: 200 rows or 65536 bytes); pass country_code, "
+        "e.g. US, for one country's rows; continue with offset=200"
     )
+    second = await mcp_call(server, "usda_psd_get_data", {**arguments, "offset": 200})
+    assert second["data"] == [row.model_dump(mode="json") for row in every[200:400]]
+    assert route.call_count == 1, "the first call's answer, kept in core's cache"
 
 
 def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -> None:
@@ -235,18 +277,29 @@ def test_get_release_dates_validates_its_filters(respx_mock: respx.MockRouter) -
     assert not respx_mock.calls
 
 
-def test_a_market_year_without_data_is_not_found(
+def test_a_market_year_without_data_answers_the_empty_list_with_a_note(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
+    """Recorded: PSD's empty 404 for market year 1900. The list task answers the empty list
+    with a note that names PSD's answer and points to ``get_release_dates``, and sends no
+    second request (https://github.com/xippios/sdk-usda-esr/issues/88, the maintainer's
+    decision of 2026-11-26)."""
     route = replay_fixture(DATA, "unknown_year")
-    with pytest.raises(NoDataForYear) as info:
-        tasks.get_data(WHEAT, 1900, "US")
-    assert info.value.path == "/api/psd/commodity/0410000/country/US/year/1900"
-    assert info.value.source == "usda-psd", "raised again in the package's name"
-    message = str(info.value)
-    assert "commodity 0410000, country US, market year 1900" in message
-    assert "upstream answered HTTP 404" in message
-    assert route.call_count == 1
+    result = tasks.get_data(WHEAT, 1900, "US")
+    assert result.data == []
+    assert result.meta.notes == [no_data("/api/psd/commodity/0410000/country/US/year/1900")]
+    assert result.meta.endpoint == "PSDData_GetCountryCommodityDataByYear"
+    assert (result.meta.vintage, result.meta.published_at) == (None, None)
+    assert result.meta.names == {
+        "commodity_code": {WHEAT: "Wheat"},
+        "country_code": {"US": "United States"},
+    }, "the codes asked for"
+    assert result.meta.request == {
+        "commodity_code": WHEAT,
+        "market_year": 1900,
+        "country_code": "US",
+    }
+    assert route.call_count == 1, "no second request"
 
 
 def test_unknown_codes_are_refused_before_any_request(respx_mock: respx.MockRouter) -> None:
@@ -303,7 +356,9 @@ async def test_value_is_a_json_number_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """``Decimal`` in Python, a JSON number on the wire, never a string (sdk-core ADR-0031,
-    decision 1)."""
+    decision 1): a JSON integer where upstream sends no fractional digit, else a JSON float,
+    as core reads the decimal's exponent (sdk-core ADR-0067, decision 10). PSD's recorded
+    answers carry four fractional digits, ``222218.0000``, so their values stay floats."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -315,7 +370,12 @@ async def test_value_is_a_json_number_through_both_adapters(
     )
     values = [row["value"] for row in payload["data"]]
     assert values
-    assert all(isinstance(value, float) for value in values)
+    recorded = tasks.get_world_data(WHEAT, 2023).data
+    exponents = [record.value.as_tuple().exponent for record in recorded]
+    assert [type(value) for value in values] == [
+        int if isinstance(exponent, int) and exponent >= 0 else float for exponent in exponents
+    ]
+    assert {type(value) for value in values} == {float}, "upstream sends fractional digits"
     app = FastAPI()
     app.include_router(router)
     http = TestClient(app)
@@ -333,62 +393,51 @@ async def test_value_is_a_json_number_through_both_adapters(
     assert rejected.json()["title"] == "UnknownCode"
 
 
+def test_the_package_serves_the_nine_tasks_the_boundary_keeps() -> None:
+    """The ranking, the pivot and the pick of the newest release leave by the boundary of a
+    source package (sdk-core ADR-0060), with the models and the list of groupings of their
+    own: a caller reads the same records from ``get_data`` and ``get_release_dates``."""
+    from xippios.usda.psd import models
+
+    assert sorted(tasks.__all__) == [
+        "get_data",
+        "get_release_dates",
+        "get_time_series",
+        "get_world_data",
+        "list_commodities",
+        "list_commodity_attributes",
+        "list_countries",
+        "list_regions",
+        "list_units_of_measure",
+    ]
+    for name in ("get_balance_sheet", "get_top_countries", "get_latest_release", "GROUPINGS"):
+        assert not hasattr(tasks, name), name
+    for name in ("BalanceSheet", "BalanceSheetEntry"):
+        assert not hasattr(models, name), name
+
+
 def test_build_returns_the_tool_set_the_entry_point_serves() -> None:
-    """``mcp.build()``, the package contract (conventions §8; sdk-core ADR-0026, amendment
-    2026-11-18, points c and d): a host that serves it beside other sources' tool sets
-    serves the tools, caps, text and version that ``xippios-usda-psd-mcp`` serves."""
+    """``mcp.build()`` carries what ``tasks.py`` declares for the server, its caps and its
+    instructions, with the package's version (conventions §8; sdk-core ADR-0063, decision 7);
+    the rest of the package contract is the family check's."""
     tools = psd_mcp.build()
     assert isinstance(tools, ToolSet)
-    assert tools.source == "usda-psd"
-    assert [task.__name__ for task in tools.tasks] == tasks.__all__
     assert dict(tools.caps or {}) == dict(tasks.MCP_CAPS)
-    assert (tools.instructions, tools.version) == (psd_mcp.INSTRUCTIONS, __version__)
-    assert tools.read_only
-    assert (tools.add_options, tools.apply_options) == (None, None), "no options of its own"
+    assert (tools.instructions, tools.version) == (tasks.MCP_INSTRUCTIONS, __version__)
 
 
-@pytest.mark.anyio
-async def test_the_adapters_refuse_a_bad_argument_before_the_task_runs(
-    respx_mock: respx.MockRouter,
+def test_meta_retrieved_at_is_the_time_of_the_answer(
+    replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
-    """Core 0.4.0's adapters, on this package's tools and routes: a tool refuses an argument
-    it does not declare (sdk-core#84), so ``country`` for ``country_code`` no longer runs
-    ``get_data`` for every country; a tool's error answer is flagged ``is_error``
-    (sdk-core#168); and a route answers a value its schema refuses as problem details, the
-    value not echoed (sdk-core#66). respx has no route mounted: nothing is sent."""
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from mcp.client import Client
-
-    from xippios.usda.psd.http import router
-
-    async with Client(server) as client:
-        undeclared = await client.call_tool(
-            "usda_psd_get_data", {"commodity_code": WHEAT, "market_year": 2023, "country": "US"}
-        )
-        unknown = await client.call_tool(
-            "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
-        )
-    assert undeclared.is_error
-    assert isinstance(undeclared.content[0], TextContent)
-    assert undeclared.content[0].text == (
-        "error: InvalidRequestError: country: Not an argument of this tool; it takes "
-        "commodity_code, market_year, country_code"
-    )
-    assert unknown.is_error
-    assert isinstance(unknown.content[0], TextContent)
-    assert unknown.content[0].text.startswith("error: UnknownCode: '0410001' is not a")
-    app = FastAPI()
-    app.include_router(router)
-    refused = TestClient(app).get(
-        "/usda-psd/get_data", params={"commodity_code": WHEAT, "market_year": "2023/24"}
-    )
-    assert refused.status_code == 422
-    assert refused.headers["content-type"].startswith("application/problem+json")
-    assert refused.json()["title"] == "InvalidRequestError"
-    assert refused.json()["detail"].startswith("market_year: ")
-    assert "2023/24" not in refused.text, "the input is not echoed"
-    assert not respx_mock.calls
+    """A task's ``meta.retrieved_at`` is the client's time of the answer it read (conventions
+    §4): a second call within the cache's lifetime is answered by the cache and carries the
+    time its entry was stored, the first call's."""
+    route = replay_fixture(DATA, "wheat_us_2023")
+    first = tasks.get_data(WHEAT, 2023, "US")
+    second = tasks.get_data(WHEAT, 2023, "US")
+    assert route.call_count == 1
+    assert second.meta.retrieved_at == first.meta.retrieved_at
+    assert second.data == first.data
 
 
 def test_valid_codes_without_data_are_an_empty_result(
@@ -405,31 +454,50 @@ def test_valid_codes_without_data_are_an_empty_result(
         "market_year": 2023,
         "country_code": "BD",
     }
+    assert result.meta.names == {
+        "commodity_code": {WHEAT: "Wheat"},
+        "country_code": {"BD": "Bermuda"},
+    }, "an answer without rows names what was asked for"
     assert route.call_count == 1
 
 
-def test_a_market_year_without_data_is_not_found_for_every_country(
+def test_a_market_year_without_data_answers_alike_for_every_country(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """Recorded: ``country/all`` for 1900 answers 404 with an empty body, like one country."""
     route = replay_fixture(ALL, "year_1900")
-    with pytest.raises(NoDataForYear) as info:
-        tasks.get_data(WHEAT, 1900)
-    assert "commodity 0410000, every country, market year 1900" in str(info.value)
-    assert "upstream answered HTTP 404" in str(info.value)
+    result = tasks.get_data(WHEAT, 1900)
+    assert result.data == []
+    assert result.meta.notes == [no_data("/api/psd/commodity/0410000/country/all/year/1900")]
+    assert result.meta.endpoint == "PSDData_GetCommodityDataByYear"
     assert route.call_count == 1
 
 
-def test_a_market_year_without_data_is_not_found_for_the_world(
+def test_a_market_year_without_data_answers_alike_for_the_world(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """Recorded: the world form for 1900 answers 404 with an empty body as well."""
     route = replay_fixture(WORLD, "year_1900")
-    with pytest.raises(NoDataForYear) as info:
-        tasks.get_world_data(WHEAT, 1900)
-    assert "commodity 0410000, the world, market year 1900" in str(info.value)
-    assert "upstream answered HTTP 404" in str(info.value)
+    result = tasks.get_world_data(WHEAT, 1900)
+    assert result.data == []
+    assert result.meta.notes == [no_data("/api/psd/commodity/0410000/world/year/1900")]
+    assert result.meta.endpoint == "PSDData_GetWorldCommodityDataByYear"
+    assert result.meta.names == {"commodity_code": {WHEAT: "Wheat"}}
     assert route.call_count == 1
+
+
+@pytest.mark.anyio
+async def test_the_empty_answer_reaches_the_tool_with_its_note(
+    replay_fixture: Callable[[str, str], respx.Route],
+) -> None:
+    replay_fixture(DATA, "unknown_year")
+    payload = await mcp_call(
+        server,
+        "usda_psd_get_data",
+        {"commodity_code": WHEAT, "market_year": 1900, "country_code": "US"},
+    )
+    assert payload["data"] == []
+    assert payload["meta"]["notes"] == [no_data("/api/psd/commodity/0410000/country/US/year/1900")]
 
 
 GATEWAY_NOT_FOUND = {
@@ -438,8 +506,8 @@ GATEWAY_NOT_FOUND = {
         "message": "The requested URL was not found on this server.",
     }
 }
-"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, as ``test_client.py``
-builds it."""
+"""NOT A RECORDING: api.data.gov's documented ``NOT_FOUND`` body, composed in the shape the
+gateway documents and the shared package's tests hold (conventions §10, kind 2)."""
 
 
 @pytest.mark.parametrize(
@@ -455,7 +523,8 @@ def test_the_gateways_not_found_propagates_unchanged(
     respx_mock: respx.MockRouter, path: str, call: Callable[[], object]
 ) -> None:
     """Only PSD's empty 404 means "no data for this market year"; the gateway's 404 says
-    the route is wrong and reaches the caller as classify raised it."""
+    the route is wrong and reaches the caller as classify raised it. NOT RECORDED: the body is
+    composed from api.data.gov's documented answer (conventions §10, kind 2)."""
     path = f"/api/psd/commodity/{WHEAT}/{path}"
     respx_mock.get(f"{BASE_URL}{path}").mock(
         return_value=httpx.Response(404, json=GATEWAY_NOT_FOUND)
@@ -463,5 +532,5 @@ def test_the_gateways_not_found_propagates_unchanged(
     with pytest.raises(NotFoundError) as info:
         call()
     assert not isinstance(info.value, NoDataForYear)
-    assert str(info.value).startswith(f"api.data.gov has no route for {path}")
-    assert "PSD has no data for commodity" not in str(info.value)
+    assert str(info.value).startswith(f"api.data.gov has no route for GET {path}")
+    assert "get_release_dates names" not in str(info.value)

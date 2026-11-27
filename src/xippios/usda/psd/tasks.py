@@ -25,37 +25,37 @@ fetch date is not one. Their filters (``search``, ``region_code``) only select r
 the packaged list, which keep upstream's order and values; ``meta.request`` carries those
 given, and ``search`` is a case-insensitive substring match (``xippios.core.matches``).
 
-The slices (``get_balance_sheet``, ``get_time_series``, ``get_top_countries``,
-``get_latest_release``) compose the same wrappers and the packaged lists into the
-answers people ask for. They select, order and pivot upstream's records and never
-change one: no derived totals, no unit conversion, no gap filling, nothing renamed
-(sdk-core ADR-0028). ``get_balance_sheet`` keys its entries by the packaged attribute names,
-``get_time_series`` spends one request per market year; the docstrings say what each
-costs.
+A ranking, a pivot and a selection of the newest release are no task of a source package
+(conventions §14; sdk-core ADR-0060): a caller reads those records from ``get_data`` and
+``get_release_dates``. ``get_time_series`` puts together and orders the records of the
+request ``get_data`` makes for one country, once per market year, conventions §4's period
+series: no record is changed, nothing is derived, converted, filled or renamed (sdk-core
+ADR-0028).
 """
 
-from collections import Counter
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from xippios.core import (
+    Answer,
+    Ceiling,
     InvalidRequestError,
-    NotFoundError,
     PackagedList,
     Result,
     ResultCap,
     ResultMeta,
-    ValidationError,
+    fetch_periods,
     matches,
+    names_codes,
+    newer_than,
     sync,
 )
-from xippios.core.data_gov import NoDataForYear
+from xippios.usda.fas import NoDataForYear
 
 from xippios.usda.psd import api
 from xippios.usda.psd._client import SOURCE
 from xippios.usda.psd.models import (
-    BalanceSheet,
-    BalanceSheetEntry,
     Commodity,
     CommodityAttribute,
     CommodityData,
@@ -65,9 +65,10 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    ATTRIBUTES,
+    COMMODITIES,
+    COUNTRIES,
     PACKAGE,
-    attribute_names,
-    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
@@ -77,12 +78,9 @@ from xippios.usda.psd.params import (
 )
 
 __all__ = [
-    "get_balance_sheet",
     "get_data",
-    "get_latest_release",
     "get_release_dates",
     "get_time_series",
-    "get_top_countries",
     "get_world_data",
     "list_commodities",
     "list_commodity_attributes",
@@ -91,18 +89,32 @@ __all__ = [
     "list_units_of_measure",
 ]
 
+MCP_INSTRUCTIONS = (
+    "USDA FAS PSD Online via xippios. "
+    "Tools are read-only. "
+    "Where list tools (usda_psd_list_*) exist, call them first to find valid values, "
+    "then query."
+)
+"""The read server's instructions for agents, which core's tool set reads from this module
+(conventions §8; sdk-core ADR-0063, decision 7)."""
+
 # A task named here is Python-only: no tool, no route; the adapters skip it (sdk-core ADR-0040,
 # decision 4).
 BULK_TASKS: frozenset[str] = frozenset()
 
 MCP_CAPS: Mapping[str, ResultCap] = {
     "list_countries": ResultCap(max_rows=300),
-    "get_data": ResultCap(note="filter by country_code to see the rest"),
+    "get_data": ResultCap(note="pass country_code, e.g. US, for one country's rows", paged=True),
     "get_release_dates": ResultCap(
-        note="filter by market_year, country_code or since to see the rest"
+        note="pass market_year, country_code or since to narrow the list", paged=True
     ),
     "get_time_series": ResultCap(
-        note="filter by attribute_id or narrow start_year and end_year to see the rest"
+        note=(
+            "the newest market years are shown; pass attribute_id or narrow start_year and "
+            "end_year to see the rest. One call sends one request per market year, at most 24 "
+            "requests and 96 attempts with retries unless --series-years sets another ceiling"
+        ),
+        keep="last",
     ),
 }
 """MCP result caps of their own, by task function name (conventions §8, sdk-core ADR-0038).
@@ -113,25 +125,46 @@ past the family's default of 200 rows, and 22,467 bytes of compact JSON, well wi
 limits, 200 rows or 64 KB (``ResultCap``'s defaults), with a note naming their filters, so
 a cut answer tells the agent how to narrow it: every country at once is up to about 1,900
 rows, wheat's release list 7,754, a series of every attribute 15 rows a year for wheat in
-the United States. Every other tool keeps the default with core's note.
+the United States. ``get_data`` and ``get_release_dates`` are one request each, which core's
+response cache keeps for its lifetime, so their caps are paged: the tool's ``offset``
+continues a cut answer by running the task again, which the cache answers, and costs upstream
+nothing (conventions §8; sdk-core ADR-0061, decision 9). The largest, wheat's release list of
+837,433 bytes, lies under the cache's bound of a body, 8 MiB. ``get_time_series``' cap keeps
+the last rows, the newest market years of a series ordered oldest first, and is not paged,
+since a series of more market years than the cache holds would send its requests again; its
+note states the most that one call sends on the MCP server, with core's four attempts for
+each request (sdk-core ADR-0061, decision 8). Every other tool keeps the default with core's
+note.
 """
 
 
 SERIES_START = 1960
 """First market year ``get_time_series`` asks for: the snapshot's summary of the data
-operations says "PSD Database has data for most commodities since year 1960"."""
+operations says "PSD Database has data for most commodities since year 1960" (the
+maintainer's decision of 2026-11-26 keeps it)."""
 
-SERIES_MAX_YEARS = 100
-"""Most market years one ``get_time_series`` call spans, a self-imposed sanity bound:
-1960 to the current forecast years is about 67 requests, 1960 to 9999 would be 8,040."""
+SERIES = Ceiling(
+    100,
+    unit="market years",
+    mcp=24,
+    option="--series-years",
+    help="one request per market year, so 24 market years send 24 requests, 96 attempts",
+    source=SOURCE,
+)
+"""Most market years one ``get_time_series`` call spans, ends included, core's ``Ceiling``
+(conventions §4; sdk-core ADR-0054, ADR-0061, decision 8): 100 in Python and over HTTP, and
+24 on the MCP server, which its option ``--series-years`` sets from 1 to 100, the one form of
+a ceiling that the sources share, its option named after its unit (the maintainer's decision
+of 2026-11-26). One request per market year, at the client's pace of one a second, of the
+1,000 an hour that the api.data.gov key shares with every package that uses it: 1960 to the
+current forecast year is about 67 requests. One call sends at most 100 requests, 400 attempts
+with core's four for each, and 24 and 96 on the MCP server; a longer range is refused before
+the first request."""
 
-GROUPINGS: frozenset[str] = frozenset({"E4", "E2", "E3", "C1", "T3", "X8", "Z7", "ZZ"})
-"""PSD's aggregates in the packaged countries list, which ``get_top_countries`` leaves out
-with ``exclude_groupings=True``: ``E4`` European Union, ``E2`` EU-15, ``E3`` EU-25, ``C1``
-Caribbean Basin, ``T3`` Africa, NEC, ``X8`` Southern Asia NEC, ``Z7`` Other Pacific
-Islands, NEC and ``ZZ`` Other, named here from the packaged list (fetched 2026-10-28),
-never inferred from names at run time; ``tests/test_slices.py`` pins each code to its
-packaged name."""
+mcp_add_options = SERIES.add_options
+"""The MCP server's option ``--series-years``, a hook that core's tool set reads."""
+mcp_apply_options = SERIES.apply_options
+"""Sets ``SERIES`` from ``--series-years`` for the process, a hook that core's tool set reads."""
 
 
 def _vintage(records: list[CommodityData]) -> str | None:
@@ -142,24 +175,24 @@ def _vintage(records: list[CommodityData]) -> str | None:
     return f"{year:04d}-{month:02d}"
 
 
-def _absent(
-    exc: NoDataForYear, commodity_code: str, country: str, market_year: int
-) -> NoDataForYear:
-    """PSD's empty 404 again, naming what was asked for, in the source's name.
+def _no_data(exc: NoDataForYear) -> str:
+    """The note of an empty answer for PSD's empty 404, which names the request it answered.
 
-    Only ``NoDataForYear``, core's class that the gateway returns on a data path, means "no
-    data for this market year"; any other ``NotFoundError`` (the gateway's ``NOT_FOUND``)
-    is not caught and propagates as is.
+    Only ``NoDataForYear``, the shared package's class that the gateway returns on a data path,
+    means "no data for this market year", so the task answers the empty list with this note
+    and sends no second request (https://github.com/xippios/sdk-usda-esr/issues/88, the
+    maintainer's decision of 2026-11-26); any other ``NotFoundError`` (the gateway's
+    ``NOT_FOUND``) is not caught and propagates as is. PSD answers market year 1900 so
+    (recorded); a market year it has not released is expected to answer alike, not recorded.
     """
-    return NoDataForYear(
-        exc.path,
-        f"PSD has no data for commodity {commodity_code}, {country}, market year "
-        f"{market_year}: upstream answered HTTP 404 ({exc.message}). PSD has data for most "
-        "commodities since 1960.",
-        source=exc.source,
+    return (
+        f"PSD answered GET {exc.path} with HTTP 404 and an empty body, its answer for a market "
+        "year it holds no data for, which a market year it has not released is expected to "
+        "answer alike; get_release_dates names the market years that hold data."
     )
 
 
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_data_async(
     commodity_code: str, market_year: int, country_code: str | None = None
 ) -> Result[list[CommodityData]]:
@@ -168,14 +201,14 @@ async def get_data_async(
     One record per country and attribute (area, production, imports, exports,
     consumption, stocks, ...): ``attribute_id`` and ``unit_id`` are PSD's integer ids,
     which ``enums.AttributeId`` and ``enums.UnitId`` name; ``value`` is in that unit.
-    Codes and the year are checked against the packaged lists before any call; an
-    unknown code raises ``InvalidRequestError`` naming the closest ones. Each record's
-    ``calendar_year`` and ``month`` are the PSD release that last revised it: for one
-    country all records share one release, for every country they differ by country.
-    ``meta.vintage`` is the latest of them as upstream names it (``"2026-07"``);
-    ``meta.published_at`` stays empty, since PSD gives no day. An empty list means PSD
-    has no records for that combination; a market year without data raises
-    ``NotFoundError``. Every country is up to about 1,900 rows (1,875 for corn in 2023).
+    Codes and the year are checked before any request, an unknown code refused naming the
+    closest ones. Each record's
+    ``calendar_year`` and ``month`` name the PSD release that last revised it;
+    ``meta.vintage`` is the latest of them (``"2026-07"``), and ``meta.published_at`` stays
+    empty, since PSD gives no day. An empty list means PSD holds no records for that
+    combination; a market year PSD holds no data for, or has not released, answers the
+    empty list with a note, and ``get_release_dates`` names the market years that hold data.
+    Every country at once is up to about 1,900 rows.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -199,19 +232,27 @@ async def get_data_async(
     try:
         if country_code is None:
             endpoint = "PSDData_GetCommodityDataByYear"
-            records = await api.get_commodity_data_by_year(commodity_code, market_year)
+            answer = await api.get_commodity_data_by_year(commodity_code, market_year)
         else:
             endpoint = "PSDData_GetCountryCommodityDataByYear"
-            records = await api.get_country_commodity_data_by_year(
+            answer = await api.get_country_commodity_data_by_year(
                 commodity_code, country_code, market_year
             )
     except NoDataForYear as exc:
-        country = "every country" if country_code is None else f"country {country_code}"
-        raise _absent(exc, commodity_code, country, market_year) from exc
-    meta = ResultMeta(source=SOURCE, endpoint=endpoint, vintage=_vintage(records), request=request)
+        empty = ResultMeta(source=SOURCE, endpoint=endpoint, request=request, notes=[_no_data(exc)])
+        return Result(data=[], meta=empty)
+    records = answer.payload
+    meta = ResultMeta(
+        source=SOURCE,
+        endpoint=endpoint,
+        retrieved_at=answer.retrieved_at,
+        vintage=_vintage(records),
+        request=request,
+    )
     return Result(data=records, meta=meta)
 
 
+@names_codes(commodity_code=COMMODITIES)
 async def get_world_data_async(
     commodity_code: str, market_year: int
 ) -> Result[list[CommodityData]]:
@@ -223,9 +264,11 @@ async def get_world_data_async(
     ``meta.vintage`` is the PSD release that last revised the figures, as upstream names
     it (``"2026-10"``), the latest release of any country for this commodity and market
     year (in the whole answers recorded on 2026-10-23, commit ``07b88ad``);
-    ``meta.published_at`` stays empty, since PSD gives no day. The code and the
-    year are checked before any call; a market year without data raises
-    ``NotFoundError``.
+    ``meta.published_at`` stays empty, since PSD gives no day. The world's ``"00"`` is no
+    code of the packaged countries list, so a note says that ``meta.names`` leaves it out.
+    The code and the year are checked before any request; a market year PSD holds no data
+    for, or has not released, answers the empty list with a note, and ``get_release_dates``
+    names the market years that hold data.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -240,12 +283,20 @@ async def get_world_data_async(
         "market_year": market_year,
     }
     try:
-        records = await api.get_world_commodity_data_by_year(commodity_code, market_year)
+        answer = await api.get_world_commodity_data_by_year(commodity_code, market_year)
     except NoDataForYear as exc:
-        raise _absent(exc, commodity_code, "the world", market_year) from exc
+        empty = ResultMeta(
+            source=SOURCE,
+            endpoint="PSDData_GetWorldCommodityDataByYear",
+            request=request,
+            notes=[_no_data(exc)],
+        )
+        return Result(data=[], meta=empty)
+    records = answer.payload
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetWorldCommodityDataByYear",
+        retrieved_at=answer.retrieved_at,
         vintage=_vintage(records),
         request=request,
     )
@@ -257,6 +308,7 @@ def _release(record: DataReleaseInfo) -> tuple[int, int]:
     return record.release_year, record.release_month
 
 
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES)
 async def get_release_dates_async(
     commodity_code: str,
     market_year: int | None = None,
@@ -288,18 +340,19 @@ async def get_release_dates_async(
         validate_market_year(market_year)
     if country_code is not None:
         validate_country_code(country_code)
-    after = None if since is None else validate_since(since)
-    releases = await api.get_data_release_info(commodity_code)
+    if since is not None:
+        validate_since(since)  # refused before the request
+    answer = await api.get_data_release_info(commodity_code)
     selected = [
         release
-        for release in releases
+        for release in newer_than(since, answer.payload, released=_release, read=validate_since)
         if (market_year is None or release.market_year == market_year)
         and (country_code is None or release.country_code == country_code)
-        and (after is None or _release(release) > after)
     ]
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetDataReleaseInfo",
+        retrieved_at=answer.retrieved_at,
         request={
             "commodity_code": commodity_code,
             "market_year": market_year,
@@ -310,132 +363,12 @@ async def get_release_dates_async(
     return Result(data=selected, meta=meta)
 
 
-def _attribute_key(attribute_id: int, names: dict[int, str], shared: set[str]) -> str:
-    """The ``BalanceSheet.attributes`` key of an id, the same in every answer of a version.
-
-    The id's name in the packaged ``commodityAttributes`` list (``names``); for a name
-    the list gives several ids (``shared``: ``"Total Disappearance"`` is 126 and 173,
-    ``"Fresh Dom. Consumption"`` 133 and 135) ``"<name> (<attributeId>)"``, whether or
-    not the other id is in the answer; ``"attribute <attributeId>"`` for an id the list
-    lacks.
-    """
-    name = names.get(attribute_id)
-    if name is None:
-        return f"attribute {attribute_id}"
-    return f"{name} ({attribute_id})" if name in shared else name
-
-
-def _balance_sheet(records: list[CommodityData]) -> BalanceSheet:
-    """The records of one answer as one ``BalanceSheet``; pure, no call.
-
-    Lossless: every record becomes one entry, in upstream order, keyed by
-    ``_attribute_key``. ``records`` is not empty: ``get_balance_sheet`` raises
-    ``NotFoundError`` for an empty answer first.
-
-    Raises:
-        ValidationError: When the records are not all of one commodity, country and
-            market year, repeat an attribute id, or would share a key: one dict entry
-            per record could then not hold them all.
-    """
-    first = records[0]
-    keys = (first.commodity_code, first.country_code, first.market_year)
-    ids = Counter(record.attribute_id for record in records)
-    mixed = {
-        (r.commodity_code, r.country_code, r.market_year)
-        for r in records
-        if (r.commodity_code, r.country_code, r.market_year) != keys
-    }
-    repeated = sorted(attribute_id for attribute_id, count in ids.items() if count > 1)
-    names = attribute_names()
-    shared = {name for name, count in Counter(names.values()).items() if count > 1}
-    attributes = {
-        _attribute_key(r.attribute_id, names, shared): BalanceSheetEntry.project(r) for r in records
-    }
-    if mixed or repeated or len(attributes) != len(records):
-        raise ValidationError(
-            f"{SOURCE} PSDData_GetCountryCommodityDataByYear: a balance sheet is one record "
-            f"per attribute of one commodity, country and market year {keys}, but the "
-            f"answer also holds {sorted(mixed)} and repeats attribute ids {repeated}; "
-            f"{len(records)} records gave {len(attributes)} distinct keys.",
-            raw=[record.model_dump(mode="json") for record in records],
-            source=SOURCE,
-        )
-    return BalanceSheet(
-        commodity_code=first.commodity_code,
-        country_code=first.country_code,
-        market_year=first.market_year,
-        attributes=attributes,
-    )
-
-
-async def get_balance_sheet_async(
-    commodity_code: str, country_code: str, market_year: int
-) -> Result[BalanceSheet]:
-    """One country's PSD supply and distribution of a commodity in a market year, as one record.
-
-    One request to ``PSDData_GetCountryCommodityDataByYear``; its records, one per
-    attribute, become the entries of ``attributes``, keyed by the attribute's upstream
-    name (``"Production"``, ``"Imports"``, ``"Ending Stocks"``, 15 of them for wheat in
-    the United States), in upstream order. Each entry carries ``attribute_id``,
-    ``unit_id``, ``value``, ``calendar_year`` and ``month`` exactly as the record had
-    them. Units differ per attribute (wheat US: 1000 HA for area, 1000 MT for
-    quantities, MT/HA for yield), so read each entry's ``unit_id`` (``enums.UnitId``).
-    Nothing is derived, converted or renamed. Names are not unique upstream: an id
-    whose name the packaged list gives to several ids (``"Total Disappearance"`` is 126
-    and 173, ``"Fresh Dom. Consumption"`` 133 and 135) is always keyed with its id,
-    ``"Total Disappearance (126)"``, so an id has the same key in every answer of a
-    package version; an id the packaged list lacks is keyed ``"attribute <id>"``. Keys
-    come from the packaged list: a reference refresh that renames an attribute, or adds
-    an id under an existing name, changes keys and is a breaking change (conventions
-    §12), recorded in the CHANGELOG. ``meta.vintage`` is the PSD release that last
-    revised the figures (``"2026-07"``); ``meta.published_at`` stays empty, since PSD
-    gives no day. Codes and the year are checked before the call. Valid codes without
-    data (PSD answers an empty list) raise ``NotFoundError``, a market year without data
-    ``NoDataForYear``, a ``NotFoundError`` too, both naming commodity, country and year.
-
-    Args:
-        commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
-            ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
-        country_code: PSD country code (not ISO), e.g. ``"US"`` (United States), ``"BR"``
-            (Brazil), ``"E4"`` (European Union). For the world use ``get_world_data``.
-        market_year: PSD market year, e.g. ``2023``, ``2022``, ``2021``; data goes back to
-            1960 for most commodities.
-    """
-    validate_commodity_code(commodity_code)
-    validate_country_code(country_code)
-    validate_market_year(market_year)
-    request: dict[str, str | int] = {
-        "commodity_code": commodity_code,
-        "country_code": country_code,
-        "market_year": market_year,
-    }
-    try:
-        records = await api.get_country_commodity_data_by_year(
-            commodity_code, country_code, market_year
-        )
-    except NoDataForYear as exc:
-        raise _absent(exc, commodity_code, f"country {country_code}", market_year) from exc
-    if not records:
-        raise NotFoundError(
-            f"PSD has no balance sheet for commodity {commodity_code}, country "
-            f"{country_code}, market year {market_year}: upstream answered with no records. "
-            "The codes are valid; PSD has no data for this combination.",
-            source=SOURCE,
-        )
-    meta = ResultMeta(
-        source=SOURCE,
-        endpoint="PSDData_GetCountryCommodityDataByYear",
-        vintage=_vintage(records),
-        request=request,
-    )
-    return Result(data=_balance_sheet(records), meta=meta)
-
-
 def _attribute_ids(attribute_id: object) -> frozenset[int] | None:
-    """The ids ``get_time_series`` keeps, each checked; ``None`` keeps every attribute.
+    """The ids ``get_time_series`` keeps, checked by one call; ``None`` keeps every attribute.
 
-    An id or a sequence of ids; text is no sequence of ids here, so ``"28"`` is refused
-    as not an integer, like any other value ``validate_attribute_id`` refuses.
+    An id or a sequence of ids, checked as one list by ``validate_attribute_id``, core's
+    ``check``, which refuses the first id it refuses and an empty list; text is no sequence of
+    ids here, so ``"28"`` is refused as not an integer, naming the integer to pass.
 
     Raises:
         InvalidRequestError: An empty sequence, or a value that is not an integer id.
@@ -445,18 +378,80 @@ def _attribute_ids(attribute_id: object) -> frozenset[int] | None:
         return None
     ids: list[Any]
     if isinstance(attribute_id, Sequence) and not isinstance(attribute_id, str | bytes):
-        if not attribute_id:
-            raise InvalidRequestError(
-                "attribute_id must name at least one id, such as [28, 88] (Production, "
-                "Exports), or be omitted for every attribute; got an empty list.",
-                source=SOURCE,
-            )
         ids = list(attribute_id)
     else:
         ids = [attribute_id]
-    return frozenset(validate_attribute_id(each) for each in ids)
+    return frozenset(validate_attribute_id(ids))
 
 
+def _series_range(start_year: int, end_year: int) -> None:
+    """Refuse a range that starts before 1960, runs backwards or spans more than ``SERIES``.
+
+    Both years have passed ``validate_market_year``; the range is checked before the first
+    request, as conventions §4 and §5 ask, with ``InvalidRequestError`` (sdk-core ADR-0007),
+    each refusal saying that nothing was sent. The floor and the order are the task's own, and
+    the ceiling core's ``Ceiling.check``, its advice naming the range to ask for (sdk-core
+    ADR-0054).
+    """
+    if start_year < SERIES_START:
+        raise InvalidRequestError(
+            f"start_year must be {SERIES_START} or later, got {start_year}. Nothing was sent. "
+            'The PSD API documentation says "PSD Database has data for most commodities since '
+            f'year 1960", so each year before it would spend a request on a 404.',
+            source=SOURCE,
+        )
+    if start_year > end_year:
+        raise InvalidRequestError(
+            f"start_year {start_year} is after end_year {end_year}. Nothing was sent. Pass the "
+            "earlier market year first, e.g. start_year=2021, end_year=2023.",
+            source=SOURCE,
+        )
+    most = SERIES.value
+    SERIES.check(
+        end_year - start_year + 1,
+        asked=f"{start_year} to {end_year}",
+        advice=(
+            f"Narrow the range, e.g. start_year={end_year - most + 1}, end_year={end_year}, or "
+            f"split it into calls of at most {most}."
+        ),
+    )
+
+
+def _rows(count: int) -> str:
+    return f"{count} row{'' if count == 1 else 's'}"
+
+
+def _years_note(
+    years: range,
+    fetched: list[tuple[int, Answer[list[CommodityData]]]],
+    kept: dict[int, int],
+    attribute_ids: frozenset[int] | None,
+) -> str:
+    """The series' note on its market years: each answered with its rows, each passed over.
+
+    A market year answered is named with its count of rows, in the order of the rows; one
+    passed over is named for why: PSD's empty 404, a market year it holds no data for, or an
+    answer without a record of the attributes asked for, or without any record where every
+    attribute was asked for, e.g. ``"Market years in the order of the rows: 2021 with 1 row,
+    2023 with 1 row; passed over, without data in PSD: 2022."``
+    (https://github.com/xippios/sdk-usda-psd/issues/26; sdk-core ADR-0067, decision 1).
+    """
+    answered = [year for year, _ in fetched]
+    with_rows = [f"{year} with {_rows(kept[year])}" for year in answered if kept[year]]
+    no_record = [str(year) for year in answered if not kept[year]]
+    no_data = [str(year) for year in years if year not in kept]
+    asked = "a record of the attributes asked for" if attribute_ids is not None else "a record"
+    parts = []
+    if with_rows:
+        parts.append(f"in the order of the rows: {', '.join(with_rows)}")
+    if no_data:
+        parts.append(f"passed over, without data in PSD: {', '.join(no_data)}")
+    if no_record:
+        parts.append(f"passed over, answered without {asked}: {', '.join(no_record)}")
+    return f"Market years {'; '.join(parts)}."
+
+
+@names_codes(commodity_code=COMMODITIES, country_code=COUNTRIES, attribute_id=ATTRIBUTES)
 async def get_time_series_async(
     commodity_code: str,
     country_code: str,
@@ -464,25 +459,18 @@ async def get_time_series_async(
     end_year: int,
     attribute_id: int | Sequence[int] | None = None,
 ) -> Result[list[CommodityData]]:
-    """One country's PSD figures for a commodity over a range of market years.
+    """One country's PSD figures for a commodity over a range of market years, oldest first.
 
-    One request to ``PSDData_GetCountryCommodityDataByYear`` per market year, oldest
-    first, at the client's pace of one request per second, and each counts against
-    api.data.gov's quota of 1,000 requests per hour per key: 2021 to 2023 is three
-    requests and about three seconds, 1960 to 2026 sixty-seven, so ask for the years you
-    need; a range of more than 100 market years is refused. Of each answer the records
-    of the attributes asked for, or all of them when ``attribute_id`` is omitted, are
-    kept exactly as upstream sent them, ordered by market year and within a year in
-    upstream's order: ``value`` is in its ``unit_id``, and ``calendar_year`` and
-    ``month`` name the release that last revised that year, which may differ from year
-    to year. A market year PSD has no data for (its empty HTTP 404, recorded for 1900),
-    or whose answer has no record for the attributes, is absent from the list: no gap is
-    filled, nothing interpolated, no error raised; a range without any record is an
-    empty list. A year beyond PSD's forecasts is expected to answer the same 404 (not
-    recorded) and still costs its request. Any other error, the gateway's own 404
-    included, is raised. ``meta.vintage`` is the latest release across the records
-    (``"2026-07"``); ``meta.published_at`` stays empty. Codes, every attribute id, both
-    years and the range are checked before the first request.
+    One request to ``PSDData_GetCountryCommodityDataByYear`` per market year from
+    ``start_year`` to ``end_year``, at the client's pace of one a second, each counted against
+    api.data.gov's hourly quota: at most 100 market years in Python and over HTTP and 24 over
+    MCP, unless ``--series-years`` sets another, so one call sends at most 100 requests, 400
+    attempts with retries, and 24 and 96 over MCP. The records of the attributes asked for,
+    or all, are kept as upstream sent them, by market year and within a year in upstream's
+    order. ``meta.notes`` names each market year answered with its count of rows and each
+    passed over, one PSD holds no data for or whose answer has no record kept; no gap is
+    filled. Any other error stops the call and returns nothing. ``meta.vintage`` is the
+    latest release of the records; ``meta.published_at`` stays empty.
 
     Args:
         commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
@@ -490,40 +478,23 @@ async def get_time_series_async(
         country_code: PSD country code (not ISO), e.g. ``"US"`` (United States), ``"BR"``
             (Brazil), ``"E4"`` (European Union).
         start_year: First PSD market year, 1960 or later (PSD: "PSD Database has data
-            for most commodities since year 1960"), e.g. ``2021``.
-        end_year: Last PSD market year, included, e.g. ``2023``; not before
-            ``start_year`` and at most 99 years after it. No other bound.
+            for most commodities since year 1960"), e.g. ``2021``; 1960 to the current
+            forecast year is about 67 requests, so ask for the years you need.
+        end_year: Last PSD market year, included, e.g. ``2023``; not before ``start_year``
+            and within the ceiling: at most 99 years after it in Python and over HTTP, 23
+            over MCP by default. A year beyond PSD's forecasts still costs its request.
         attribute_id: PSD attribute id, or a list of them, e.g. ``28`` (Production),
             ``[28, 88]`` (Production and Exports), ``176`` (Ending Stocks);
             ``list_commodity_attributes`` lists them. Omit it (``None``) for every
             attribute of each answer, 15 a year for wheat in the United States. An empty
-            list is refused.
+            list is refused. Every id is checked before the first request.
     """
     validate_commodity_code(commodity_code)
     validate_country_code(country_code)
     attribute_ids = _attribute_ids(attribute_id)
     validate_market_year(start_year)
     validate_market_year(end_year)
-    if start_year < SERIES_START:
-        raise InvalidRequestError(
-            f"start_year must be {SERIES_START} or later, got {start_year}: the PSD API "
-            'documentation says "PSD Database has data for most commodities since year '
-            f'1960", so each year before it would spend a request on a 404.',
-            source=SOURCE,
-        )
-    if start_year > end_year:
-        raise InvalidRequestError(
-            f"start_year {start_year} is after end_year {end_year}: pass the earlier market "
-            "year first, e.g. start_year=2021, end_year=2023.",
-            source=SOURCE,
-        )
-    if end_year - start_year + 1 > SERIES_MAX_YEARS:
-        raise InvalidRequestError(
-            f"{start_year} to {end_year} is {end_year - start_year + 1} market years, one "
-            f"request each; a series spans at most {SERIES_MAX_YEARS}. PSD's data starts in "
-            "1960 and reaches the current forecast year, so narrow the range.",
-            source=SOURCE,
-        )
+    _series_range(start_year, end_year)
     request: dict[str, Any] = {
         "commodity_code": commodity_code,
         "country_code": country_code,
@@ -531,182 +502,34 @@ async def get_time_series_async(
         "end_year": end_year,
         "attribute_id": list(attribute_id) if isinstance(attribute_id, Sequence) else attribute_id,
     }
+    # PSD's empty 404 is no data for that market year, which adds no rows; any other error
+    # stops the series, naming the market years answered before it (sdk-core ADR-0054).
+    years = range(start_year, end_year + 1)
+    fetched = await fetch_periods(
+        years,
+        lambda market_year: api.get_country_commodity_data_by_year(
+            commodity_code, country_code, market_year
+        ),
+        skip=(NoDataForYear,),
+    )
     series: list[CommodityData] = []
-    for market_year in range(start_year, end_year + 1):
-        try:
-            records = await api.get_country_commodity_data_by_year(
-                commodity_code, country_code, market_year
-            )
-        except NoDataForYear:
-            continue  # PSD's empty 404: no data for this market year, the year is absent
-        series.extend(
-            record
-            for record in records
-            if attribute_ids is None or record.attribute_id in attribute_ids
-        )
+    kept: dict[int, int] = {}
+    for market_year, answer in fetched:
+        rows = [
+            r for r in answer.payload if attribute_ids is None or r.attribute_id in attribute_ids
+        ]
+        kept[market_year] = len(rows)
+        series.extend(rows)
     meta = ResultMeta(
         source=SOURCE,
         endpoint="PSDData_GetCountryCommodityDataByYear",
+        # the oldest answer assembled; now where every year answered PSD's empty 404 (§4)
+        retrieved_at=min((answer.retrieved_at for _, answer in fetched), default=datetime.now(UTC)),
         vintage=_vintage(series),
         request=request,
+        notes=[_years_note(years, fetched, kept, attribute_ids)],
     )
     return Result(data=series, meta=meta)
-
-
-async def get_top_countries_async(
-    commodity_code: str,
-    market_year: int,
-    attribute_id: int,
-    n: int = 10,
-    region_code: str | None = None,
-    exclude_groupings: bool = False,
-) -> Result[list[CommodityData]]:
-    """The n countries with the largest value of one PSD attribute for a commodity and year.
-
-    One request to ``PSDData_GetCommodityDataByYear`` (every country); its records with
-    ``attribute_id`` are sorted by ``value``, largest first, and the first ``n`` kept,
-    each exactly as upstream sent it. Equal values keep upstream's order. Values are
-    compared as sent, with no unit check: each record carries its own ``unit_id``, the
-    unit of its ``value`` (in the recorded answers, wheat and corn 2023, every country
-    reports an attribute in the same unit). By default nothing is excluded: PSD's country
-    list holds groupings that rank alongside countries, above all the European Union
-    (``"E4"``, second in wheat production for 2023), and residual aggregates such as
-    ``"T3"`` (Africa, NEC), ``"X8"`` (Southern Asia NEC) and ``"Z7"`` (Other Pacific
-    Islands, NEC); ``exclude_groupings=True`` leaves those out, and ``region_code`` keeps
-    the countries of one PSD region. The data records carry no region, so each record's
-    country is looked up in the packaged country list; a country it lacks has no region
-    and is left out when ``region_code`` is given. ``meta.vintage`` is the latest release
-    among every record that was ranked, after ``region_code`` and ``exclude_groupings``
-    apply, not only the ``n`` returned, since each of them could have changed the order;
-    for wheat 2023 that is ``"2026-10"``, and ``None`` when nothing was ranked.
-    ``meta.published_at`` stays empty. Codes and arguments are checked before the call;
-    a market year without data raises ``NotFoundError``.
-
-    Args:
-        commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
-            ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
-        market_year: PSD market year, e.g. ``2023``, ``2022``, ``2021``.
-        attribute_id: PSD attribute id to rank by, e.g. ``28`` (Production), ``88``
-            (Exports), ``57`` (Imports), ``176`` (Ending Stocks);
-            ``list_commodity_attributes`` lists them.
-        n: How many records to keep, at least 1, e.g. ``5``, ``10`` (the default); more
-            than the countries reporting the attribute returns them all.
-        region_code: Rank only the countries of this PSD region, as ``list_countries``
-            gives it, e.g. ``"R04"`` (South America), ``"R18"`` (East Asia), ``"R15"``
-            (Africa, NEC and three more, a region ``list_regions`` lacks). A code no
-            packaged country carries is refused; ``"R00"`` (World) is one, and the world
-            total is ``get_world_data``'s. Omit (``None``) for every region.
-        exclude_groupings: ``True`` leaves PSD's aggregates out of the ranking: ``"E4"``
-            European Union, ``"E2"`` EU-15, ``"E3"`` EU-25, ``"C1"`` Caribbean Basin,
-            ``"T3"`` Africa, NEC, ``"X8"`` Southern Asia NEC, ``"Z7"`` Other Pacific
-            Islands, NEC and ``"ZZ"`` Other. ``False``, the default, ranks them like
-            countries.
-    """
-    validate_commodity_code(commodity_code)
-    validate_market_year(market_year)
-    validate_attribute_id(attribute_id)
-    if isinstance(n, bool) or n < 1:
-        raise InvalidRequestError(
-            f"n must be a whole number of at least 1, such as 5 or 10, got {n!r}.",
-            source=SOURCE,
-        )
-    if region_code is not None:
-        validate_region_code(region_code)
-    if not isinstance(exclude_groupings, bool):
-        raise InvalidRequestError(
-            f"exclude_groupings must be true or false, got {exclude_groupings!r}.",
-            source=SOURCE,
-        )
-    request: dict[str, str | int | bool | None] = {
-        "commodity_code": commodity_code,
-        "market_year": market_year,
-        "attribute_id": attribute_id,
-        "n": n,
-        "region_code": region_code,
-        "exclude_groupings": exclude_groupings,
-    }
-    try:
-        records = await api.get_commodity_data_by_year(commodity_code, market_year)
-    except NoDataForYear as exc:
-        raise _absent(exc, commodity_code, "every country", market_year) from exc
-    regions = country_regions() if region_code is not None else {}
-    ranked = sorted(
-        (
-            record
-            for record in records
-            if record.attribute_id == attribute_id
-            and (region_code is None or regions.get(record.country_code) == region_code)
-            and not (exclude_groupings and record.country_code in GROUPINGS)
-        ),
-        key=lambda record: record.value,
-        reverse=True,  # sorted() stays stable with reverse=True: ties keep upstream order
-    )
-    meta = ResultMeta(
-        source=SOURCE,
-        endpoint="PSDData_GetCommodityDataByYear",
-        vintage=_vintage(ranked),
-        request=request,
-    )
-    return Result(data=ranked[:n], meta=meta)
-
-
-def _latest(releases: list[DataReleaseInfo]) -> tuple[list[DataReleaseInfo], str | None]:
-    """The records of the newest release and that release as ``"YYYY-MM"``; pure, no call.
-
-    Records keep upstream's order; an empty list gives ``([], None)``.
-    """
-    newest = max((_release(r) for r in releases), default=None)
-    if newest is None:
-        return [], None
-    year, month = newest
-    latest = [r for r in releases if _release(r) == newest]
-    return latest, f"{year:04d}-{month:02d}"
-
-
-async def get_latest_release_async(
-    commodity_code: str, since: str | None = None
-) -> Result[list[DataReleaseInfo]]:
-    """Which countries and market years PSD's newest release of a commodity revised.
-
-    One request to ``PSDData_GetDataReleaseInfo``, which lists the last release of every
-    country and market year (7,754 records for wheat); the records of the newest
-    ``release_year`` and ``release_month`` are kept, unchanged and in upstream's order.
-    For wheat as recorded on 2026-10-23 that was release 2026-10, 146 records: 123
-    countries for market year 2026 and a few revisions of earlier years.
-    ``meta.vintage`` names the release (``"2026-10"``) in the form ``meta.vintage`` of
-    ``get_data`` takes, so a stored vintage older than it means the listed countries and
-    market years have changed since. To poll, pass your stored vintage as ``since``: the
-    answer is the newest release's records when that release is later than ``since``,
-    and an empty list when it is not, with ``meta.vintage`` still naming the newest
-    release, so an empty list says nothing newer exists. A commodity without any release
-    gives an empty list and ``meta.vintage`` ``None``; ``meta.published_at`` stays empty,
-    since PSD gives no day. A release that adds a market year and revises earlier ones
-    lists many records: the wheat list recorded on 2026-10-23 had 146 records of 2026-10
-    and 130 more still carrying 2026-09, so the September answer held between 130 and 276
-    rows. ``get_release_dates(commodity_code, market_year=..., country_code=...,
-    since=...)`` returns any part of the list.
-
-    Args:
-        commodity_code: PSD commodity code, seven digits, e.g. ``"0410000"`` (Wheat),
-            ``"0440000"`` (Corn), ``"2222000"`` (Oilseed, Soybean).
-        since: A release month ``"YYYY-MM"``, e.g. ``"2026-09"``, typically the
-            ``meta.vintage`` you stored last time: the newest release's records come back
-            only when that release is later (strictly after), else an empty list.
-            ``None`` always returns the newest release's records.
-    """
-    validate_commodity_code(commodity_code)
-    after = None if since is None else validate_since(since)
-    releases = await api.get_data_release_info(commodity_code)
-    latest, vintage = _latest(releases)
-    if after is not None and latest and _release(latest[0]) <= after:
-        latest = []  # nothing newer than since; meta.vintage still names the newest release
-    meta = ResultMeta(
-        source=SOURCE,
-        endpoint="PSDData_GetDataReleaseInfo",
-        vintage=vintage,
-        request={"commodity_code": commodity_code, "since": since},
-    )
-    return Result(data=latest, meta=meta)
 
 
 async def list_commodities_async(search: str | None = None) -> Result[list[Commodity]]:
@@ -749,13 +572,16 @@ async def list_countries_async(
             ``list_regions`` spells it, e.g. ``"R01"`` (North America, 5 countries),
             ``"R05"`` (European Union), ``"R11"`` (Sub-Saharan Africa). ``"R15"`` holds
             four countries (Africa, NEC; Fernando Po; French Equatorial Africa; Other)
-            although ``list_regions`` lacks it. A code no country carries yields an
-            empty list. Omit (``None``) for every region.
+            although ``list_regions`` lacks it. A code no packaged country carries is
+            refused, naming the closest; ``"R00"`` (World) is one, and the world total is
+            ``get_world_data``'s. Omit (``None``) for every region.
         search: Keep the countries where this text occurs, ignoring case, in the code,
             the name or the GENC code, e.g. ``"united"`` (TC United Arab Emirates, UK
             United Kingdom, US United States), ``"USA"`` (US United States, by its GENC
             code), ``"E4"``, ``"brazil"``. Omit (``None``) for every country.
     """
+    if region_code is not None:
+        validate_region_code(region_code)
     packaged = PackagedList.load(PACKAGE, "countries")
     countries = packaged.parse(Country, source=SOURCE)
     selected = [
@@ -827,10 +653,7 @@ async def list_commodity_attributes_async(
 get_data = sync(get_data_async)
 get_world_data = sync(get_world_data_async)
 get_release_dates = sync(get_release_dates_async)
-get_balance_sheet = sync(get_balance_sheet_async)
 get_time_series = sync(get_time_series_async)
-get_top_countries = sync(get_top_countries_async)
-get_latest_release = sync(get_latest_release_async)
 list_commodities = sync(list_commodities_async)
 list_countries = sync(list_countries_async)
 list_regions = sync(list_regions_async)

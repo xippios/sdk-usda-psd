@@ -1,15 +1,25 @@
-"""Packaged reference lists, their enums and the argument checks built on them."""
+"""Packaged reference lists, their enums, the argument checks built on them and the script
+that refreshes them."""
 
+import ast
+import importlib.util
+import inspect
 import json
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from xippios.core import InvalidRequestError, PackagedList, UnknownCode, parse
 from xippios.core.http import status_for
+from xippios.core.refresh import Lists
 from xippios.core.testing import load_fixture
+from xippios.usda.fas import REMAINING_HEADER
 
-from xippios.usda.psd import enums
+from xippios.usda.psd import api, enums
+from xippios.usda.psd._client import client
 from xippios.usda.psd.models import (
     Commodity,
     CommodityAttribute,
@@ -19,10 +29,14 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    ATTRIBUTES,
+    COMMODITIES,
+    COUNTRIES,
     PACKAGE,
     PACKAGED_LISTS,
+    REGIONS,
+    UNITS,
     attribute_names,
-    country_regions,
     validate_attribute_id,
     validate_commodity_code,
     validate_country_code,
@@ -32,6 +46,7 @@ from xippios.usda.psd.params import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "refresh_reference.py"
 SOURCES = {
     # packaged list: operation it came from (meta.endpoint, verbatim), its wrapper and
     # fixture directory, record model
@@ -76,6 +91,91 @@ def _records(name: str) -> list[dict[str, object]]:
     return PackagedList.load(PACKAGE, name).records
 
 
+def _refresh_script() -> ModuleType:
+    """``scripts/refresh_reference.py``, loaded without running it: no request, no key."""
+    spec = importlib.util.spec_from_file_location("refresh_reference", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _endpoint_literals(wrapper: Callable[[], object]) -> list[object]:
+    """Every ``endpoint=`` the wrapper's module passes, read from its source."""
+    tree = ast.parse(inspect.getsource(sys.modules[wrapper.__module__]))
+    return [
+        keyword.value.value if isinstance(keyword.value, ast.Constant) else keyword.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == "endpoint"
+    ]
+
+
+def test_the_refresh_script_declares_one_lists_on_cores_frame() -> None:
+    """The script declares one ``Lists`` of core's frame, one ``Listed`` per packaged list
+    (conventions §3; https://github.com/xippios/sdk-core/issues/482), and the frame writes a
+    list's ``endpoint`` from the operation its ``Listed`` names, not from the wrapper's name
+    (conventions §2): the declared operation is the packaged file's ``endpoint``, the one
+    ``endpoint=`` literal its wrapper passes and the first line of the wrapper's docstring.
+    ``unitsOfMeasure`` and ``commodityAttributes`` make the two enums, and the quota left is
+    read from the gateway's header, the shared package's ``REMAINING_HEADER``."""
+    lists = _refresh_script().LISTS
+    assert isinstance(lists, Lists)
+    assert (lists.package, set(lists.packaged)) == (PACKAGE, set(PACKAGED_LISTS))
+    assert lists.client is client
+    assert lists.quota_header == REMAINING_HEADER == "x-ratelimit-remaining"
+    enums_made = {listed.name: listed.enum for listed in lists.lists if listed.enum is not None}
+    assert {name: (enum.ids, enum.names) for name, enum in enums_made.items()} == {
+        "unitsOfMeasure": ("unitId", "unitDescription"),
+        "commodityAttributes": ("attributeId", "attributeName"),
+    }
+    entries = {listed.name: (listed.endpoint, listed.fetch) for listed in lists.lists}
+    assert set(entries) == set(PACKAGED_LISTS) == set(SOURCES)
+    for name, (operation, fetch) in entries.items():
+        assert (operation, fetch.__name__) == SOURCES[name][:2], name
+        assert operation == PackagedList.load(PACKAGE, name).endpoint, name
+        assert _endpoint_literals(fetch) == [operation], name
+        assert (fetch.__doc__ or "").splitlines()[0] == f"Call ``{operation}``.", name
+
+
+def test_each_list_is_fetched_by_its_wrapper_itself() -> None:
+    """Core's reference frame and its nightly comparison take a wrapper's ``Answer`` and read
+    its payload (conventions §3, §10): each ``Listed`` of the script and each entry of
+    ``LIVE_LISTS`` in ``tests/test_live.py`` fetches by the ``api/`` wrapper itself, the same
+    one for a list, and declares the packaged list that ``params`` names the codes with."""
+    lists = {listed.name: listed.fetch for listed in _refresh_script().LISTS.lists}
+    spec = importlib.util.spec_from_file_location(
+        "live_lists", Path(__file__).parent / "test_live.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    declared = {
+        "commodities": COMMODITIES,
+        "countries": COUNTRIES,
+        "regions": REGIONS,
+        "unitsOfMeasure": UNITS,
+        "commodityAttributes": ATTRIBUTES,
+    }
+    assert set(lists) == set(live.LIVE_LISTS) == set(SOURCES)
+    assert live.NO_LIVE_LIST == {}
+    for name, (_, wrapper, _) in SOURCES.items():
+        assert lists[name] is getattr(api, wrapper), name
+        codes, fetch = live.LIVE_LISTS[name]
+        assert fetch is getattr(api, wrapper), name
+        assert codes is declared[name], name
+
+
+def test_the_provenance_table_takes_the_frames_header() -> None:
+    """Core's frame knows one header of the provenance table and writes its rows (sdk-template
+    0.5.0's Hand-apply note on ``reference/README.md``)."""
+    readme = (Path(enums.__file__).parent / "reference" / "README.md").read_text()
+    assert "| File | Origin | Fetched |\n| --- | --- | --- |\n" in readme
+
+
 def test_enums_match_the_packaged_id_lists() -> None:
     assert enums.__all__ == ["AttributeId", "UnitId"]
     attributes = _records("commodityAttributes")
@@ -99,6 +199,7 @@ def test_enum_members_are_named_after_upstream_names() -> None:
 
 
 def test_enum_members_compare_equal_to_upstream_ints() -> None:
+    """The record is an input of the test, not an answer from USDA FAS PSD Online."""
     record = CommodityAttribute.model_validate({"attributeId": 28, "attributeName": "Production"})
     assert record.attribute_id == enums.AttributeId.PRODUCTION
     assert enums.AttributeId(28) is enums.AttributeId.PRODUCTION
@@ -126,13 +227,13 @@ def test_unknown_commodity_code_names_the_closest() -> None:
     assert ("0410000", "Wheat") in error.closest
     assert error.message.startswith(
         "'0410001' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-28). Did you mean "
+        "2026-10-28). Nothing was sent. Did you mean "
     )
     assert "0410000 (Wheat)" in error.message
     assert error.message.endswith(
         " PSD answers unknown codes with an empty result, so the package refuses them. If "
         "upstream added it since, the packaged list is out of date."
-    ), "core 0.4.0's tail names no maintainer's command (sdk-core#111)"
+    ), "core's tail names no maintainer's command (sdk-core#111)"
 
 
 def test_a_commodity_name_leads_to_its_code() -> None:
@@ -178,8 +279,9 @@ def test_four_digit_market_years_pass(year: int) -> None:
 
 @pytest.mark.parametrize("year", [23, 999, 10000, -2023, True])
 def test_other_market_years_are_refused(year: int) -> None:
-    with pytest.raises(InvalidRequestError, match="four-digit year"):
+    with pytest.raises(InvalidRequestError, match="four-digit year") as info:
         validate_market_year(year)
+    assert f"got {year!r}. Nothing was sent. PSD has data" in info.value.message
 
 
 def test_attribute_names_are_the_packaged_list() -> None:
@@ -207,12 +309,12 @@ def test_unknown_attribute_id_names_the_closest() -> None:
         999,
         "commodityAttributes",
     )
-    assert error.closest == (("99", "Refined Exp.(Raw Val)"),)
+    assert error.closest == ((99, "Refined Exp.(Raw Val)"),), "by its digits, not by number"
     assert error.source == "usda-psd"
     assert error.message.startswith(
         "999 is not an attribute_id in the packaged commodityAttributes list (fetched "
-        "2026-10-28). Did you mean 99 (Refined Exp.(Raw Val))? The data operations take no "
-        "attribute"
+        "2026-10-28). Nothing was sent. Did you mean 99 (Refined Exp.(Raw Val))? The data "
+        "operations take no attribute"
     )
     assert error.message.endswith(
         "list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
@@ -223,12 +325,29 @@ def test_unknown_attribute_id_names_the_closest() -> None:
 
 @pytest.mark.parametrize("attribute_id", [True, False, "28", 28.0])
 def test_attribute_ids_that_are_not_integers_are_refused(attribute_id: object) -> None:
-    with pytest.raises(InvalidRequestError, match="attribute_id must be an integer") as info:
-        validate_attribute_id(attribute_id)  # type: ignore[arg-type]
+    """Core's ``check`` refuses a value of another type than the list's integer ids, in its
+    words, before any request (sdk-core ADR-0045)."""
+    with pytest.raises(InvalidRequestError, match="is not an integer code") as info:
+        validate_attribute_id(attribute_id)  # type: ignore[type-var]
+    assert not isinstance(info.value, UnknownCode)
+    assert "Nothing was sent." in info.value.message
     assert info.value.message.endswith(
-        ". list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
-        "lists them."
+        " list_commodity_attributes (over MCP, the tool usda_psd_list_commodity_attributes) "
+        "lists the ids."
     ), "names the task and its tool (conventions §8)"
+
+
+def test_a_list_of_attribute_ids_is_checked_by_one_call() -> None:
+    """One call of core's ``check`` with the list: the list passes as given, its first id the
+    list lacks is refused, and an empty list is refused, since it names no attribute
+    (https://github.com/xippios/sdk-core/issues/481)."""
+    ids = [28, enums.AttributeId.EXPORTS]
+    assert validate_attribute_id(ids) is ids
+    with pytest.raises(UnknownCode, match="999 is not an attribute_id"):
+        validate_attribute_id([28, 999, 998])
+    with pytest.raises(InvalidRequestError, match="attribute_id lists no code") as empty:
+        validate_attribute_id([])
+    assert "Nothing was sent." in empty.value.message
 
 
 DATA_FIXTURES = [
@@ -255,6 +374,8 @@ def test_every_recorded_id_is_in_the_packaged_lists() -> None:
 
 
 def test_an_id_the_lists_lack_still_parses() -> None:
+    """An id that no packaged list holds parses all the same; the record is an input of the
+    test, not an answer from USDA FAS PSD Online."""
     record = CommodityData.model_validate(
         {
             "commodityCode": "0410000",
@@ -277,8 +398,8 @@ def test_an_unknown_code_without_a_close_match_still_reads_as_sentences() -> Non
     assert info.value.closest == ()
     assert info.value.message == (
         "'0000000x' is not a commodity_code in the packaged commodities list (fetched "
-        "2026-10-28). PSD answers unknown codes with an empty result, so the package refuses "
-        "them. If upstream added it since, the packaged list is out of date."
+        "2026-10-28). Nothing was sent. PSD answers unknown codes with an empty result, so the "
+        "package refuses them. If upstream added it since, the packaged list is out of date."
     )
 
 
@@ -292,13 +413,6 @@ def test_all_and_00_get_a_hint_instead_of_close_matches(value: str, hint: str) -
         validate_country_code(value)
     assert info.value.closest == ()
     assert "Did you mean" not in info.value.message
-
-
-def test_country_regions_are_the_packaged_list() -> None:
-    records = _records("countries")
-    regions = country_regions()
-    assert regions == {r["countryCode"]: r["regionCode"] for r in records}
-    assert (regions["US"], regions["BR"], regions["E4"]) == ("R01", "R04", "R05")
 
 
 @pytest.mark.parametrize("code", ["R01", "R04", "R18", "R15"])
@@ -347,13 +461,15 @@ def test_a_release_month_reads_as_year_and_month(since: str, month: tuple[int, i
     "since", ["2026-13", "2026-00", "2026-9", "2026-09-01", "\uff12\uff10\uff12\uff16-09", ""]
 )
 def test_other_release_months_are_refused(since: str) -> None:
-    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'"):
+    with pytest.raises(InvalidRequestError, match="'YYYY-MM' such as '2026-09'") as info:
         validate_since(since)
+    assert info.value.message.endswith(f"got {since!r}. Nothing was sent.")
 
 
 def test_the_world_region_is_refused_with_a_hint() -> None:
     """``R00`` (World) is in the packaged regions list, but no packaged country belongs to
-    it: the refusal says where the world total is, and what ``region_code`` takes."""
+    it: the refusal of ``list_countries``' filter says where the world total is, and what
+    ``region_code`` takes."""
     with pytest.raises(UnknownCode) as info:
         validate_region_code("R00")
     error = info.value
@@ -362,10 +478,10 @@ def test_the_world_region_is_refused_with_a_hint() -> None:
     assert "Did you mean" not in error.message
     assert error.message.startswith(
         "'R00' is not a region_code in the packaged countries list (fetched 2026-10-28). "
-        "R00 (World) is in list_regions, but no country belongs to it: the world total is "
-        "get_world_data's (over MCP, the tool usda_psd_get_world_data), and region_code takes "
-        "a region countries belong to, as list_countries gives it, e.g. R04 (South America); "
-        "omit it to rank every country."
+        "Nothing was sent. R00 (World) is in list_regions, but no country belongs to it: the "
+        "world total is get_world_data's (over MCP, the tool usda_psd_get_world_data), and "
+        "region_code takes a region countries belong to, as list_countries gives it, e.g. R04 "
+        "(South America); omit it for every country."
     ), "names the task to call instead and its tool (conventions §8)"
 
 
@@ -374,6 +490,7 @@ def test_a_region_code_that_is_not_text_is_refused(region_code: object) -> None:
     with pytest.raises(InvalidRequestError, match="region_code must be a PSD region code") as info:
         validate_region_code(region_code)  # type: ignore[arg-type]
     assert not isinstance(info.value, UnknownCode)
+    assert f"got {region_code!r}. Nothing was sent. " in info.value.message
     assert info.value.message.endswith(
         ". list_regions and list_countries (over MCP, the tools usda_psd_list_regions and "
         "usda_psd_list_countries) name the regions."
