@@ -12,8 +12,9 @@ file, and `FETCHED.md` lists it in a row of its own.
 Each note ends with its probe: the date, the operation by the `operationId` the snapshot
 gives it, and the sample, a fixture named by its path under `tests/fixtures/`, whose
 `recorded_at` gives the time of the request. The answers recorded whole on 2026-10-23 that
-the fixtures of 2026-10-28 keep cut are in commit `07b88ad` of `main`. The notes moved here
-on 2026-11-26 from `CLAUDE.md`; no request was sent to write this file.
+the fixtures of 2026-10-28 keep cut are in commit `07b88ad` of `main`, and a note read
+across them ends with `Observed:` and that commit in place of a fixture. The notes moved
+here on 2026-11-26 from `CLAUDE.md`; no request was sent to write this file.
 
 ## The answers' shapes
 

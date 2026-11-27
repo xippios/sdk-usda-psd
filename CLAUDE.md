@@ -86,7 +86,8 @@ where it changes them.
 The snapshot types every response as `object` and defines no schema, so what PSD does beyond
 it, the answers' shapes, its empty answers and the gateway's refusals, is noted in
 `docs/upstream/OBSERVED.md`, each note with the probe that showed it: its date, its operation
-and the recording under `tests/fixtures/`. This section holds what the package does with it;
+and the recording under `tests/fixtures/`, or the commit that holds a whole answer the
+fixtures keep cut. This section holds what the package does with it;
 `_client.classify` maps PSD's own answers once.
 
 - The record shapes of the five lists and the data and release records are in `models.py`,
