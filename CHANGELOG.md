@@ -98,6 +98,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Breaking
 
+- 0.5.0 is the first release of the package that installs beside `xippios-usda-fas` 0.1.0, and it
+  bundles the adoption of that package and of xippios-core 0.5.0 with the package's own changes.
+  From 2026-11-26, when `xippios-usda-fas` 0.1.0 reached PyPI, until this release, the latest of
+  the two did not install together, since 0.4.0 requires xippios-core 0.4 and `xippios-usda-fas`
+  requires 0.5, a window that the release accepts. (sdk-core ADR-0039,
+  https://github.com/xippios/sdk-usda-psd/issues/55)
 - The arguments that identify a record stay positional in the order of upstream's path, and
   every optional filter and every argument of the package's own is keyword-only:
   `get_data(commodity_code, market_year, *, country_code=None)`, `get_time_series(commodity_code,
