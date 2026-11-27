@@ -4,6 +4,147 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/) (pre-1.0: breaking changes bump the minor).
 
+## [0.5.0] - 2026-11-27
+
+### Added
+
+- The answers are kept in core's response cache for 300 s, every path alike, an expired answer
+  dropped and the bodies held under a bound of bytes, so a second read of a data answer, of
+  the release list or of a market year of the series within that time sends no request.
+  (https://github.com/xippios/sdk-core/issues/479,
+  https://github.com/xippios/sdk-usda-psd/issues/23)
+- The answers of `get_data`, `get_world_data`, `get_release_dates` and `get_time_series` name
+  the codes asked for and the commodities, countries, attributes and units of their rows in
+  `meta.names`, `{"country_code": {"CN": "Comoros"}}`, an answer without rows too, and
+  `list_countries` names the regions of its rows. A code of a row that its packaged list lacks,
+  the world's `00` and the region `R15`, is said in `meta.notes` and left out of the names,
+  while an `R15` that `list_countries` is asked for stands there by its code.
+  (https://github.com/xippios/sdk-core/issues/478,
+  https://github.com/xippios/sdk-usda-psd/issues/21)
+- The MCP tools `usda_psd_get_data` and `usda_psd_get_release_dates` take `offset`, the rows
+  already shown: a cut answer's note ends with `continue with offset=<n>`, and each
+  continuation runs the task again, which core's response cache answers.
+  (sdk-core ADR-0047, https://github.com/xippios/sdk-usda-psd/issues/31)
+- `get_time_series` names its market years in `meta.notes`, each answered one with its count
+  of rows, in the order of the rows, and each passed over: one PSD holds no data for, or whose
+  answer holds no record of the attributes asked for.
+  (https://github.com/xippios/sdk-core/issues/478,
+  https://github.com/xippios/sdk-usda-psd/issues/26)
+
+### Changed
+
+- `list_countries` names the region asked for in `meta.names` on every answer, one that keeps
+  no country too, by PSD's regions list, and `R15`, which that list lacks, by its code alone.
+  A refusal of a region code shows `R15` among the closest codes by its code, since the
+  package builds no name of its own. (sdk-core ADR-0060, sdk-core ADR-0067,
+  https://github.com/xippios/sdk-usda-psd/issues/65)
+- The note of an empty answer of `get_data` and `get_world_data` for a market year without data
+  names the MCP tool `usda_psd_get_release_dates` beside the task `get_release_dates`, so an
+  agent over MCP reads the tool to call. (sdk-core ADR-0041,
+  https://github.com/xippios/sdk-usda-psd/issues/68)
+- The docstring of `get_time_series`, and with it the input schema of the MCP tool
+  `usda_psd_get_time_series`, says under `end_year` that a market year PSD has not released is
+  expected to answer its empty 404 and is passed over in `meta.notes`, still costing its
+  request. Under `attribute_id` it says that the package keeps the records of the ids asked for
+  after each fetch, since PSD's data operations take no attribute. (sdk-core ADR-0061,
+  https://github.com/xippios/sdk-usda-psd/issues/66)
+- The README's `## Scope` states what of PSD the package wraps and what it leaves out: all
+  nine operations of the snapshot, read as JSON, with every path parameter an argument of a
+  task, XML the one documented choice that a caller cannot make, and PSD Online's
+  downloadable files outside the API's documentation. The notes on what PSD does but never
+  documents stand in `docs/upstream/OBSERVED.md`, each with its probe.
+  (https://github.com/xippios/sdk-usda-psd/issues/55)
+- A market year that is no whole number, a float such as `2023.5` or `2023.0` or a text, is
+  refused with `InvalidRequestError` before any request, and the refusal names the argument it
+  came in, `start_year` and `end_year` of `get_time_series` among them. A float passed the
+  range check and reached the request's path, and a text raised a bare `TypeError`.
+  (https://github.com/xippios/sdk-usda-psd/issues/27)
+- `get_release_dates` sets `meta.vintage` to the newest release of the whole list,
+  `"YYYY-MM"` as the data tasks write it, also where `market_year`, `country_code` or `since`
+  keep no record, where it left it empty, so a stored vintage passed as `since` polls for a
+  newer release with one request. (https://github.com/xippios/sdk-usda-psd/issues/55)
+- A cut answer of the MCP tool `usda_psd_get_time_series` shows the newest rows, oldest first,
+  where it showed the oldest, and its note names the rows shown and the most that one call
+  sends on the MCP server, 24 requests and 96 attempts with retries.
+  (sdk-core ADR-0047, https://github.com/xippios/sdk-usda-psd/issues/55)
+- The descriptions of `usda_psd_get_time_series` and `usda_psd_get_data` are their tasks'
+  docstrings before `Args:`, each under 1,000 characters, and the text of each argument stands
+  in the tool's input schema. (https://github.com/xippios/sdk-core/issues/485)
+- PSD's empty HTTP 404 off a data path, or without `text/plain`, is a `NotFoundError` that
+  names the request, its method and its path, and says that the request is wrong, where it
+  said that PSD had no data for the path. (https://github.com/xippios/sdk-usda-psd/issues/50)
+- The refusal before a request into api.data.gov's spent quota, which the package shares with
+  every source that reads `DATA_GOV_API_KEY`, says `quota spent (` with the gateway's name as
+  its source and no longer names the key's variable. The gateway now comes from
+  `xippios-usda-fas`. (https://github.com/xippios/sdk-core/issues/485)
+- Every refusal of a call as given says `Nothing was sent.` after its first sentence: an
+  unknown code, a market year that is not four digits, a `since` that is not a release month, a
+  region code that is not text, a series that starts before 1960 or runs backwards, and the MCP
+  adapter's refusal of an argument. The attribute ids are checked by one call of
+  xippios-core's `check`, in its wording, which names the first id it refuses, the integer to
+  pass for a text of digits and refuses an empty list. The refusals' classes are unchanged.
+  (https://github.com/xippios/sdk-core/issues/481,
+  https://github.com/xippios/sdk-usda-psd/issues/30)
+- `meta.retrieved_at` of `get_data`, `get_world_data`, `get_release_dates` and
+  `get_time_series` is the client's time of the answer, the time its entry was stored where
+  core's cache answers it and the oldest of the market years that `get_time_series` puts
+  together, where it read the time the answer's metadata was made.
+  (https://github.com/xippios/sdk-core/issues/479)
+- `get_time_series` fetches its market years by xippios-core's `fetch_periods`: a request after
+  the first that fails raises its error, its class kept, naming the market years answered
+  before it by their count, the first and the last, and the task returns nothing.
+  (https://github.com/xippios/sdk-core/issues/315,
+  https://github.com/xippios/sdk-usda-psd/issues/32)
+
+### Breaking
+
+- The arguments that identify a record stay positional in the order of upstream's path, and
+  every optional filter and every argument of the package's own is keyword-only:
+  `get_data(commodity_code, market_year, *, country_code=None)`, `get_time_series(commodity_code,
+  country_code, *, start_year, end_year, attribute_id=None)`, `get_release_dates(commodity_code,
+  *, market_year=None, country_code=None, since=None)`, `list_countries(*, region_code=None,
+  search=None)`, `list_commodities(*, search=None)` and `list_commodity_attributes(*,
+  search=None)`. A call that passes one of them by position fails with `TypeError`, and over
+  MCP and HTTP nothing changes. (https://github.com/xippios/sdk-usda-esr/issues/60)
+- The package depends on `xippios-core~=0.5.0`, its extras likewise, and on
+  `xippios-usda-fas~=0.1.0`, is updated to sdk-template v0.5.0 and applies conventions 1.30.
+  (https://github.com/xippios/sdk-usda-psd/issues/55)
+- `get_balance_sheet` leaves, with its MCP tool, its route and the models `BalanceSheet`
+  and `BalanceSheetEntry`, by the boundary of a source package: a task that pivots records
+  into a shape and keys of the package's own is not the package's. A caller reads the same
+  records from `get_data` with a country. (sdk-core ADR-0060,
+  https://github.com/xippios/sdk-usda-psd/issues/55)
+- `get_latest_release` leaves, with its MCP tool and its route, by the boundary of a source
+  package: a task that picks the newest release for the caller is not the package's. A caller
+  polls with `get_release_dates(commodity_code, since=...)` and picks the newest records of
+  the list itself. (sdk-core ADR-0060, https://github.com/xippios/sdk-usda-psd/issues/55)
+- `get_top_countries` leaves, with its MCP tool, its route, `tasks.GROUPINGS` and
+  `params.country_regions`, by the boundary of a source package: a task that ranks records for
+  the caller is not the package's. A caller reads the same records from `get_data` for every
+  country and ranks them itself. (sdk-core ADR-0060,
+  https://github.com/xippios/sdk-usda-psd/issues/55)
+- `get_data` and `get_world_data` answer a market year that PSD holds no data for, its HTTP
+  404 with an empty body, with the empty list and a note in `meta.notes` that names PSD's
+  answer and points to `get_release_dates`, and send no second request, where they raised
+  `NoDataForYear`. A caller that caught the error reads the empty list, and the class, which
+  `xippios.core.data_gov` held, now stands in `xippios.usda.fas`.
+  (https://github.com/xippios/sdk-usda-esr/issues/88,
+  https://github.com/xippios/sdk-usda-psd/issues/53)
+- `get_time_series` spans at most 24 market years over MCP, where it spanned 100, and the
+  option `--series-years` of the MCP server sets the ceiling from 1 to 100, while in Python
+  and over HTTP it stays 100. A longer range is refused before the first request in
+  xippios-core's wording, which names the range, the ceiling and the option and says that
+  nothing was sent. (sdk-core ADR-0054, https://github.com/xippios/sdk-usda-psd/issues/55)
+- `list_countries` refuses a `region_code` that no packaged country carries with
+  `UnknownCode`, naming the closest codes, and `R00` with its hint that the world total is
+  `get_world_data`'s, where it answered the empty list. `R15` keeps its four countries.
+  (https://github.com/xippios/sdk-usda-psd/issues/30)
+- The endpoint wrappers under `api/` return core's `Answer`, the parsed answer as its
+  `payload` beside the time it was retrieved as its `retrieved_at`, where they returned the
+  parsed records themselves, so a caller of `api.get_commodities()` or another wrapper reads
+  its `.payload`. (https://github.com/xippios/sdk-core/issues/479,
+  https://github.com/xippios/sdk-usda-psd/issues/53)
+
 ## [0.4.0] - 2026-11-20
 
 ### Added
