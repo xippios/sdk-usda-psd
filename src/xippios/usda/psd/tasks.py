@@ -65,6 +65,7 @@ from xippios.usda.psd.models import (
 )
 from xippios.usda.psd.params import (
     ATTRIBUTES,
+    CARRIED_REGIONS,
     COMMODITIES,
     COUNTRIES,
     PACKAGE,
@@ -183,11 +184,14 @@ def _no_data(exc: NoDataForYear) -> str:
     maintainer's decision of 2026-11-26); any other ``NotFoundError`` (the gateway's
     ``NOT_FOUND``) is not caught and propagates as is. PSD answers market year 1900 so
     (recorded); a market year it has not released is expected to answer alike, not recorded.
+    The note names the task it points to and its MCP tool, since an agent calls the tool, as a
+    refusal does (conventions §8).
     """
     return (
         f"PSD answered GET {exc.path} with HTTP 404 and an empty body, its answer for a market "
         "year it holds no data for, which a market year it has not released is expected to "
-        "answer alike; get_release_dates names the market years that hold data."
+        "answer alike; get_release_dates (over MCP, the tool usda_psd_get_release_dates) names "
+        "the market years that hold data."
     )
 
 
@@ -490,12 +494,16 @@ async def get_time_series_async(
             forecast year is about 67 requests, so ask for the years you need.
         end_year: Last PSD market year, included, e.g. ``2023``; not before ``start_year``
             and within the ceiling: at most 99 years after it in Python and over HTTP, 23
-            over MCP by default. A year beyond PSD's forecasts still costs its request.
+            over MCP by default. A market year PSD has not released is expected to answer
+            its empty 404, as 1900 does (an unreleased year is not recorded), and is passed
+            over in ``meta.notes``, still costing its request.
         attribute_id: PSD attribute id, or a list of them, e.g. ``28`` (Production),
             ``[28, 88]`` (Production and Exports), ``176`` (Ending Stocks);
             ``list_commodity_attributes`` lists them. Omit it (``None``) for every
             attribute of each answer, 15 a year for wheat in the United States. An empty
-            list is refused. Every id is checked before the first request.
+            list is refused. Every id is checked before the first request. PSD's data
+            operations take no attribute, so the package keeps the records of the ids asked
+            for after each fetch.
     """
     validate_commodity_code(commodity_code)
     validate_country_code(country_code)
@@ -561,6 +569,7 @@ async def list_commodities_async(*, search: str | None = None) -> Result[list[Co
     return Result(data=selected, meta=packaged.meta(SOURCE, request={"search": search}))
 
 
+@names_codes(region_code=CARRIED_REGIONS)
 async def list_countries_async(
     *, region_code: str | None = None, search: str | None = None
 ) -> Result[list[Country]]:
