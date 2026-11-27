@@ -440,14 +440,28 @@ def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
     assert ("R04", "South America") in by_name.value.closest
 
 
-def test_a_region_the_regions_list_lacks_is_named_by_its_countries() -> None:
-    """``closest`` names ``R15`` by the countries that carry it, the packaged regions list
-    having no name for it."""
+def test_the_carried_regions_are_named_by_psds_regions_list_alone() -> None:
+    """The region codes that the packaged countries carry, each named by the packaged regions
+    list, and ``R15``, which that list lacks, by its code alone: a package builds no name of
+    its own (sdk-core ADR-0060, decision 3)."""
+    from xippios.usda.psd import params
+
+    countries = PackagedList.load(PACKAGE, "countries")
+    carried = {str(record["regionCode"]) for record in countries.records}
+    assert "R15" in carried
+    assert {code: params.CARRIED_REGIONS.name_of(code) for code in carried} == {
+        code: REGIONS.name_of(code) or code for code in carried
+    }
+
+
+def test_a_region_the_regions_list_lacks_is_shown_by_its_code() -> None:
+    """``closest`` shows ``R15`` by its code, the packaged regions list having no name for it,
+    and by no name that the package builds from its countries (sdk-core ADR-0060, decision 3)."""
     with pytest.raises(UnknownCode) as fifteen:
         validate_region_code("R15 ")
-    assert ("R15", "Africa, NEC; Fernando Po; French Equatorial Africa; Other") in (
-        fifteen.value.closest
-    )
+    assert fifteen.value.closest == (("R15", "R15"),)
+    assert "Did you mean R15? " in fifteen.value.message
+    assert "Fernando Po" not in fifteen.value.message
 
 
 @pytest.mark.parametrize(

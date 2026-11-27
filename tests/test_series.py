@@ -279,6 +279,29 @@ def test_the_description_states_the_most_that_one_call_sends() -> None:
     assert len(description.strip()) < 1000
 
 
+@pytest.mark.anyio
+async def test_the_arguments_say_what_an_unreleased_year_answers_and_where_the_filter_runs() -> (
+    None
+):
+    """Conventions §4: a series' docstring says what a period that upstream has not released
+    answers; conventions §2 (sdk-core ADR-0061, decision 2): a filter after the fetch is said
+    in its task's docstring. Both stand under ``Args:``, so the tool's input schema carries
+    them and the description before it keeps its bound."""
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    properties = tools["usda_psd_get_time_series"].input_schema["properties"]
+    end_year = " ".join(properties["end_year"]["description"].split())
+    attribute_id = " ".join(properties["attribute_id"]["description"].split())
+    assert (
+        "A market year PSD has not released is expected to answer its empty 404, as 1900 does "
+        "(an unreleased year is not recorded), and is passed over in ``meta.notes``, still "
+        "costing its request."
+    ) in end_year
+    assert (
+        "PSD's data operations take no attribute, so the package keeps the records of the ids "
+        "asked for after each fetch."
+    ) in attribute_id
+
+
 def test_the_option_hooks_are_the_ceilings() -> None:
     parser = argparse.ArgumentParser()
     tasks.mcp_add_options(parser)

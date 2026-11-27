@@ -202,11 +202,41 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     assert {c.genc_code for c in r15.data} == {None}
     assert "R15" not in {r.region_code for r in tasks.list_regions().data}
     assert r15.meta.request == {"region_code": "R15"}
-    assert r15.meta.names == {}, "the packaged regions list holds no name for R15"
+    assert r15.meta.names == {"region_code": {"R15": "R15"}}, "the region asked for, by its code"
     assert r15.meta.notes == [
         "The packaged regions list (fetched 2026-10-28) holds no name for region_code R15 of "
         "this answer, so meta.names leaves it out."
     ]
+    assert not respx_mock.calls
+
+
+def test_list_countries_names_the_region_asked_for_on_every_answer(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """``names_codes`` over the region codes that the packaged countries carry (conventions
+    §4; sdk-core ADR-0067, decisions 3 and 4): an answer that keeps no country still names
+    the region asked for, by PSD's regions list, and ``R15``, which that list lacks, by its
+    code alone."""
+    none = tasks.list_countries(region_code="R04", search="no such country")
+    assert none.data == []
+    assert none.meta.names == {"region_code": {"R04": "South America"}}
+    assert none.meta.request == {"region_code": "R04", "search": "no such country"}
+    fifteen = tasks.list_countries(region_code="R15", search="no such country")
+    assert (fifteen.data, fifteen.meta.names) == ([], {"region_code": {"R15": "R15"}})
+    assert tasks.list_countries(search="no such country").meta.names == {}, "none asked for"
+    assert not respx_mock.calls
+
+
+@pytest.mark.anyio
+async def test_the_tool_names_the_region_asked_for_on_an_empty_answer(
+    respx_mock: respx.MockRouter,
+) -> None:
+    """Over MCP, where an agent reads the region asked for in ``meta.names``."""
+    payload = await mcp_call(
+        server, "usda_psd_list_countries", {"region_code": "R04", "search": "no such country"}
+    )
+    assert payload["data"] == []
+    assert payload["meta"]["names"] == {"region_code": {"R04": "South America"}}
     assert not respx_mock.calls
 
 

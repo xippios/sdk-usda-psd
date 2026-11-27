@@ -32,11 +32,13 @@ WORLD_HINT = "use get_world_data (over MCP, the tool usda_psd_get_world_data) fo
 
 
 def no_data(path: str) -> str:
-    """The note of the empty answer for PSD's empty 404 at ``path``."""
+    """The note of the empty answer for PSD's empty 404 at ``path``, which names the task it
+    points to and its tool, since an agent over MCP calls the tool (conventions §8)."""
     return (
         f"PSD answered GET {path} with HTTP 404 and an empty body, its answer for a market year "
         "it holds no data for, which a market year it has not released is expected to answer "
-        "alike; get_release_dates names the market years that hold data."
+        "alike; get_release_dates (over MCP, the tool usda_psd_get_release_dates) names the "
+        "market years that hold data."
     )
 
 
