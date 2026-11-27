@@ -92,8 +92,10 @@ and the recording under `tests/fixtures/`. This section holds what the package d
 - The record shapes of the five lists and the data and release records are in `models.py`,
   each naming its fixture: the years and the month parsed to `int`, `attributeId` and
   `unitId` plain `int`, so an id PSD adds before the next reference refresh never fails an
-  answer, and `value` a `Decimal`, a JSON number whose fractional digits upstream sends
-  stay. `test_params` holds every recorded id in the packaged lists, a freshness test.
+  answer, and `value` a `Decimal` that stays a JSON float in both adapters, its trailing
+  zeros not kept: PSD's `49095.0000` is `Decimal('49095.0')` and prints `49095.0`
+  (`test_value_is_a_json_number_through_both_adapters`). `test_params` holds every recorded
+  id in the packaged lists, a freshness test.
 - Empty means empty: an unknown code answers `[]`, so `params` refuses one before the call
   (`UnknownCode`, naming the closest packaged codes), and valid codes without data answer the
   empty list.
