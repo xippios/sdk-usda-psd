@@ -443,15 +443,16 @@ def test_a_region_no_country_carries_is_refused_naming_the_closest() -> None:
 def test_the_carried_regions_are_named_by_psds_regions_list_alone() -> None:
     """The region codes that the packaged countries carry, each named by the packaged regions
     list, and ``R15``, which that list lacks, by its code alone: a package builds no name of
-    its own (sdk-core ADR-0060, decision 3)."""
+    its own (sdk-core ADR-0060, decision 3). The list is the module's own, no public name."""
     from xippios.usda.psd import params
 
     countries = PackagedList.load(PACKAGE, "countries")
     carried = {str(record["regionCode"]) for record in countries.records}
     assert "R15" in carried
-    assert {code: params.CARRIED_REGIONS.name_of(code) for code in carried} == {
+    assert {code: params._CARRIED_REGIONS.name_of(code) for code in carried} == {
         code: REGIONS.name_of(code) or code for code in carried
     }
+    assert not [name for name in params.__all__ if "CARRIED" in name]
 
 
 def test_a_region_the_regions_list_lacks_is_shown_by_its_code() -> None:
