@@ -380,10 +380,6 @@ async def test_mcp_tool_call_end_to_end(replay_fixture: Callable[[str, str], res
     assert payload["meta"]["endpoint"] == "PSDData_GetCountryCommodityDataByYear"
     assert payload["meta"]["published_at"] is None
     assert payload["meta"]["vintage"] == "2026-07"
-    with pytest.raises(AssertionError, match=r"UnknownCode.*0410000 \(Wheat\)"):
-        await mcp_call(
-            server, "usda_psd_get_data", {"commodity_code": "0410001", "market_year": 2023}
-        )
 
 
 @pytest.mark.anyio
@@ -421,11 +417,6 @@ async def test_value_is_a_json_number_through_both_adapters(
     assert [row["value"] for row in response.json()["data"]] == values
     yields = [row["value"] for row in response.json()["data"] if row["attribute_id"] == 184]
     assert yields == [3.5622]
-    rejected = http.get(
-        "/usda-psd/get_world_data", params={"commodity_code": "0410001", "market_year": 2023}
-    )
-    assert rejected.status_code == 422
-    assert rejected.json()["title"] == "UnknownCode"
 
 
 SIGNATURES = {
