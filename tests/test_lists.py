@@ -191,7 +191,10 @@ def test_region_r15_is_filtered_though_list_regions_lacks_it(
     respx_mock: respx.MockRouter,
 ) -> None:
     """Upstream as recorded: four countries sit in R15, which ``PSDData_GetRegions`` does
-    not list; the filter selects them all the same."""
+    not list; the filter selects them all the same. The answer names the ``R15`` asked for by
+    its code and keeps core's note that the packaged regions list holds no name for it, which
+    says that ``meta.names`` leaves it out: which of the two stands is
+    https://github.com/xippios/sdk-core/issues/635's to decide."""
     r15 = tasks.list_countries(region_code="R15")
     assert [(c.country_code, c.country_name) for c in r15.data] == [
         ("T3", "Africa, NEC"),
