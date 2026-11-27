@@ -167,7 +167,8 @@ def validate_market_year(market_year: int, *, name: str = "market_year") -> int:
     The snapshot types ``marketYear`` as ``int32`` and says "PSD Database has data for
     most commodities since year 1960"; it states no bounds, so none are invented here
     beyond four digits. A year without data answers HTTP 404 with an empty body
-    (``unknown_year.json``, 1900), which ``classify`` maps to ``NotFoundError``.
+    (``unknown_year.json``, 1900), which the gateway maps to ``NoDataForYear`` and the data
+    tasks answer with the empty list and a note.
 
     Args:
         market_year: The market year, e.g. ``2023``, ``1960``.

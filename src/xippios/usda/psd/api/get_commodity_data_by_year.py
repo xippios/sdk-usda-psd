@@ -6,9 +6,10 @@ Reference: ``docs/upstream/openapi/portal-document.json``, operation
 ``marketYear`` (``int32``), ``all`` a literal path element; the response typed only as
 ``object``. The record shape is the recorded one (``models.CommodityData``).
 
-The largest PSD answer: one record per country and attribute, no paging. Corn, market
-year 2023: 1,875 records from 125 countries, 275,759 bytes of JSON (2026-10-23,
-``corn_all_2023``).
+The largest PSD answer: one record per country and attribute, no paging. Recorded
+2026-10-28: corn, market year 2023, 1,875 records, 275,759 bytes of JSON, cut to the 91
+countries from AF to RH (``corn_all_2023``). A whole answer held 125 countries (its probe
+is noted in ``docs/upstream/OBSERVED.md``).
 """
 
 from urllib.parse import quote

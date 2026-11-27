@@ -6,6 +6,22 @@ Typed Python client, MCP server and FastAPI routes for
 upstream documentation; every response carries its metadata (source, endpoint,
 retrieved_at, request).
 
+## Scope
+
+Of PSD's API the package wraps all nine operations that its documentation lists
+(`docs/upstream/`): the supply and distribution records of one commodity and market year for
+one country, for every country and for the world, the list of release dates, and the five
+lists of codes, which the package ships and refreshes before each release. PSD documents
+path parameters alone, `commodityCode`, `countryCode` and `marketYear`, and the tasks take
+every one. The documentation lists XML beside JSON among the forms that each operation
+produces; the package asks for JSON, so XML is the one documented choice that a caller cannot
+make (https://github.com/xippios/sdk-usda-psd/issues/61). PSD Online's downloadable files,
+which no page of the API's documentation describes, are outside the package (https://github.com/xippios/sdk-usda-psd/issues/37). What the package
+adds is one country's series over market years and filters that select records of the release
+list and of the packaged lists. It ranks no country, pivots no record into a table and picks
+no newest release for the caller: a caller reads every record as PSD sends it from
+`get_data`, `get_world_data` and `get_release_dates`.
+
 ## Install
 
 ```bash

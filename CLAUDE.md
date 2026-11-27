@@ -81,94 +81,48 @@ add to one, such as a dependency in `pyproject.toml`, the update carries into th
 render, silently where the release leaves the lines around it alone and as a conflict
 where it changes them.
 
-## Upstream behaviour established by fixtures
+## Upstream behaviour the package relies on
 
-The snapshot types every response as `object`, so these facts come from the answers
-recorded on 2026-10-23 under `tests/fixtures/`, and the three re-recorded cut on
-2026-10-28 (sdk-core ADR-0040, decision 5); `_client.classify` maps them once. A fact of a whole
-answer the cut fixtures no longer hold is dated 2026-10-23; those whole recordings are in
-commit `07b88ad` on `main`.
+The snapshot types every response as `object` and defines no schema, so what PSD does beyond
+it, the answers' shapes, its empty answers and the gateway's refusals, is noted in
+`docs/upstream/OBSERVED.md`, each note with the probe that showed it: its date, its operation
+and the recording under `tests/fixtures/`, or the commit that holds a whole answer the
+fixtures keep cut. This section holds what the package does with it;
+`_client.classify` maps PSD's own answers once.
 
-- Record shapes of the five lists are in `models.py`, each naming its fixture. Unit
-  descriptions are padded with spaces to 20 characters (kept); attribute names are not
-  unique (`Total Disappearance` is 126 and 173); four countries sit in region `R15`,
-  which `PSDData_GetRegions` does not list.
-- Unknown commodity code (`commodity/9999999/country/US/year/2023`) and unknown country
-  code (`commodity/0410000/country/XX/year/2023`): HTTP 200 with `[]`. Empty means
-  empty, not an error; `params.validate_commodity_code` / `validate_country_code` refuse
-  unknown codes before the call (`UnknownCode`, naming the closest packaged codes).
-- Valid codes without data: wheat for Bermuda 2023 (`commodity/0410000/country/BD/year/2023`;
-  PSD's `BM` is Burma, which has wheat data) answers HTTP 200 with `[]`
-  (`no_data_valid_codes`). Empty means empty: `get_data` returns an empty list.
-- Market year without data: HTTP 404 with an empty `text/plain` body on every data form,
-  one country (`commodity/0410000/country/US/year/1900`, `unknown_year`), every country
-  (`.../country/all/year/1900`) and the world (`.../world/year/1900`, both `year_1900`),
-  mapped by the gateway of `xippios.usda.fas`, given `_client.DATA_PATH`, to that package's
-  `NoDataForYear`, a `NotFoundError` (only that answer on a data path: an empty 404
-  elsewhere stays PSD's own plain `NotFoundError`, which names the request, and the
-  gateway's `NOT_FOUND` the gateway's). `get_time_series` passes such a year over and names
-  it in its note; `get_data` and `get_world_data` answer the empty list with a note that
-  names PSD's answer and points to `get_release_dates`, and send no second request
+- The record shapes of the five lists and the data and release records are in `models.py`,
+  each naming its fixture: the years and the month parsed to `int`, `attributeId` and
+  `unitId` plain `int`, so an id PSD adds before the next reference refresh never fails an
+  answer, and `value` a `Decimal` that stays a JSON float in both adapters, its trailing
+  zeros not kept: PSD's `49095.0000` is `Decimal('49095.0')` and prints `49095.0`
+  (`test_value_is_a_json_number_through_both_adapters`). `test_params` holds every recorded
+  id in the packaged lists, a freshness test.
+- Empty means empty: an unknown code answers `[]`, so `params` refuses one before the call
+  (`UnknownCode`, naming the closest packaged codes), and valid codes without data answer the
+  empty list.
+- PSD's empty 404 for a market year without data is mapped by the gateway of
+  `xippios.usda.fas`, given `_client.DATA_PATH`, to that package's `NoDataForYear` (only that
+  answer on a data path: an empty 404 elsewhere stays PSD's own plain `NotFoundError`, which
+  names the request). `get_time_series` passes such a year over and names it in its note;
+  `get_data` and `get_world_data` answer the empty list with a note that names PSD's answer
+  and points to `get_release_dates`, and send no second request
   (https://github.com/xippios/sdk-usda-esr/issues/88, the maintainer's decision of
-  2026-11-26). A market year PSD has not released is expected to answer alike, not
-  recorded. Any other `NotFoundError` (the gateway's `NOT_FOUND`) propagates unchanged
-  from every task.
-- Invalid key: HTTP 403 `{"error": {"code": "API_KEY_INVALID", "message": "An invalid
-  api_key was supplied. Get one at https://api.fas.usda.gov:443"}}`, no quota headers;
-  mapped to `AuthError` naming the code and `DATA_GOV_API_KEY`. The other documented
-  `API_KEY_*` codes map the same way. The gateway's `NOT_FOUND` 404 is a plain
-  `NotFoundError` (no such route; not recorded, `test_client` builds the documented shape).
-- Quota: every keyed answer carries `x-ratelimit-limit: 1000` and
-  `x-ratelimit-remaining`; `via` names api.data.gov's API Umbrella. Spent on purpose on
-  2026-10-23 (987 calls at the client's pace; its own gate then refused to send) and
-  recorded from a fresh process (`get_commodities/over_rate_limit.json`): HTTP 429,
-  `{"error": {"code": "OVER_RATE_LIMIT", "message": "You have exceeded your rate limit.
-  Try again later or contact us for assistance: https://api.fas.usda.gov:443"}}`,
-  `Retry-After: 3151`, `x-ratelimit-limit: 1000`, `x-ratelimit-remaining: 0`. The client
-  uses that `Retry-After`; the one-hour fallback (api.data.gov: "The block will
-  automatically be lifted by waiting an hour") applies to the 200 that left `remaining`
-  at 0, which carries no `Retry-After`, and to a 429 without one.
-- Data records (`PSDData_GetCountryCommodityDataByYear`, `PSDData_GetCommodityDataByYear`,
-  `PSDData_GetWorldCommodityDataByYear`; `models.CommodityData`): `commodityCode`,
-  `countryCode` (`"00"` in world records), `marketYear`, `calendarYear` and `month` as
-  digit strings (`"2023"`, `"2026"`, `"07"`, parsed to `int`), `attributeId` and `unitId`
-  as integers (plain `int` in the model, so an id PSD adds before the next reference
-  refresh never fails an answer; every recorded id is in the packaged lists, which
-  `test_params` checks as a freshness test), `value` as a JSON number (`Decimal`). One
-  record per country and attribute; wheat US 2023 has 15.
-- `country/all` is the largest answer and has no paging: corn 2023 is 1,875 records,
-  275,759 bytes of JSON (`corn_all_2023`), wheat 2023 1,845 records, 271,470 bytes, both
-  ordered by country code; the fixtures are cut at 200,000 bytes and keep the countries
-  from AF to RH (corn) and to RS (wheat), the whole sizes in their `original_count` and
-  `original_bytes`. On 2026-10-23 the whole answers held 125 and 123 countries.
-- Release dates (`PSDData_GetDataReleaseInfo`; `models.DataReleaseInfo`): one record per
-  country and market year, `commodityCode`, `countryCode`, `marketYear`, `releaseYear`,
-  `releaseMonth`, all digit strings; a month, no day, no time, no zone. Wheat: 7,754
-  records, 837,433 bytes (`original_count`, `original_bytes`), ordered by market year,
-  oldest first (within a year by country code on 2026-10-28, in another order on
-  2026-10-23), so the cut fixture keeps market years 1960 to 1978, whose newest release
-  is 2024-02. The whole list of 2026-10-23 held 145 countries, market years 1960 to
-  2026 and no world record. `get_release_dates` serves it, filtered by market year,
-  country and `since` after the call.
-- A data record's `calendarYear`/`month` is the release that last revised it: for wheat
-  2023 every one of the 123 countries matched its release record exactly, and the world
-  records carried the latest of them (2026-10), in the whole answers of 2026-10-23.
+  2026-11-26). Any other `NotFoundError`, the gateway's `NOT_FOUND`, propagates unchanged.
+- The gateway's refusals of a key map to `AuthError` naming the code and `DATA_GOV_API_KEY`,
+  and its 429 to `RateLimitError`, its `Retry-After` the wait, else the hour.
 - `meta.vintage` of `get_data` and `get_world_data` is the latest `calendarYear`-`month`
-  across the result's records, `"YYYY-MM"` with the month zero-padded: `"2026-07"` for
-  wheat US 2023, `"2026-10"` for wheat all countries and world 2023. In every case
-  recorded with its whole release list (wheat 2023: US, all countries, world, on
-  2026-10-23) it equals the release list's record for the same commodity, market year
-  and country, or the latest across countries; the corn and soybeans recordings are
-  internally consistent. So the data tasks make no second call. The cut release list
-  ends at market year 1978, so no replay test re-checks this on 2023 any more; the
-  whole recordings of commit `07b88ad` show it. `None` for an empty answer.
+  across the answer's records, `"YYYY-MM"` with the month zero-padded, `None` for an empty
+  answer: a record names the release that last revised it, as the note "A data record names
+  the release that last revised it" shows, so the data tasks make no second call.
+  `get_release_dates` sets it to the newest release of the whole list, also where its filters
+  keep no record (conventions §4).
 - `meta.published_at` is `None` for every task: PSD gives a month, no day, and the
   first of the month would predate the real mid-month release, a look-ahead bias in an
   as-of store.
 
 ## The time series
 
-`get_time_series(commodity_code, country_code, start_year, end_year, attribute_id=None)` puts
+`get_time_series(commodity_code, country_code, *, start_year, end_year, attribute_id=None)` puts
 together and orders the records of the request `get_data` makes for one country, once per
 market year, conventions §4's period series, and changes none: no derived totals, no unit
 conversion, no gap filling, nothing renamed (sdk-core ADR-0028). A ranking, a pivot and a pick
