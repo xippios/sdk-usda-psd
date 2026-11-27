@@ -5,12 +5,11 @@
 ``meta.vintage`` of the data tasks is the PSD release that last revised the result, as
 upstream names it: the latest ``calendarYear``-``month`` across the records, zero-padded
 (``"2026-07"``). Every record carries the release that last revised it; for one country
-all records share one, for every country and the world the latest is taken. In every
-case recorded with its whole release list (wheat 2023: US, all countries, world, in the
-whole answers recorded on 2026-10-23, commit ``07b88ad``) this equals
-``PSDData_GetDataReleaseInfo``'s record for the same commodity, market year and country
-(or the latest across countries), so no extra call is needed; the corn and soybeans
-recordings are internally consistent. ``meta.published_at`` stays ``None`` for every
+all records share one, for every country and the world the latest is taken. This equals
+``PSDData_GetDataReleaseInfo``'s record for the same commodity, market year and country, or
+the latest across countries, as the note "A data record names the release that last
+revised it" of ``docs/upstream/OBSERVED.md`` shows, so no extra call is needed.
+``meta.published_at`` stays ``None`` for every
 task: PSD gives a month, no day, and the first of the month would predate the real
 mid-month release, a look-ahead bias in an as-of store. ``get_release_dates`` is the way
 to poll for new releases.

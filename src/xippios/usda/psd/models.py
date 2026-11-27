@@ -132,10 +132,10 @@ class CommodityData(UpstreamModel):
     country codes are not ISO codes, and ``unit_id`` names the unit of ``value``.
 
     ``calendar_year`` and ``month`` are the PSD release that last revised the record:
-    for wheat, market year 2023, each of the 123 countries carries exactly the
-    ``releaseYear``/``releaseMonth`` that ``PSDData_GetDataReleaseInfo`` lists for it
-    (e.g. US: 2026, 7), and the world records carry the latest of them (2026, 10), in the
-    whole answers recorded on 2026-10-23.
+    each country's records carry the ``releaseYear``/``releaseMonth`` that
+    ``PSDData_GetDataReleaseInfo`` lists for it (US: 2026, 7, in ``wheat_us_2023``), and
+    the world records the latest of them (2026, 10, in ``wheat_world_2023``); its probe is
+    noted in ``docs/upstream/OBSERVED.md``.
     A data task's ``meta.vintage`` is the latest of them across its records, formatted
     ``"YYYY-MM"`` with the month zero-padded (``"2026-07"``).
 
@@ -171,19 +171,17 @@ class DataReleaseInfo(UpstreamModel):
 
     Shape from ``tests/fixtures/get_data_release_info/wheat.json``, recorded cut
     (sdk-core ADR-0040, decision 5): upstream's 7,754 records (``original_count``), one per
-    country and market year, ordered by market year, of which the cut keeps 1960 to 1978. The
-    whole answer recorded on 2026-10-23 held 145 countries and market years 1960 to 2026, no
-    world (``"00"``) record. The release is a year and a month as digit strings, no day, no
-    time, no time zone; both are parsed to ``int`` and nothing is combined into a date
-    here.
+    country and market year, ordered by market year, of which the cut keeps 1960 to 1978. A
+    whole answer held 145 countries and market years 1960 to 2026 and no world (``"00"``)
+    record (its probe is noted in ``docs/upstream/OBSERVED.md``). The release is a year and a
+    month as digit strings, no day, no time, no time zone; both are parsed to ``int`` and
+    nothing is combined into a date here.
 
-    The data records carry the same release in ``calendarYear``/``month``: in every case
-    recorded with its whole release list (wheat 2023: US, all countries, world, on
-    2026-10-23) the data's
-    latest release equals this list's record for the same commodity, market year and
-    country (or the latest across countries); the corn and soybeans recordings are
-    internally consistent. So the data tasks take ``meta.vintage`` from the data and
-    need no second call.
+    The data records carry the same release in ``calendarYear``/``month``: the data's latest
+    release equals this list's record for the same commodity, market year and country, or
+    the latest across countries, as the note "A data record names the release that last
+    revised it" of ``docs/upstream/OBSERVED.md`` shows. So the data tasks take
+    ``meta.vintage`` from the data and need no second call.
     ``get_release_dates`` serves this list for polling.
 
     Attributes:
