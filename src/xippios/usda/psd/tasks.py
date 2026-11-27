@@ -64,8 +64,8 @@ from xippios.usda.psd.models import (
     UnitOfMeasure,
 )
 from xippios.usda.psd.params import (
+    _CARRIED_REGIONS,
     ATTRIBUTES,
-    CARRIED_REGIONS,
     COMMODITIES,
     COUNTRIES,
     PACKAGE,
@@ -569,7 +569,7 @@ async def list_commodities_async(*, search: str | None = None) -> Result[list[Co
     return Result(data=selected, meta=packaged.meta(SOURCE, request={"search": search}))
 
 
-@names_codes(region_code=CARRIED_REGIONS)
+@names_codes(region_code=_CARRIED_REGIONS)
 async def list_countries_async(
     *, region_code: str | None = None, search: str | None = None
 ) -> Result[list[Country]]:

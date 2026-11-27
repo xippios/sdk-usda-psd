@@ -11,7 +11,7 @@ that names a record's codes is declared once, ``PackagedList.codes`` (sdk-core A
 ``COMMODITIES``, ``COUNTRIES``, ``REGIONS``, ``UNITS`` and ``ATTRIBUTES``, the ``NamedBy`` of
 ``models`` (sdk-core ADR-0067, decision 6), so every answer names the codes of its rows in
 ``meta.names``; ``ATTRIBUTES.check`` refuses an attribute id, or a list of them, that the list
-lacks. ``CARRIED_REGIONS``, the region codes the packaged countries carry, each named by the
+lacks. ``_CARRIED_REGIONS``, the region codes the packaged countries carry, each named by the
 regions list, checks and names ``list_countries``' filter. Each refusal before a request says
 that nothing was sent, core's and the package's own (conventions §5).
 
@@ -30,7 +30,6 @@ from xippios.usda.psd._client import SOURCE
 
 __all__ = [
     "ATTRIBUTES",
-    "CARRIED_REGIONS",
     "COMMODITIES",
     "COUNTRIES",
     "COUNTRY_HINTS",
@@ -260,9 +259,9 @@ def validate_attribute_id[V: (int, Sequence[int])](attribute_id: V) -> V:
 def _carried_regions() -> PackagedCodes:
     """The region codes the packaged countries carry, each named by the packaged regions list.
 
-    The regions list names no code of its own here: ``"R15"``, which it lacks, has no name, so
-    core names it by its code (sdk-core ADR-0060, decision 3). The refusal names the packaged
-    countries list and its fetch date, the list the codes come from (sdk-core ADR-0045).
+    The package gives no code a name of its own: ``"R15"``, which the regions list lacks, has
+    no name, so core names it by its code (sdk-core ADR-0060, decision 3). The refusal names the
+    packaged countries list and its fetch date, the list the codes come from (sdk-core ADR-0045).
     """
     countries = PackagedList.load(PACKAGE, "countries")
     carried = sorted({str(record["regionCode"]) for record in countries.records})
@@ -274,11 +273,13 @@ def _carried_regions() -> PackagedCodes:
     )
 
 
-CARRIED_REGIONS: PackagedCodes = _carried_regions()
+_CARRIED_REGIONS: PackagedCodes = _carried_regions()
 """The region codes the packaged countries carry, the values ``list_countries`` filters by: the
 list its ``region_code`` is checked against and the one ``names_codes`` names it by, in place of
 the packaged ``regions``, which lacks ``"R15"`` and holds ``"R00"``, which no country carries.
-Each code is named by the packaged regions list, and ``"R15"`` by its code alone."""
+Each code is named by the packaged regions list, and ``"R15"`` by its code alone. A constant of
+the module, kept for the process (sdk-core ADR-0045, decision 1), and no public name, since no
+caller asks for it: ``tasks`` reads it for ``names_codes``."""
 
 
 _REGION_HINTS: dict[str, str] = {
@@ -321,7 +322,7 @@ def validate_region_code(region_code: str) -> str:
             f"{region_code!r}. Nothing was sent. {REGION_LISTS} name the regions.",
             source=SOURCE,
         )
-    return CARRIED_REGIONS.check(
+    return _CARRIED_REGIONS.check(
         "region_code",
         region_code,
         hints=_REGION_HINTS,
