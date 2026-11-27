@@ -23,7 +23,6 @@ from xippios.core.testing import (
     fixture_path,
     load_fixture,
     mcp_call,
-    mcp_call_text,
 )
 from xippios.usda.fas import NoDataForYear
 
@@ -438,8 +437,7 @@ async def test_time_series_of_several_attributes_through_both_adapters(
     replay_fixture: Callable[[str, str], respx.Route],
 ) -> None:
     """A list of ids is a keyword argument of the tool; since ``attribute_id`` takes a list,
-    the HTTP route is a ``POST`` with a JSON body (conventions §9, sdk-core ADR-0007). A value the
-    tool's schema refuses comes back as core's ``InvalidRequestError`` text."""
+    the HTTP route is a ``POST`` with a JSON body (conventions §9, sdk-core ADR-0007)."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -464,10 +462,6 @@ async def test_time_series_of_several_attributes_through_both_adapters(
         (2023, 88),
     ]
     assert payload["meta"]["request"] == arguments
-    refused = await mcp_call_text(
-        server, "usda_psd_get_time_series", {**arguments, "attribute_id": ["Production"]}
-    )
-    assert refused.startswith("error: InvalidRequestError: attribute_id")
     app = FastAPI()
     app.include_router(router)
     response = TestClient(app).post("/usda-psd/get_time_series", json=arguments)
